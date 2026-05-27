@@ -36,13 +36,13 @@ Existing assets to reuse:
 
 ## Executive Summary
 
-Full fork of `ensdomains/ens-contracts`, adapted:
-- **Registry**: `SNRCRegistry` (UUPS-upgradeable ENSRegistry fork)
-- **Resolver**: `SimplexResolver` — categorized link storage per name (contact link, channel link, extensible via `bytes32` keys)
-- **Registrar**: `SNRCBaseRegistrar` (ERC-721) — two instances, one for `.simplex`, one for `.testing`
-- **Controller**: `SimplexController` — commit-reveal, stablecoin pricing, NFT gate, reserved names, min-length gate. Two instances with different configs per TLD
-- **NameWrapper**: `SNRCNameWrapper` (ERC-1155 fuses, fork of ENS NameWrapper)
-- **Root + ReverseRegistrar**: standard ENS forks
+Full fork of `ensdomains/ens-contracts`, adapted. Unchanged contracts keep their ENS filenames for easy diffing.
+- **Registry**: `ENSRegistry` (UUPS-wrapped, zero logic changes)
+- **Resolver**: `SimplexResolver` — **new**, categorized link storage per name (contact link, channel link, extensible via `bytes32` keys)
+- **Registrar**: `BaseRegistrarImplementation` (UUPS-wrapped, zero logic changes) — two instances, one for `.simplex`, one for `.testing`
+- **Controller**: `SimplexController` — **new**, fork of ETHRegistrarController with stablecoin pricing, NFT gate, reserved names, min-length gate. Two instances with different configs per TLD
+- **NameWrapper**: `SNRCNameWrapper` (renamed — moderate changes: parameterized TLD support instead of hardcoded `.eth`)
+- **Root + ReverseRegistrar**: verbatim ENS copies
 - **Payment**: ERC-20 stablecoin (USDC/USDT), not ETH
 - **NFT gate**: checks `balanceOf(sender) > 0` on the SMPXNFT contract (`0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291`, ERC-721, 560 tokens, name "SimpleX NFT: SMPX testnet access", symbol "SMPXNFT")
 - **Frontend**: fork of `ensdomains/ens-app-v3` (Next.js + styled-components + wagmi/viem), restyled to SimpleX branding, surgically adapted
@@ -55,19 +55,19 @@ Full fork of `ensdomains/ens-contracts`, adapted:
 ### Single registry, dual registrar/controller pairs
 
 ```
-SNRCRegistry (one instance, UUPS proxy)
-  ├─ .simplex node → SNRCBaseRegistrar#1 → SimplexController#1
+ENSRegistry (one instance, UUPS proxy)
+  ├─ .simplex node → BaseRegistrarImplementation#1 → SimplexController#1
   │                   (NFT-gated, 6+ chars, reserved names, stablecoin pricing)
-  ├─ .testing node → SNRCBaseRegistrar#2 → SimplexController#2
+  ├─ .testing node → BaseRegistrarImplementation#2 → SimplexController#2
   │                   (open, 3+ chars, free or nominal fee)
   ├─ .addr.reverse → ReverseRegistrar
   └─ Root (assigns TLD ownership, lockable)
 
-SimplexResolver (one instance, UUPS proxy)
+SimplexResolver (one instance, UUPS proxy)               ← new contract
   mapping(bytes32 node => mapping(bytes32 category => bytes data))
   categories: keccak256("contact"), keccak256("channel"), ... extensible
 
-SNRCNameWrapper (one instance, UUPS proxy)
+SNRCNameWrapper (one instance, UUPS proxy)                ← renamed (moderate changes)
   wraps names from both TLDs as ERC-1155 tokens with fuses
 ```
 
@@ -89,12 +89,90 @@ User → approve(USDC, controller, amount)
 
 ### Whitepaper pricing (denominated in stablecoin)
 
-| Length | Multiplier | Example (base=100 USDC) |
-|--------|------------|------------------------|
-| 6+     | 1x         | 100 USDC/year          |
-| 5      | 8x         | 800 USDC/year          |
-| 4      | 32x        | 3,200 USDC/year        |
-| 3      | 128x       | 12,800 USDC/year       |
+| Length | Multiplier | Example (base=1 USDC) |
+|--------|------------|----------------------|
+| 6+     | 1x         | 1 USDC/year          |
+| 5      | 8x         | 8 USDC/year          |
+| 4      | 32x        | 32 USDC/year         |
+| 3      | 128x       | 128 USDC/year        |
+
+---
+
+## ENS contract reuse map
+
+Goal: minimal diff to upstream ENS contracts for easy auditing. Each contract falls into one of four categories.
+
+### Verbatim (zero diff from ENS)
+
+| ENS file | Our path | Notes |
+|----------|----------|-------|
+| `registry/ENS.sol` | `contracts/registry/ENS.sol` | Interface, unchanged |
+| `ethregistrar/IBaseRegistrar.sol` | `contracts/ethregistrar/IBaseRegistrar.sol` | Interface, unchanged |
+| `wrapper/ERC1155Fuse.sol` | `contracts/wrapper/ERC1155Fuse.sol` | ERC-1155 + fuse bit logic |
+| `wrapper/Controllable.sol` | `contracts/wrapper/Controllable.sol` | Controller access pattern |
+| `wrapper/StaticMetadataService.sol` | `contracts/wrapper/StaticMetadataService.sol` | Token URI service |
+| `wrapper/BytesUtils.sol` | `contracts/wrapper/BytesUtils.sol` | Byte manipulation |
+| `ethregistrar/StringUtils.sol` | `contracts/ethregistrar/StringUtils.sol` | UTF-8 strlen |
+| `utils/ERC20Recoverable.sol` | `contracts/utils/ERC20Recoverable.sol` | ERC-20 recovery |
+| `root/Root.sol` | `contracts/root/Root.sol` | Trivial, non-upgradeable |
+| `reverseRegistrar/ReverseRegistrar.sol` | `contracts/reverseRegistrar/ReverseRegistrar.sol` | Unchanged |
+
+### Mechanical UUPS wrapping only (constructor → initialize, + UUPSUpgradeable)
+
+These contracts keep all ENS logic intact. The only diff is the upgrade boilerplate — a reviewer can verify in seconds:
+1. `constructor(...)` → `function initialize(...) initializer`
+2. Add `UUPSUpgradeable, OwnableUpgradeable` inheritance
+3. Add `function _authorizeUpgrade(address) internal override onlyOwner {}`
+4. Add `/// @custom:oz-upgrades-unsafe-allow constructor` + `_disableInitializers()`
+
+File names kept identical to ENS for easy diffing.
+
+| ENS file | Our path | Logic changes |
+|----------|----------|--------------|
+| `registry/ENSRegistry.sol` | `contracts/registry/ENSRegistry.sol` | None — UUPS wrap only |
+| `ethregistrar/BaseRegistrarImplementation.sol` | `contracts/ethregistrar/BaseRegistrarImplementation.sol` | None — UUPS wrap only |
+
+### Moderate changes (ENS logic preserved, SNRC-specific adaptations)
+
+Renamed because the interface/behavior changes enough that keeping the ENS name would be misleading.
+
+| ENS file | Our path | What changes |
+|----------|----------|-------------|
+| `wrapper/NameWrapper.sol` | `contracts/wrapper/SNRCNameWrapper.sol` | UUPS wrap + replace hardcoded `.eth` node with parameterized TLD nodes, rename `wrapETH2LD` → `wrapSNRC2LD`, support two base registrars instead of one. Fuse system, expiry logic, ERC-1155 mechanics — all unchanged. |
+
+### New contracts (no ENS equivalent)
+
+| Our path | Why new |
+|----------|---------|
+| `contracts/resolver/SimplexResolver.sol` | ENS PublicResolver has ~8 profile contracts (AddrResolver, TextResolver, ContentHashResolver...). We replace all of them with a single categorized-link mapping. Clean-room, ~50 lines of logic. |
+| `contracts/controller/SimplexController.sol` | Fork of `ETHRegistrarController` but heavily adapted: stablecoin payment (not ETH), NFT gate, reserved names, min-length gate, admin functions. Commit-reveal core kept from ENS. |
+| `contracts/controller/SimplexPriceOracle.sol` | Replaces ENS's `StablePriceOracle` + `ExponentialPremiumPriceOracle`. No Chainlink feed (prices are in stablecoin directly). Dutch auction decay logic reused from ENS. |
+| `contracts/interfaces/ISimplexResolver.sol` | New interface for categorized links |
+| `contracts/interfaces/ISimplexController.sol` | New interface for controller |
+| `contracts/mocks/MockSMPXNFT.sol` | Test mock |
+| `contracts/mocks/TestUSDC.sol` | Test mock (from PoC) |
+
+### Dropped from ENS (not forked)
+
+| ENS module | Why dropped |
+|------------|------------|
+| `dnsregistrar/` + `dnssec-oracle/` | No DNS integration needed |
+| `resolvers/PublicResolver.sol` + `profiles/*` | Replaced by SimplexResolver |
+| `ethregistrar/StablePriceOracle.sol` | Replaced by SimplexPriceOracle |
+| `ethregistrar/ExponentialPremiumPriceOracle.sol` | Dutch auction logic extracted into SimplexPriceOracle |
+| `ethregistrar/DummyOracle.sol`, `TestResolver.sol` | ENS test helpers, not needed |
+
+### Audit summary
+
+An auditor reviewing SNRC needs to focus on:
+1. **SimplexController.sol** — all SNRC-specific access control (NFT gate, reserved names, length gate, stablecoin payment). This is the primary attack surface.
+2. **SimplexPriceOracle.sol** — pricing logic correctness.
+3. **SimplexResolver.sol** — authorization for link writes.
+4. **UUPS-wrapped contracts** — verify the upgrade pattern is correctly applied (mechanical check).
+5. **SNRCNameWrapper.sol** — verify `.eth` → TLD parameterization didn't break fuse logic.
+6. **ENSRegistry.sol / BaseRegistrarImplementation.sol** — verify UUPS boilerplate is correct (mechanical, ~10 lines each).
+
+Everything else is verbatim ENS (audited by Trail of Bits, OpenZeppelin) or standard OpenZeppelin v5.
 
 ---
 
@@ -131,15 +209,9 @@ User → approve(USDC, controller, amount)
 
 ### Phase 3: Core registry (ENS fork)
 
-**Goal**: `SNRCRegistry` with UUPS upgradeability.
+**Goal**: `ENSRegistry` with UUPS upgradeability.
 
-**`contracts/interfaces/ISNRC.sol`** — rename ENS.sol interface. Same events/functions (setRecord, setSubnodeOwner, setResolver, setOwner, setTTL, owner, resolver, ttl, recordExists).
-
-**`contracts/registry/SNRCRegistry.sol`** — fork ENSRegistry:
-- Replace constructor with `initialize()` + `UUPSUpgradeable` + `OwnableUpgradeable` (OZ v5)
-- Keep `Record` struct: `{owner, resolver, ttl}`
-- Keep `records` mapping, `operators` mapping, `authorised` modifier
-- Add `_authorizeUpgrade()` restricted to owner
+Mechanical UUPS wrap of `ENSRegistry.sol` — see reuse map. Zero logic changes, file keeps its ENS name. The `ENS.sol` interface is copied verbatim.
 
 Namehash scheme is identical to ENS: `namehash("alice.simplex") = keccak256(namehash("simplex"), keccak256("alice"))`.
 
@@ -181,16 +253,11 @@ Category constants (convenience, not enforced — any `bytes32` key works):
 
 ### Phase 5: Base registrar (ERC-721 per TLD)
 
-**Goal**: Fork BaseRegistrarImplementation with UUPS.
+**Goal**: `BaseRegistrarImplementation` with UUPS.
 
-**`contracts/registrar/SNRCBaseRegistrar.sol`**:
-- `initialize(ISNRC registry, bytes32 baseNode)` — UUPS
-- ERC-721: tokenId = `uint256(keccak256(label))`
-- Expiry tracking: `mapping(uint256 => uint256) public nameExpires`
-- 90-day grace period constant
-- Controller authorization: `mapping(address => bool) public controllers`
-- Functions: `register(id, owner, duration)`, `renew(id, duration)`, `reclaim(id, owner)`, `available(id)`, `nameExpires(id)`, `addController()`, `removeController()`
-- Two instances: one with `baseNode = namehash("simplex")`, one with `baseNode = namehash("testing")`
+Mechanical UUPS wrap of `BaseRegistrarImplementation.sol` — see reuse map. Zero logic changes, file keeps its ENS name. All ENS ERC-721 mechanics (tokenId = labelhash, expiry tracking, grace period, controller authorization) preserved verbatim.
+
+Two instances deployed: one with `baseNode = namehash("simplex")`, one with `baseNode = namehash("testing")`.
 
 **Verify**: Register name, check expiry, renew, verify ERC-721 ownership, reclaim registry record.
 
@@ -200,7 +267,7 @@ This is the core SNRC-specific contract — most divergence from ENS lives here.
 
 **`contracts/controller/SimplexPriceOracle.sol`**:
 - No Chainlink feed needed — prices are in stablecoin directly
-- `uint256 public baseRate` (admin-settable, default 100_000_000 = 100 USDC at 6 decimals)
+- `uint256 public baseRate` (admin-settable, default 1_000_000 = 1 USDC at 6 decimals)
 - `price(string name, uint256 expires, uint256 duration) → (base, premium)`
 - Length multipliers: 6+ → 1x, 5 → 8x, 4 → 32x, 3 → 128x
 - Dutch auction premium for expired names: starts at configurable `startPremium`, halves daily for 28 days (fork ENS `ExponentialPremiumPriceOracle` logic)
@@ -247,29 +314,18 @@ Extension point for future voucher tokens:
 
 **Goal**: Fork ENS NameWrapper for ERC-1155 name wrapping with fuses.
 
-**`contracts/wrapper/SNRCNameWrapper.sol`** — fork NameWrapper.sol:
-- Replace `.eth` references with parameterized TLD support
-- UUPS upgradeability
-- Keep fuse system: CANNOT_UNWRAP, CANNOT_TRANSFER, PARENT_CANNOT_CONTROL, etc.
-- Rename `wrapETH2LD` → `wrapSNRC2LD`
-- Keep subdomain management, expiry normalization
+Moderate changes — see reuse map. The NameWrapper gets UUPS wrapping plus `.eth`-specific references replaced with parameterized TLD support (two base registrar addresses instead of one, `wrapETH2LD` → `wrapSNRC2LD`). All fuse logic, expiry normalization, and ERC-1155 mechanics stay untouched.
 
-Supporting files (direct forks):
-- `contracts/wrapper/ERC1155Fuse.sol`
-- `contracts/wrapper/Controllable.sol`
-- `contracts/wrapper/StaticMetadataService.sol`
+Supporting files copied verbatim: `ERC1155Fuse.sol`, `Controllable.sol`, `BytesUtils.sol`, `StaticMetadataService.sol`.
 
 **Verify**: Wrap name, verify ERC-1155 token, burn fuses, verify restrictions, unwrap.
 
 ### Phase 8: Reverse registrar + Root
 
-**`contracts/registry/ReverseRegistrar.sol`** — fork from ENS, maps addresses back to SimpleX names.
+Both are verbatim copies — see reuse map. Files keep their ENS names.
 
-**`contracts/root/Root.sol`** — fork from ENS:
-- Controls root node (0x0)
-- `setSubnodeOwner(label, owner)` — assigns TLD ownership
-- `lock(label)` — permanently locks a TLD
-- Non-upgradeable (trivially simple)
+**ReverseRegistrar**: copied unchanged.
+**Root**: copied unchanged (non-upgradeable, trivially simple).
 
 **Verify**: Root assigns TLD ownership. Locked TLDs cannot be reassigned.
 
@@ -278,14 +334,14 @@ Supporting files (direct forks):
 **`scripts/deploy-local.ts`** — deployment order (critical dependency chain):
 1. Deploy mocks: TestUSDC, MockSMPXNFT
 2. Mint test NFTs + USDC to Hardhat accounts
-3. Deploy SNRCRegistry (UUPS proxy)
+3. Deploy ENSRegistry (UUPS proxy)
 4. Deploy SimplexResolver (UUPS proxy)
 5. Deploy ReverseRegistrar
 6. Deploy Root (non-proxy), transfer registry root to Root
-7. Deploy SNRCBaseRegistrar for `.simplex` (UUPS proxy, `baseNode = namehash("simplex")`)
-8. Deploy SNRCBaseRegistrar for `.testing` (UUPS proxy, `baseNode = namehash("testing")`)
+7. Deploy BaseRegistrarImplementation for `.simplex` (UUPS proxy, `baseNode = namehash("simplex")`)
+8. Deploy BaseRegistrarImplementation for `.testing` (UUPS proxy, `baseNode = namehash("testing")`)
 9. Root: set subnode owners for both TLDs, lock both
-10. Deploy SimplexPriceOracle (baseRate = 100 USDC/year)
+10. Deploy SimplexPriceOracle (baseRate = 1 USDC/year)
 11. Deploy SimplexController for `.simplex` (nftGate=true, minChars=6)
 12. Deploy SimplexController for `.testing` (nftGate=false, minChars=3)
 13. Add controllers to their respective base registrars
@@ -386,7 +442,7 @@ Remove ENS-specific features that don't apply to SNRC. Disable at the route/comp
 - **NFT gate indicator**: On `.simplex` registration, check `smpxNft.balanceOf(sender)` and show status (gated/ungated, holder/non-holder). Block registration with clear message if gate active and user has no NFT.
 - **USDC approval step**: Before commit, check `paymentToken.allowance(sender, controller)`. If insufficient, prompt approve tx first. Show USDC balance.
 - **Categorized link editor**: Replace ENS's text-record/content-hash editor with contact link + channel link fields in the name management view.
-- **Pricing display**: Show SNRC pricing table (100/800/3200/12800 USDC) instead of ENS pricing.
+- **Pricing display**: Show SNRC pricing table (1/8/32/128 USDC) instead of ENS pricing.
 - **Admin panel**: New page (`src/pages/admin.tsx`) for admin functions: manage reserved names, adjust min char length, toggle NFT gate. Only visible when connected wallet is admin.
 
 #### E. Test account support for local dev
@@ -408,7 +464,7 @@ frontend/                          (clone of ens-app-v3)
       chains.ts                    MODIFIED — add Hardhat local, Hoodi
       contracts.ts                 MODIFIED — replace ENS addresses with SNRC
     hooks/
-      useNameAvailability.ts       MODIFIED — call SNRCBaseRegistrar.available()
+      useNameAvailability.ts       MODIFIED — call BaseRegistrarImplementation.available()
       useRegistration.ts           MODIFIED — call SimplexController
       useNftGate.ts                NEW — check SMPXNFT balance
       usePricing.ts                MODIFIED — call SimplexPriceOracle

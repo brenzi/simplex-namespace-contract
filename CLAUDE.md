@@ -8,13 +8,15 @@ Full fork of [ENS contracts](https://github.com/ensdomains/ens-contracts) + [ENS
 
 ## Architecture
 
-Single `SNRCRegistry` (UUPS proxy, fork of ENSRegistry) with two TLDs:
+Single `ENSRegistry` (UUPS proxy, unchanged logic) with two TLDs:
 - `.simplex` — NFT-gated registration (SMPXNFT holders only initially), 6+ char minimum, reserved names, stablecoin pricing
 - `.testing` — open registration, 3+ chars, same pricing
 
-Each TLD has its own `SNRCBaseRegistrar` (ERC-721) + `SimplexController` (commit-reveal, pricing, gates). One shared `SimplexResolver` stores categorized links per name (`mapping(node => mapping(category => bytes))`). `SNRCNameWrapper` provides ERC-1155 wrapping with fuses.
+Each TLD has its own `BaseRegistrarImplementation` (ERC-721, UUPS-wrapped, unchanged logic) + `SimplexController` (commit-reveal, pricing, gates — new). One shared `SimplexResolver` stores categorized links per name (`mapping(node => mapping(category => bytes))`) — new. `SNRCNameWrapper` provides ERC-1155 wrapping with fuses (moderate changes from ENS NameWrapper: parameterized TLD support).
 
-Payment is ERC-20 stablecoin (USDC/USDT), not ETH. Pricing: 100 USDC/year base (6+ chars), 8x for 5-char, 32x for 4-char, 128x for 3-char.
+Unchanged ENS contracts keep their original filenames for easy diffing against upstream.
+
+Payment is ERC-20 stablecoin (USDC/USDT), not ETH. Pricing: 1 USDC/year base (6+ chars), 8x for 5-char, 32x for 4-char, 128x for 3-char.
 
 ## Key references
 
@@ -63,11 +65,11 @@ The resolver uses `bytes32` keys (not a single blob). Initial categories:
 ## Deployment order (dependencies)
 
 1. Mocks (TestUSDC, MockSMPXNFT) — local/testnet only
-2. SNRCRegistry (UUPS proxy)
+2. ENSRegistry (UUPS proxy)
 3. SimplexResolver (UUPS proxy)
 4. ReverseRegistrar
 5. Root → transfer registry root → assign TLD ownership → lock
-6. SNRCBaseRegistrar × 2 (UUPS proxy, one per TLD)
+6. BaseRegistrarImplementation × 2 (UUPS proxy, one per TLD)
 7. SimplexPriceOracle
 8. SimplexController × 2 (one per TLD, different gate configs)
 9. Add controllers to their base registrars
