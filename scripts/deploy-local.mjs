@@ -1,0 +1,162 @@
+#!/usr/bin/env node
+/**
+ * Deploy SNRC contracts to a local Hardhat node.
+ * Run from parent repo:  node scripts/deploy-local.mjs
+ *
+ * Requires: ens-contracts compiled (npx hardhat compile)
+ * Outputs NEXT_PUBLIC_DEPLOYMENT_ADDRESSES JSON for the frontend.
+ */
+import { createPublicClient, createWalletClient, http, labelhash, namehash, zeroHash, zeroAddress } from 'viem'
+import { hardhat } from 'viem/chains'
+import { readFileSync } from 'fs'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const ARTIFACTS = join(__dirname, '..', 'ens-contracts', 'artifacts', 'contracts')
+
+function loadArtifact(path) {
+  const full = join(ARTIFACTS, path)
+  const json = JSON.parse(readFileSync(full, 'utf8'))
+  return { abi: json.abi, bytecode: json.bytecode }
+}
+
+const rpcUrl = process.env.RPC_URL || 'http://127.0.0.1:8545'
+const tld = process.env.SIMPLEX_TLD || 'testing'
+const tldNode = namehash(tld)
+const nftGateEnabled = tld === 'testing'
+
+const transport = http(rpcUrl)
+const publicClient = createPublicClient({ chain: hardhat, transport })
+const walletClient = createWalletClient({
+  chain: hardhat,
+  transport,
+  account: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266', // Hardhat account #0
+})
+const account = walletClient.account
+
+async function deploy(name, artifactPath, args = []) {
+  const { abi, bytecode } = loadArtifact(artifactPath)
+  const hash = await walletClient.deployContract({ abi, bytecode, args })
+  const receipt = await publicClient.waitForTransactionReceipt({ hash })
+  console.log(`${name}: ${receipt.contractAddress}`)
+  return { address: receipt.contractAddress, abi }
+}
+
+async function write(contract, functionName, args) {
+  const hash = await walletClient.writeContract({
+    address: contract.address,
+    abi: contract.abi,
+    functionName,
+    args,
+  })
+  await publicClient.waitForTransactionReceipt({ hash })
+}
+
+async function main() {
+  console.log(`Deploying SNRC for .${tld} TLD...`)
+  console.log(`Deployer: ${account.address}`)
+  console.log(`RPC: ${rpcUrl}\n`)
+
+  const ensRegistry = await deploy('ENSRegistry',
+    'registry/ENSRegistry.sol/ENSRegistry.json')
+
+  const baseRegistrar = await deploy('BaseRegistrarImplementation',
+    'ethregistrar/BaseRegistrarImplementation.sol/BaseRegistrarImplementation.json',
+    [ensRegistry.address, tldNode])
+
+  const reverseRegistrar = await deploy('ReverseRegistrar',
+    'reverseRegistrar/ReverseRegistrar.sol/ReverseRegistrar.json',
+    [ensRegistry.address])
+
+  const defaultReverseRegistrar = await deploy('DefaultReverseRegistrar',
+    'reverseRegistrar/DefaultReverseRegistrar.sol/DefaultReverseRegistrar.json')
+
+  // Set up reverse namespace
+  await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash('reverse'), account.address])
+  await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
+
+  // Set TLD owner to deployer (need to set resolver before transferring)
+  await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
+
+  const nameWrapper = await deploy('NameWrapper',
+    'wrapper/NameWrapper.sol/NameWrapper.json',
+    [ensRegistry.address, baseRegistrar.address, account.address])
+
+  const publicResolver = await deploy('PublicResolver',
+    'resolvers/PublicResolver.sol/PublicResolver.json',
+    [ensRegistry.address, nameWrapper.address, zeroAddress, reverseRegistrar.address])
+
+  await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
+
+  const dummyOracle = await deploy('DummyOracle',
+    'ethregistrar/DummyOracle.sol/DummyOracle.json',
+    [100000000n])
+
+  const priceOracle = await deploy('ExponentialPremiumPriceOracle',
+    'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
+    [dummyOracle.address, [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n], 100000000000000000000000000n, 21n])
+
+  const mockNft = await deploy('MockSMPXNFT',
+    'mocks/MockSMPXNFT.sol/MockSMPXNFT.json')
+
+  await write(mockNft, 'mint', [account.address])
+  console.log(`Minted NFT #0 to deployer`)
+
+  const controller = await deploy('SimplexController',
+    'simplex/SimplexController.sol/SimplexController.json',
+    [
+      baseRegistrar.address,
+      priceOracle.address,
+      60n,
+      86400n,
+      reverseRegistrar.address,
+      defaultReverseRegistrar.address,
+      ensRegistry.address,
+      [tldNode, `.${tld}`, 6, nftGateEnabled ? mockNft.address : zeroAddress, nftGateEnabled],
+    ])
+
+  // Wire up
+  await write(baseRegistrar, 'addController', [controller.address])
+  await write(reverseRegistrar, 'setController', [controller.address, true])
+  await write(defaultReverseRegistrar, 'setController', [controller.address, true])
+  console.log(`Controller wired up`)
+
+  // Set resolver then transfer TLD to BaseRegistrar
+  await write(ensRegistry, 'setResolver', [tldNode, publicResolver.address])
+  await write(ensRegistry, 'setOwner', [tldNode, baseRegistrar.address])
+  console.log(`.${tld} node transferred to BaseRegistrar\n`)
+
+  const addresses = {
+    ENSRegistry: ensRegistry.address,
+    BaseRegistrarImplementation: baseRegistrar.address,
+    ReverseRegistrar: reverseRegistrar.address,
+    DefaultReverseRegistrar: defaultReverseRegistrar.address,
+    NameWrapper: nameWrapper.address,
+    PublicResolver: publicResolver.address,
+    ETHRegistrarController: controller.address,
+    ExponentialPremiumPriceOracle: priceOracle.address,
+    DummyOracle: dummyOracle.address,
+    MockSMPXNFT: mockNft.address,
+    NameWrapperPublicResolver: publicResolver.address,
+    UniversalResolver: zeroAddress,
+    Multicall: zeroAddress,
+    DNSRegistrar: zeroAddress,
+    DNSSECImpl: zeroAddress,
+    LegacyETHRegistrarController: zeroAddress,
+    LegacyPublicResolver: zeroAddress,
+    WrappedEthRegistrarController: zeroAddress,
+    WrappedStaticBulkRenewal: zeroAddress,
+    UniversalRegistrarRenewalWithReferrer: zeroAddress,
+    OffchainDNSResolver: zeroAddress,
+    ExtendedDNSResolver: zeroAddress,
+    OutdatedResolver: zeroAddress,
+  }
+
+  console.log('=== DEPLOYMENT ADDRESSES ===')
+  console.log(JSON.stringify(addresses, null, 2))
+  console.log('\n=== For .env.local ===')
+  console.log(`NEXT_PUBLIC_DEPLOYMENT_ADDRESSES='${JSON.stringify(addresses)}'`)
+}
+
+main().catch((err) => { console.error(err); process.exit(1) })

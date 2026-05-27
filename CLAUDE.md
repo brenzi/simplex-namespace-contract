@@ -89,8 +89,8 @@ Set via `setText(node, "simplex.contact", value)`, read via `text(node, "simplex
 
 ## Toolchain
 
-- Node 20.x (`/usr/bin/node`), pnpm 9.x
-- Solidity 0.8.24, Hardhat 2.x, optimizer 200 runs, evmVersion paris
+- Node 22.x, pnpm 9.x
+- Solidity 0.8.26, Hardhat 3.x (ENS upstream uses this)
 - OpenZeppelin Contracts v5 (UUPS, ERC-721, ERC-1155, ERC-20, Ownable)
 - Frontend: Next.js + styled-components + wagmi/viem (fork of ens-app-v3, logo swap only)
 - Tests: Hardhat + ethers v6 (contracts), Playwright (e2e)
@@ -124,10 +124,23 @@ Each TLD is an independent deployment:
 
 ## Frontend approach
 
-Fork ens-app-v3, minimal diff. Each frontend deployment targets one TLD.
-- **Branding**: swap logo and favicon only. No theme/color/font changes.
-- **Contract rewiring**: replace `@ensdomains/ensjs` calls with direct viem calls to SNRC contracts via `src/contracts/snrc.ts`
-- **Disable**: DNS import, ENS v2 migration, legacy favourites, on-chain subname UI, image upload/display — short-circuit, don't delete
-- **Payment**: ETH — same as ENS, no changes to payment flow
-- **Adapt**: TLD name in config (not a selector), profile (highlight simplex.contact/channel fields), pricing display
-- **Add**: admin panel page, NFT gate indicator (.testing only)
+Fork ens-app-v3, minimal diff. Each frontend deployment targets one TLD via `NEXT_PUBLIC_SIMPLEX_TLD` env var.
+
+### Done
+- **ensjs patch**: `getNameType` + `validation` patched so `.testing`/`.simplex` are treated as eth-like TLDs (pnpm patch, 4 one-line changes)
+- **TLD support**: all `.endsWith('.eth')` checks expanded to include our TLDs
+- **Search**: bare name search appends configured TLD
+- **Branding**: placeholder logo SVGs (need real SimpleX logo)
+- **Disable**: DNS import, ENS v2, legacy favourites, ENS nav links — short-circuited
+- **Images**: avatar upload hidden, avatar display disabled (useEnsAvatar returns null)
+- **Chains**: Hoodi testnet added
+- **Config**: `.env.simplex` with all env vars, contract addresses via `NEXT_PUBLIC_DEPLOYMENT_ADDRESSES`
+- **Build**: `pnpm build` passes
+
+### Remaining
+- **Admin panel**: new page for reserved names, char length, NFT gate management
+- **NFT gate indicator**: show NFT requirement on .testing registration
+- **Pricing display**: show $1/$8/$32/$128 instead of ENS pricing
+- **Real logo**: replace placeholder SVGs with SimpleX brand assets
+- **End-to-end test**: deploy contracts to Hardhat, point frontend, verify full registration flow
+- **Subgraph**: ENS app relies on The Graph for name queries — local dev without subgraph limits some features

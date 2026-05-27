@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy:local": "node scripts/deploy-local.mjs",
+    "deploy:local:simplex": "SIMPLEX_TLD=simplex node scripts/deploy-local.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.33.0"
+  }
+}
