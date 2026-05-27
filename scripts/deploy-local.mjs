@@ -122,6 +122,14 @@ async function main() {
   await write(defaultReverseRegistrar, 'setController', [controller.address, true])
   console.log(`Controller wired up`)
 
+  // UniversalResolver (needed by the frontend for name lookups)
+  const universalResolver = await deploy('UniversalResolver',
+    'universalResolver/UniversalResolver.sol/UniversalResolver.json',
+    [account.address, ensRegistry.address, zeroAddress])
+
+  // Multicall3 not deployed (viem handles batching without it for localhost)
+  const multicall3Address = zeroAddress
+
   // Set resolver then transfer TLD to BaseRegistrar
   await write(ensRegistry, 'setResolver', [tldNode, publicResolver.address])
   await write(ensRegistry, 'setOwner', [tldNode, baseRegistrar.address])
@@ -139,8 +147,8 @@ async function main() {
     DummyOracle: dummyOracle.address,
     MockSMPXNFT: mockNft.address,
     NameWrapperPublicResolver: publicResolver.address,
-    UniversalResolver: zeroAddress,
-    Multicall: zeroAddress,
+    UniversalResolver: universalResolver.address,
+    Multicall: multicall3Address,
     DNSRegistrar: zeroAddress,
     DNSSECImpl: zeroAddress,
     LegacyETHRegistrarController: zeroAddress,

@@ -22,7 +22,7 @@ simplex-namespace-contract/           ← this repo
 ## Setup from scratch
 
 ```bash
-git clone --recurse-submodules git@github.com:simplex-network/simplex-namespace-contract.git
+git clone --recurse-submodules git@github.com:brenzi/simplex-namespace-contract.git
 cd simplex-namespace-contract
 ```
 
