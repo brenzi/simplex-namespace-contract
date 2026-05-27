@@ -52,6 +52,8 @@ Each deployment: `ENSRegistry` + `BaseRegistrarImplementation` + `SimplexControl
 
 Resolver: ENS `PublicResolver` used verbatim. SimpleX links stored as text records: `simplex.contact`, `simplex.channel`.
 
+Subnames are on-chain (via NameWrapper), not off-chain. This diverges from the current whitepaper draft but is the intended design. NameWrapper also enables marketplace trading of names as ERC-1155 tokens.
+
 Payment is ETH (same as ENS). Pricing: $1/year (6+ chars), $8 (5), $32 (4), $128 (3). ENS price oracle verbatim.
 
 ## Key references

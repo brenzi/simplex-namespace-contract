@@ -224,7 +224,7 @@ Every modification to ENS code traced to the feature that requires it. If a chan
 |--------|--------------|
 | **UUPS wrap ENSRegistry** (constructor→initialize, +UUPSUpgradeable) | **Upgradeability**: contracts must be upgradeable initially, with ability to renounce later once stable. ENS deploys immutable contracts; we need the option to fix bugs post-launch. |
 | **UUPS wrap BaseRegistrarImplementation** (same pattern) | **Upgradeability**: same reason as registry. |
-| **UUPS wrap NameWrapper** (same pattern) | **Upgradeability**: same reason as registry. |
+| **UUPS wrap NameWrapper** (same pattern) | **Upgradeability** + **on-chain subnames** + **marketplace trading**: NameWrapper enables ERC-1155 tokens for names (needed for marketplace trading) and on-chain subname management with fuse permissions. Subnames are on-chain, not off-chain (diverges from current whitepaper draft). |
 | **New: SimplexController.sol** (fork of ETHRegistrarController) | All SNRC-specific registration logic lives here. Individual additions below. |
 | ↳ `uint8 minCharLength` + check in `register()` | **Length restriction**: at launch only 6+ char names can be registered. Admin can lower in steps. Prevents land-grab of short premium names before the community is ready. |
 | ↳ `mapping reservedNames` + check in `register()` | **Reserved names**: a list of names (e.g., trademarks, SimpleX official names) that can't be registered by the public. Required by SNCC governance for dispute resolution. |
@@ -255,7 +255,7 @@ Every modification to ENS code traced to the feature that requires it. If a chan
 | **Disable legacy favourites page** | **Not applicable**: no legacy data exists. |
 | **Hide reverse resolution UI** | **Not launched**: reverse resolution is deployed (contract verbatim) but not exposed to users yet. Can be re-enabled later. |
 | **Hide image upload/display** | **Scope reduction**: avatar/image features are not part of the SimpleX namespace MVP. Hiding them reduces UI complexity. Contracts unchanged — images can be re-enabled later. |
-| **Disable subname management UI** | **Off-chain subnames**: per whitepaper, subnames are resolved off-chain via parent's short link blob. On-chain subname creation would be misleading. |
+| ~~Subname management UI~~ | **Kept**: subnames are on-chain via NameWrapper. ENS subname UI stays as-is. |
 | **Hoodi chain config** | **Testnet deployment**: frontend must support connecting to Hoodi testnet. |
 
 ---
@@ -470,7 +470,7 @@ Disable at the route/component level (short-circuit, don't delete ENS code):
 - **Legacy favourites** (`src/pages/legacyfavourites.tsx`) — not applicable
 - **Reverse resolution UI** — keep the contract but hide UI for now
 - **Avatar / image upload** — remove image upload capability, don't display images even if present in records. Leave contracts unchanged.
-- **Subname management UI** — subnames are off-chain per whitepaper, disable on-chain subname creation UI
+- ~~Subname management UI~~ — **kept**: subnames are on-chain via NameWrapper
 
 #### D. Features to add/adapt
 
