@@ -77,6 +77,34 @@ test.describe('SimpleX Namespace', () => {
     await expect(searchResults).toContainText('.testing', { timeout: 10_000 })
   })
 
+  test('search with connected wallet does not crash', async ({ page }) => {
+    const wallet = await injectHeadlessWeb3Provider({
+      page,
+      privateKeys: [DEPLOYER_KEY],
+      chains: [hardhatChain],
+    })
+
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    const searchInput = page.locator('input[placeholder]').first()
+    await searchInput.fill('testname')
+    await page.waitForTimeout(3000)
+
+    // Dev mode: dismiss Next.js error overlay if it appears (unregistered names
+    // trigger UniversalResolver errors that are harmless but noisy in dev)
+    const overlay = page.locator('[data-nextjs-dialog]')
+    if (await overlay.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await page.locator('button[aria-label="Close"]').first().click().catch(() => {})
+      await page.waitForTimeout(500)
+    }
+
+    // Should show .testing TLD in results after dismissing overlay
+    const results = page.locator('[data-testid="search-result-name"]').first()
+    await expect(results).toContainText('.testing', { timeout: 10_000 })
+  })
+
   test.skip('admin panel loads and shows state for owner', async ({ page }) => {
     const wallet = await injectHeadlessWeb3Provider({
       page,

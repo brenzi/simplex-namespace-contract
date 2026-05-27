@@ -123,9 +123,12 @@ async function main() {
   console.log(`Controller wired up`)
 
   // UniversalResolver (needed by the frontend for name lookups)
+  const dummyGateway = await deploy('DummyGatewayProvider',
+    'mocks/DummyGatewayProvider.sol/DummyGatewayProvider.json')
+
   const universalResolver = await deploy('UniversalResolver',
     'universalResolver/UniversalResolver.sol/UniversalResolver.json',
-    [account.address, ensRegistry.address, zeroAddress])
+    [account.address, ensRegistry.address, dummyGateway.address])
 
   // Multicall3 not deployed (viem handles batching without it for localhost)
   const multicall3Address = zeroAddress
