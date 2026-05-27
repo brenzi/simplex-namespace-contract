@@ -42,42 +42,44 @@ npx hardhat compile                   # 166 Solidity files
 npx vitest run                        # 1547 tests (1526 ENS + 21 SimplexController)
 ```
 
-## Run locally (3 terminals)
+## Run locally
 
-### Terminal 1: Hardhat node
+One command starts everything (Hardhat node, deploys contracts, starts frontend):
 
 ```bash
-cd ens-contracts
-npx hardhat node
+./scripts/run-local.sh
 ```
 
-Leave running. This gives you 20 test accounts with 10000 ETH each.
+For `.simplex` TLD instead of `.testing`:
 
-### Terminal 2: Deploy contracts
+```bash
+SIMPLEX_TLD=simplex ./scripts/run-local.sh
+```
+
+Open http://localhost:3000.
+
+<details>
+<summary>Manual setup (separate terminals)</summary>
+
+**Terminal 1**: Hardhat node
+
+```bash
+cd ens-contracts && npx hardhat node
+```
+
+**Terminal 2**: Deploy + frontend
 
 ```bash
 node scripts/deploy-local.mjs
-```
-
-This deploys all contracts for the `.testing` TLD and outputs a `NEXT_PUBLIC_DEPLOYMENT_ADDRESSES` JSON line. Copy it.
-
-For `.simplex` TLD instead:
-
-```bash
-SIMPLEX_TLD=simplex node scripts/deploy-local.mjs
-```
-
-### Terminal 3: Frontend
-
-```bash
+# Copy the NEXT_PUBLIC_DEPLOYMENT_ADDRESSES line from the output, then:
 cd ens-app-v3
-NEXT_PUBLIC_DEPLOYMENT_ADDRESSES='<paste the JSON from terminal 2>' \
+NEXT_PUBLIC_DEPLOYMENT_ADDRESSES='<paste>' \
 NEXT_PUBLIC_PROVIDER=http://127.0.0.1:8545 \
 NEXT_PUBLIC_SIMPLEX_TLD=testing \
 pnpm dev
 ```
 
-Open http://localhost:3000.
+</details>
 
 ## MetaMask setup
 
