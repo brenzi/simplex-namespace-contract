@@ -214,6 +214,52 @@ Everything else is verbatim ENS (audited by Trail of Bits, OpenZeppelin) or stan
 
 ---
 
+## Change justification
+
+Every modification to ENS code traced to the feature that requires it. If a change doesn't appear here, it shouldn't be in the diff.
+
+### Contract changes (ens-contracts fork)
+
+| Change | Justification |
+|--------|--------------|
+| **UUPS wrap ENSRegistry** (constructor→initialize, +UUPSUpgradeable) | **Upgradeability**: contracts must be upgradeable initially, with ability to renounce later once stable. ENS deploys immutable contracts; we need the option to fix bugs post-launch. |
+| **UUPS wrap BaseRegistrarImplementation** (same pattern) | **Upgradeability**: same reason as registry. |
+| **UUPS wrap NameWrapper** (same pattern) | **Upgradeability**: same reason as registry. |
+| **New: SimplexController.sol** (fork of ETHRegistrarController) | All SNRC-specific registration logic lives here. Individual additions below. |
+| ↳ `uint8 minCharLength` + check in `register()` | **Length restriction**: at launch only 6+ char names can be registered. Admin can lower in steps. Prevents land-grab of short premium names before the community is ready. |
+| ↳ `mapping reservedNames` + check in `register()` | **Reserved names**: a list of names (e.g., trademarks, SimpleX official names) that can't be registered by the public. Required by SNCC governance for dispute resolution. |
+| ↳ `IERC721 smpxNft` + `bool nftGateEnabled` + check in `register()` | **NFT-gated early access** (`.testing` only): only SMPXNFT holders can register during the initial phase. Rewards early supporters. Dead code path on `.simplex` deployment (`nftGateEnabled=false`). |
+| ↳ `setMinCharLength(uint8)` admin function | **Gradual opening**: admin lowers the char minimum over time (6→5→4→3). Monotonic decrease prevents re-closing. |
+| ↳ `setNftGateEnabled(false)` admin function | **Opening registration**: admin disables the NFT gate when the initial phase ends. One-way (true→false) so it can't be re-gated. |
+| ↳ `addReservedName` / `removeReservedName` admin functions | **Reserved name management**: admin maintains the reserved list over time. |
+| ↳ `registerReserved` admin function | **Assigning reserved names**: admin can register a reserved name to a specific address (e.g., assign `simplex.testing` to the official SimpleX account). |
+| **New: MockSMPXNFT.sol** | **Testing**: faithful mock of the mainnet SMPXNFT contract for local dev and testnet. Not deployed to mainnet. |
+| **Add OZ upgradeable deps** to package.json | **Upgradeability**: required by UUPS wrapping above. |
+| **Add Hoodi network** to hardhat.config | **Testnet deployment**: Hoodi is the target testnet. |
+| **Drop `dnsregistrar/` + `dnssec-oracle/`** | **Not needed**: SimpleX namespaces are not DNS domains. Including these would add unused code and attack surface. |
+
+### Frontend changes (ens-app-v3 fork)
+
+| Change | Justification |
+|--------|--------------|
+| **Replace logo + favicon** | **Branding**: users must know they're on the SimpleX namespace app, not ENS. |
+| **Contract address rewiring** (constants, hooks, transaction-flow) | **Different deployment**: our contracts are at different addresses than ENS. The app must talk to SNRC contracts. |
+| **Replace ensjs calls with direct viem calls** | **Different contract interface**: SimplexController has a different ABI than ETHRegistrarController (additional parameters). ensjs hardcodes ENS ABIs. |
+| **TLD config** (`.eth` → `.testing` / `.simplex`) | **Different TLD**: our names end in `.testing` or `.simplex`, not `.eth`. Each frontend deployment targets one TLD. |
+| **Pricing display** ($1/$8/$32/$128) | **Different prices**: our price tiers differ from ENS ($5/$160/$640 for .eth). |
+| **NFT gate indicator** (`.testing` only) | **NFT-gated early access**: users need to see whether they hold the required NFT and why registration is blocked if they don't. |
+| **Highlight simplex.contact/channel fields** in profile | **Core use case**: these text records are the primary data users interact with. ENS shows dozens of record types equally; we need the SimpleX links front and center. |
+| **Admin panel page** (new) | **Admin operations**: admin needs a UI to manage reserved names, adjust char length, toggle NFT gate. No ENS equivalent. |
+| **Disable DNS import page** | **Not applicable**: no DNS integration in SNRC. Showing it would confuse users. |
+| **Disable ENS v2 migration page** | **Not applicable**: there is no prior version to migrate from. |
+| **Disable legacy favourites page** | **Not applicable**: no legacy data exists. |
+| **Hide reverse resolution UI** | **Not launched**: reverse resolution is deployed (contract verbatim) but not exposed to users yet. Can be re-enabled later. |
+| **Hide image upload/display** | **Scope reduction**: avatar/image features are not part of the SimpleX namespace MVP. Hiding them reduces UI complexity. Contracts unchanged — images can be re-enabled later. |
+| **Disable subname management UI** | **Off-chain subnames**: per whitepaper, subnames are resolved off-chain via parent's short link blob. On-chain subname creation would be misleading. |
+| **Hoodi chain config** | **Testnet deployment**: frontend must support connecting to Hoodi testnet. |
+
+---
+
 ## Phases
 
 ### Phase 1: Submodules + scaffolding
