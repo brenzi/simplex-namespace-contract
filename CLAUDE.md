@@ -21,7 +21,17 @@ Rules:
 
 ## What this is
 
-Full fork of [ENS contracts](https://github.com/ensdomains/ens-contracts) + [ENS app v3](https://github.com/ensdomains/ens-app-v3) adapted for SimpleX Chat's decentralized namespace system. Maps human-readable names (`alice.simplex`) to categorized SimpleX short link data (contact links, channel links) on Ethereum.
+GitHub forks of [ENS contracts](https://github.com/ensdomains/ens-contracts) + [ENS app v3](https://github.com/ensdomains/ens-app-v3) adapted for SimpleX Chat's decentralized namespace system. Maps human-readable names (`alice.simplex`) to categorized SimpleX short link data (contact links, channel links) on Ethereum.
+
+## Repo structure
+
+Work happens on `simplex` branch in two private forks owned by `epoberezkin`:
+- `epoberezkin/ens-contracts` — all contracts, tests, deployment scripts, mocks, docs
+- `epoberezkin/ens-app-v3` — frontend
+
+`main` tracks upstream ENS (fetch-only, never commit). When ready, `simplex-chat` org forks officially and we push our `simplex` branch — the public diff `main...simplex` is the audit surface.
+
+This repo (`simplex-namespace-contract`) is for coordination/planning only — no contract or app code here.
 
 ## Architecture
 
