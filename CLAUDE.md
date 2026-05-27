@@ -14,6 +14,9 @@ Rules:
 - **Do NOT add abstractions** "for flexibility" — if a one-line change works, don't wrap it in a helper.
 - **Disable features by short-circuiting** (early return, skip rendering), not by deleting ENS code.
 - **UUPS wrapping is mechanical**: constructor→initialize, add UUPSUpgradeable inheritance, add _authorizeUpgrade. No other changes to the contract body.
+- **Do NOT rename variables, functions, or files** unless the name is actively misleading after our changes.
+- **Do NOT move code** between files unless scope genuinely needs to change.
+- Anything not strictly required by our functional changes is **completely prohibited** — no drive-by refactoring, no "making code better."
 - When in doubt, leave ENS code untouched. A smaller diff is always better.
 
 ## What this is
@@ -23,14 +26,14 @@ Full fork of [ENS contracts](https://github.com/ensdomains/ens-contracts) + [ENS
 ## Architecture
 
 Single `ENSRegistry` (UUPS proxy, unchanged logic) with two TLDs:
-- `.simplex` — NFT-gated registration (SMPXNFT holders only initially), 6+ char minimum, reserved names, stablecoin pricing
+- `.simplex` — NFT-gated registration (SMPXNFT holders only initially), 6+ char minimum, reserved names
 - `.testing` — open registration, 3+ chars, same pricing
 
 Each TLD has its own `BaseRegistrarImplementation` (ERC-721, UUPS-wrapped, unchanged logic) + `SimplexController` (commit-reveal, pricing, gates — new). One shared `SimplexResolver` stores categorized links per name (`mapping(node => mapping(category => bytes))`) — new. `SNRCNameWrapper` provides ERC-1155 wrapping with fuses (moderate changes from ENS NameWrapper: parameterized TLD support).
 
 Unchanged ENS contracts keep their original filenames for easy diffing against upstream.
 
-Payment is ERC-20 stablecoin (USDC/USDT), not ETH. Pricing: 1 USDC/year base (6+ chars), 8x for 5-char, 32x for 4-char, 128x for 3-char.
+Payment is ETH (same as ENS). Pricing is USD-denominated, converted via Chainlink oracle: $1/year base (6+ chars), $8 (5-char), $32 (4-char), $128 (3-char). ENS's `StablePriceOracle` + `ExponentialPremiumPriceOracle` used verbatim.
 
 ## Key references
 
@@ -38,7 +41,7 @@ Payment is ERC-20 stablecoin (USDC/USDT), not ETH. Pricing: 1 USDC/year base (6+
 - RFC PR: https://github.com/simplex-chat/simplex-chat/pull/7001
 - ENS contracts: https://github.com/ensdomains/ens-contracts
 - ENS app v3: https://github.com/ensdomains/ens-app-v3
-- Community credits PoC: `/work/simplex-community-credits-poc/` (reuse `TestUSDC.sol`, match Solidity 0.8.24 + Hardhat conventions)
+- Community credits PoC: `/work/simplex-community-credits-poc/` (match Solidity 0.8.24 + Hardhat conventions)
 
 ## NFT gate contract (mainnet)
 
@@ -59,7 +62,7 @@ The resolver uses `bytes32` keys (not a single blob). Initial categories:
 - `setNftGateEnabled(false)` — one-way (true→false)
 - `setMinCharLength(uint8)` — monotonic decrease only (6→5→4→3)
 - `addReservedName` / `removeReservedName` / `registerReserved`
-- `setTreasury`, `setPaymentToken`
+- `setTreasury` (where ETH fees go)
 - UUPS upgrade authority (can be renounced)
 
 ## Toolchain
@@ -72,19 +75,19 @@ The resolver uses `bytes32` keys (not a single blob). Initial categories:
 
 ## Deployment targets
 
-- **Local**: Hardhat node, mocks for USDC + SMPXNFT
-- **Hoodi testnet**: chainId 560048, deploy mocks (no real USDC/NFT on Hoodi)
-- **Mainnet**: real USDC (`0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`), real SMPXNFT, treasury = SNCC multisig
+- **Local**: Hardhat node, MockSMPXNFT + DummyOracle (fixed ETH/USD rate)
+- **Hoodi testnet**: chainId 560048, MockSMPXNFT + DummyOracle
+- **Mainnet**: Chainlink ETH/USD oracle, real SMPXNFT (`0x3AF6D9Ee...`), treasury = SNCC multisig
 
 ## Deployment order (dependencies)
 
-1. Mocks (TestUSDC, MockSMPXNFT) — local/testnet only
+1. MockSMPXNFT (local/testnet only)
 2. ENSRegistry (UUPS proxy)
 3. SimplexResolver (UUPS proxy)
 4. ReverseRegistrar
 5. Root → transfer registry root → assign TLD ownership → lock
 6. BaseRegistrarImplementation × 2 (UUPS proxy, one per TLD)
-7. SimplexPriceOracle
+7. DummyOracle (local) or Chainlink oracle (mainnet) + ExponentialPremiumPriceOracle (all ENS verbatim)
 8. SimplexController × 2 (one per TLD, different gate configs)
 9. Add controllers to their base registrars
 10. SNRCNameWrapper (UUPS proxy)
@@ -92,7 +95,6 @@ The resolver uses `bytes32` keys (not a single blob). Initial categories:
 
 ## Conventions from the PoC to follow
 
-- `TestUSDC.sol`: 6 decimals, open `mint()` for test harness, standard ERC-20 interface (copy from PoC)
 - Use `hardhat.config.ts` (not `.cjs`), but match PoC's solc settings
 - ethers v6 footguns: `NonceManager` doesn't auto-increment across calls; `signer.reset()` after expected reverts; use `await signer.getAddress()` not `signer.address`
 
@@ -102,5 +104,6 @@ Fork ens-app-v3, minimal diff:
 - **Branding**: swap logo and favicon only. No theme/color/font changes.
 - **Contract rewiring**: replace `@ensdomains/ensjs` calls with direct viem calls to SNRC contracts via `src/contracts/snrc.ts`
 - **Disable**: DNS import, ENS v2 migration, legacy favourites, on-chain subname UI — short-circuit, don't delete
-- **Adapt**: registration flow (USDC approve + TLD selector + NFT gate), profile (contact/channel links), pricing
+- **Payment**: ETH — same as ENS, no changes to payment flow
+- **Adapt**: registration flow (TLD selector + NFT gate), profile (contact/channel links), pricing display
 - **Add**: admin panel page, NFT gate indicator

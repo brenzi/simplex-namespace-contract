@@ -25,10 +25,9 @@
 
 ## Context
 
-SimpleX Chat needs a decentralized namespace registry (SNRC) mapping human-readable names (`alice.simplex`) to SimpleX short link data on Ethereum. The whitepaper (§Public Namespaces) specifies ENS as the model. This project forks the full ENS contract suite and adapts it for SimpleX's requirements: two TLDs, NFT-gated registration, reserved names, length restrictions, stablecoin payments, and UUPS upgradeability.
+SimpleX Chat needs a decentralized namespace registry (SNRC) mapping human-readable names (`alice.simplex`) to SimpleX short link data on Ethereum. The whitepaper (§Public Namespaces) specifies ENS as the model. This project forks the full ENS contract suite and adapts it for SimpleX's requirements: two TLDs, NFT-gated registration, reserved names, length restrictions, and UUPS upgradeability. Payment is ETH (same as ENS).
 
 Existing assets to reuse:
-- `TestUSDC.sol` from `/work/simplex-community-credits-poc/contracts/contracts/TestUSDC.sol`
 - Solidity 0.8.24 + Hardhat toolchain already installed on this machine
 - Whitepaper at `/work/community-credits-whitepaper/`
 
@@ -40,10 +39,11 @@ Full fork of `ensdomains/ens-contracts`, adapted. Unchanged contracts keep their
 - **Registry**: `ENSRegistry` (UUPS-wrapped, zero logic changes)
 - **Resolver**: `SimplexResolver` — **new**, categorized link storage per name (contact link, channel link, extensible via `bytes32` keys)
 - **Registrar**: `BaseRegistrarImplementation` (UUPS-wrapped, zero logic changes) — two instances, one for `.simplex`, one for `.testing`
-- **Controller**: `SimplexController` — **new**, fork of ETHRegistrarController with stablecoin pricing, NFT gate, reserved names, min-length gate. Two instances with different configs per TLD
+- **Controller**: `SimplexController` — **new**, fork of ETHRegistrarController adding NFT gate, reserved names, min-length gate. ETH payment + ENS price oracle kept as-is. Two instances with different configs per TLD
+- **Price oracle**: ENS's `StablePriceOracle` + `ExponentialPremiumPriceOracle` — verbatim, configured with different USD price points
 - **NameWrapper**: `SNRCNameWrapper` (renamed — moderate changes: parameterized TLD support instead of hardcoded `.eth`)
 - **Root + ReverseRegistrar**: verbatim ENS copies
-- **Payment**: ERC-20 stablecoin (USDC/USDT), not ETH
+- **Payment**: ETH (same as ENS — USD-denominated prices converted via Chainlink oracle)
 - **NFT gate**: checks `balanceOf(sender) > 0` on the SMPXNFT contract (`0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291`, ERC-721, 560 tokens, name "SimpleX NFT: SMPX testnet access", symbol "SMPXNFT")
 - **Frontend**: fork of `ensdomains/ens-app-v3` (Next.js + styled-components + wagmi/viem), minimal diff — logo swap + contract rewiring only
 - **Deployment targets**: Hardhat local, Hoodi testnet, Ethereum mainnet
@@ -57,9 +57,9 @@ Full fork of `ensdomains/ens-contracts`, adapted. Unchanged contracts keep their
 ```
 ENSRegistry (one instance, UUPS proxy)
   ├─ .simplex node → BaseRegistrarImplementation#1 → SimplexController#1
-  │                   (NFT-gated, 6+ chars, reserved names, stablecoin pricing)
+  │                   (NFT-gated, 6+ chars, reserved names, ETH pricing via ENS oracle)
   ├─ .testing node → BaseRegistrarImplementation#2 → SimplexController#2
-  │                   (open, 3+ chars, free or nominal fee)
+  │                   (open, 3+ chars, same pricing)
   ├─ .addr.reverse → ReverseRegistrar
   └─ Root (assigns TLD ownership, lockable)
 
@@ -73,28 +73,32 @@ SNRCNameWrapper (one instance, UUPS proxy)                ← renamed (moderate 
 
 ### Data flow: name registration
 
+Same as ENS, with three additional checks inserted into the controller:
+
 ```
-User → approve(USDC, controller, amount)
-     → controller.commit(hash)
+User → controller.commit(hash)
      → wait 60s
-     → controller.register(name, owner, duration, secret, resolver, data)
-       ├─ _consumeCommitment()
-       ├─ _isNameAllowed(name)  // length + reserved check
-       ├─ _checkNftGate(sender) // if nftGateEnabled
-       ├─ priceOracle.price(name, 0, duration)
-       ├─ USDC.transferFrom(sender, treasury, price)
-       ├─ base.register(id, owner, duration)  // mints ERC-721
-       └─ resolver.setLink(node, category, data)  // optional, if data provided
+     → controller.register{value: price}(name, owner, duration, secret, resolver, data)
+       ├─ _consumeCommitment()           // unchanged from ENS
+       ├─ _isNameAllowed(name)           // NEW: length + reserved check
+       ├─ _checkNftGate(sender)          // NEW: if nftGateEnabled
+       ├─ priceOracle.price(name, 0, duration)  // unchanged — ENS StablePriceOracle
+       ├─ require(msg.value >= price)    // unchanged — ETH payment
+       ├─ base.register(id, owner, duration)    // unchanged
+       ├─ resolver.setLink(node, category, data) // adapted for SimplexResolver
+       └─ refund excess ETH to sender    // unchanged
 ```
 
-### Whitepaper pricing (denominated in stablecoin)
+### Pricing (USD-denominated, paid in ETH via Chainlink oracle — same as ENS)
 
-| Length | Multiplier | Example (base=1 USDC) |
-|--------|------------|----------------------|
-| 6+     | 1x         | 1 USDC/year          |
-| 5      | 8x         | 8 USDC/year          |
-| 4      | 32x        | 32 USDC/year         |
-| 3      | 128x       | 128 USDC/year        |
+| Length | Annual USD price |
+|--------|-----------------|
+| 6+     | $1              |
+| 5      | $8              |
+| 4      | $32             |
+| 3      | $128            |
+
+Configured via ENS's `StablePriceOracle` constructor (array of USD prices per character length). Dutch auction for expired names via `ExponentialPremiumPriceOracle` — unchanged from ENS.
 
 ---
 
@@ -116,6 +120,10 @@ Goal: minimal diff to upstream ENS contracts for easy auditing. Each contract fa
 | `utils/ERC20Recoverable.sol` | `contracts/utils/ERC20Recoverable.sol` | ERC-20 recovery |
 | `root/Root.sol` | `contracts/root/Root.sol` | Trivial, non-upgradeable |
 | `reverseRegistrar/ReverseRegistrar.sol` | `contracts/reverseRegistrar/ReverseRegistrar.sol` | Unchanged |
+| `ethregistrar/StablePriceOracle.sol` | `contracts/ethregistrar/StablePriceOracle.sol` | USD pricing, Chainlink oracle |
+| `ethregistrar/ExponentialPremiumPriceOracle.sol` | `contracts/ethregistrar/ExponentialPremiumPriceOracle.sol` | Dutch auction for expired names |
+| `ethregistrar/IPriceOracle.sol` | `contracts/ethregistrar/IPriceOracle.sol` | Price oracle interface |
+| `ethregistrar/DummyOracle.sol` | `contracts/ethregistrar/DummyOracle.sol` | Test oracle (fixed ETH/USD rate) |
 
 ### Mechanical UUPS wrapping only (constructor → initialize, + UUPSUpgradeable)
 
@@ -145,12 +153,10 @@ Renamed because the interface/behavior changes enough that keeping the ENS name 
 | Our path | Why new |
 |----------|---------|
 | `contracts/resolver/SimplexResolver.sol` | ENS PublicResolver has ~8 profile contracts (AddrResolver, TextResolver, ContentHashResolver...). We replace all of them with a single categorized-link mapping. Clean-room, ~50 lines of logic. |
-| `contracts/controller/SimplexController.sol` | Fork of `ETHRegistrarController` but heavily adapted: stablecoin payment (not ETH), NFT gate, reserved names, min-length gate, admin functions. Commit-reveal core kept from ENS. |
-| `contracts/controller/SimplexPriceOracle.sol` | Replaces ENS's `StablePriceOracle` + `ExponentialPremiumPriceOracle`. No Chainlink feed (prices are in stablecoin directly). Dutch auction decay logic reused from ENS. |
+| `contracts/controller/SimplexController.sol` | Fork of `ETHRegistrarController` adding NFT gate, reserved names, min-length gate, admin functions. Payment (ETH via msg.value), commit-reveal, and price oracle integration unchanged from ENS. |
 | `contracts/interfaces/ISimplexResolver.sol` | New interface for categorized links |
 | `contracts/interfaces/ISimplexController.sol` | New interface for controller |
 | `contracts/mocks/MockSMPXNFT.sol` | Test mock |
-| `contracts/mocks/TestUSDC.sol` | Test mock (from PoC) |
 
 ### Dropped from ENS (not forked)
 
@@ -158,16 +164,12 @@ Renamed because the interface/behavior changes enough that keeping the ENS name 
 |------------|------------|
 | `dnsregistrar/` + `dnssec-oracle/` | No DNS integration needed |
 | `resolvers/PublicResolver.sol` + `profiles/*` | Replaced by SimplexResolver |
-| `ethregistrar/StablePriceOracle.sol` | Replaced by SimplexPriceOracle |
-| `ethregistrar/ExponentialPremiumPriceOracle.sol` | Dutch auction logic extracted into SimplexPriceOracle |
-| `ethregistrar/DummyOracle.sol`, `TestResolver.sol` | ENS test helpers, not needed |
 
 ### Audit summary
 
 An auditor reviewing SNRC needs to focus on:
-1. **SimplexController.sol** — all SNRC-specific access control (NFT gate, reserved names, length gate, stablecoin payment). This is the primary attack surface.
-2. **SimplexPriceOracle.sol** — pricing logic correctness.
-3. **SimplexResolver.sol** — authorization for link writes.
+1. **SimplexController.sol** — SNRC-specific access control (NFT gate, reserved names, length gate). Payment and pricing unchanged from ENS. This is the primary attack surface.
+2. **SimplexResolver.sol** — authorization for link writes.
 4. **UUPS-wrapped contracts** — verify the upgrade pattern is correctly applied (mechanical check).
 5. **SNRCNameWrapper.sol** — verify `.eth` → TLD parameterization didn't break fuse logic.
 6. **ENSRegistry.sol / BaseRegistrarImplementation.sol** — verify UUPS boilerplate is correct (mechanical, ~10 lines each).
@@ -191,7 +193,7 @@ Everything else is verbatim ENS (audited by Trail of Bits, OpenZeppelin) or stan
 
 ### Phase 2: Mock contracts
 
-**Goal**: Testable mocks for SMPXNFT and stablecoin.
+**Goal**: Testable mock for SMPXNFT.
 
 **`contracts/mocks/MockSMPXNFT.sol`** — faithful mock of `0x3AF6D9Ee...`:
 - ERC-721 (OZ v5) with Enumerable
@@ -203,9 +205,9 @@ Everything else is verbatim ENS (audited by Trail of Bits, OpenZeppelin) or stan
 - `burn(uint256 tokenId)` — token owner only
 - `withdraw()` — owner only
 
-**`contracts/mocks/TestUSDC.sol`** — copy from PoC (`/work/simplex-community-credits-poc/contracts/contracts/TestUSDC.sol`), proven working.
+ENS's `DummyOracle.sol` (fixed ETH/USD rate) is used for local testing — no custom mock needed.
 
-**Verify**: Both compile, unit tests for mint/transfer/balanceOf pass.
+**Verify**: MockSMPXNFT compiles, unit tests for mint/transfer/balanceOf pass.
 
 ### Phase 3: Core registry (ENS fork)
 
@@ -263,52 +265,32 @@ Two instances deployed: one with `baseNode = namehash("simplex")`, one with `bas
 
 ### Phase 6: Controller (commit-reveal + pricing + gates)
 
-This is the core SNRC-specific contract — most divergence from ENS lives here.
+Fork of `ETHRegistrarController`. Payment, pricing, commit-reveal, and refund logic are identical to ENS. The only additions are three access-control checks and their admin functions.
 
-**`contracts/controller/SimplexPriceOracle.sol`**:
-- No Chainlink feed needed — prices are in stablecoin directly
-- `uint256 public baseRate` (admin-settable, default 1_000_000 = 1 USDC at 6 decimals)
-- `price(string name, uint256 expires, uint256 duration) → (base, premium)`
-- Length multipliers: 6+ → 1x, 5 → 8x, 4 → 32x, 3 → 128x
-- Dutch auction premium for expired names: starts at configurable `startPremium`, halves daily for 28 days (fork ENS `ExponentialPremiumPriceOracle` logic)
+**Price oracle**: ENS's `StablePriceOracle` + `ExponentialPremiumPriceOracle` used verbatim. Configure with USD prices: $1 (6+ chars), $8 (5), $32 (4), $128 (3). For local dev, use ENS's `DummyOracle` (fixed ETH/USD rate).
 
-**`contracts/controller/SimplexController.sol`**:
+**`contracts/controller/SimplexController.sol`** — diff from `ETHRegistrarController`:
 
-State:
-- `IERC20 public paymentToken` (USDC/USDT)
-- `address public treasury`
+Added state:
 - `IERC721 public smpxNft`
 - `bool public nftGateEnabled` (starts true for .simplex, false for .testing)
 - `uint8 public minCharLength` (starts 6 for .simplex, 3 for .testing)
 - `mapping(bytes32 => bool) public reservedNames`
-- Pointers to `priceOracle` and `base` (base registrar)
 
-Commit-reveal (keep from ENS):
-- `makeCommitment()` → pure hash
-- `commit(bytes32)` → store with timestamp
-- `_consumeCommitment()` → validate 60s–24h window
+Added checks in `register()` (inserted before existing ENS logic):
+1. `require(strlen(name) >= minCharLength)`
+2. `require(!reservedNames[keccak256(bytes(name))])`
+3. `if (nftGateEnabled) require(smpxNft.balanceOf(msg.sender) > 0)`
 
-Registration:
-1. Consume commitment
-2. Check `strlen(name) >= minCharLength`
-3. Check `!reservedNames[keccak256(bytes(name))]`
-4. If `nftGateEnabled`: check `smpxNft.balanceOf(msg.sender) > 0`
-5. Calculate price via oracle
-6. `paymentToken.transferFrom(msg.sender, treasury, totalPrice)`
-7. `base.register(tokenId, owner, duration)`
-8. Optionally set resolver + data
+Everything else unchanged: commit-reveal, `msg.value` ETH payment, price oracle call, refund excess, resolver setup.
 
-Admin functions:
+Added admin functions:
 - `setNftGateEnabled(false)` — one-way (true→false only)
 - `setMinCharLength(uint8 newMin)` — must be < current (monotonic decrease: 6→5→4→3)
 - `addReservedName(string)` / `removeReservedName(string)`
-- `registerReserved(string name, address owner, uint256 duration)` — bypasses gate + pricing
-- `setTreasury(address)`, `setPaymentToken(address)`
+- `registerReserved(string name, address owner, uint256 duration)` — admin registers bypassing gates
 
-Extension point for future voucher tokens:
-- Internal `_checkVoucher()` hook — no-op now, can be overridden when ERC-1155 vouchers are added
-
-**Verify**: Full commit-reveal flow; NFT gate blocks/allows correctly; reserved names enforced; length gate enforced with monotonic decrease; stablecoin payment correct; Dutch auction premium on expired names.
+**Verify**: Full commit-reveal flow (ETH payment); NFT gate blocks/allows correctly; reserved names enforced; length gate enforced with monotonic decrease; Dutch auction premium on expired names (unchanged from ENS).
 
 ### Phase 7: NameWrapper (ERC-1155)
 
@@ -332,25 +314,24 @@ Both are verbatim copies — see reuse map. Files keep their ENS names.
 ### Phase 9: Deployment scripts
 
 **`scripts/deploy-local.ts`** — deployment order (critical dependency chain):
-1. Deploy mocks: TestUSDC, MockSMPXNFT
-2. Mint test NFTs + USDC to Hardhat accounts
-3. Deploy ENSRegistry (UUPS proxy)
-4. Deploy SimplexResolver (UUPS proxy)
-5. Deploy ReverseRegistrar
-6. Deploy Root (non-proxy), transfer registry root to Root
-7. Deploy BaseRegistrarImplementation for `.simplex` (UUPS proxy, `baseNode = namehash("simplex")`)
-8. Deploy BaseRegistrarImplementation for `.testing` (UUPS proxy, `baseNode = namehash("testing")`)
-9. Root: set subnode owners for both TLDs, lock both
-10. Deploy SimplexPriceOracle (baseRate = 1 USDC/year)
-11. Deploy SimplexController for `.simplex` (nftGate=true, minChars=6)
-12. Deploy SimplexController for `.testing` (nftGate=false, minChars=3)
-13. Add controllers to their respective base registrars
-14. Deploy SNRCNameWrapper (UUPS proxy)
-15. Output all addresses to `deployments/<network>.json`
+1. Deploy MockSMPXNFT, mint test NFTs to Hardhat accounts
+2. Deploy ENSRegistry (UUPS proxy)
+3. Deploy SimplexResolver (UUPS proxy)
+4. Deploy ReverseRegistrar
+5. Deploy Root (non-proxy), transfer registry root to Root
+6. Deploy BaseRegistrarImplementation for `.simplex` (UUPS proxy, `baseNode = namehash("simplex")`)
+7. Deploy BaseRegistrarImplementation for `.testing` (UUPS proxy, `baseNode = namehash("testing")`)
+8. Root: set subnode owners for both TLDs, lock both
+9. Deploy DummyOracle (fixed ETH/USD rate) + ExponentialPremiumPriceOracle (ENS verbatim)
+10. Deploy SimplexController for `.simplex` (nftGate=true, minChars=6)
+11. Deploy SimplexController for `.testing` (nftGate=false, minChars=3)
+12. Add controllers to their respective base registrars
+13. Deploy SNRCNameWrapper (UUPS proxy)
+14. Output all addresses to `deployments/<network>.json`
 
-**`scripts/deploy-hoodi.ts`** — same order, uses `.env` keys, deploys mocks for NFT+USDC (no real ones on Hoodi), verifies on explorer.
+**`scripts/deploy-hoodi.ts`** — same order, uses `.env` keys, deploys MockSMPXNFT + DummyOracle. Verifies on explorer.
 
-**`scripts/deploy-mainnet.ts`** — uses real USDC (`0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`), real SMPXNFT (`0x3AF6D9Ee...`), treasury = SNCC multisig.
+**`scripts/deploy-mainnet.ts`** — uses Chainlink ETH/USD oracle, real SMPXNFT (`0x3AF6D9Ee...`).
 
 **`scripts/deploy-helpers.ts`** — namehash/labelhash computation, address logging, JSON persistence.
 
@@ -363,9 +344,9 @@ Both are verbatim copies — see reuse map. Files keep their ENS names.
 - NFT gate: non-holder reverts (.simplex), holder succeeds, anyone succeeds (.testing), disable gate
 - Reserved names: user blocked, admin registers to address, admin releases
 - Min char length: enforced, admin lowers monotonically, cannot raise
-- Pricing: correct for 3/4/5/6+ chars
-- Stablecoin: insufficient allowance reverts, correct transfer to treasury
-- Renewal + Dutch auction premium
+- Pricing: correct ETH amounts for 3/4/5/6+ chars (via ENS price oracle)
+- ETH payment: insufficient msg.value reverts, excess refunded
+- Renewal + Dutch auction premium (ENS logic, just verify it works with our controller)
 - UUPS: admin can upgrade, non-admin cannot
 
 **Integration test** (`test/integration/full-flow.test.ts`):
@@ -406,7 +387,7 @@ Replace ENS contract addresses and ABIs with SNRC equivalents:
   - `src/constants/` — chain configs, contract addresses → point to SNRC deployment addresses
   - `src/hooks/` — hooks that call ensjs functions → replace with direct viem calls to SNRC contracts
   - `src/transaction-flow/transaction/` — each tx type (registerName, renewNames, etc.) → adapt to SimplexController ABI
-  - `src/transaction-flow/input/` — registration input flow → add TLD selector (.simplex/.testing), NFT gate check, USDC approval step
+  - `src/transaction-flow/input/` — registration input flow → add TLD selector (.simplex/.testing), NFT gate check
 
 - **Contract address config**: load from `deployments/<network>.json` (output by deploy scripts). Wire into wagmi config per chain.
 
@@ -420,16 +401,13 @@ Remove ENS-specific features that don't apply to SNRC. Disable at the route/comp
 - **Reverse resolution UI** — keep the contract but hide UI for now
 - **Content hash / avatar / text records** in profile — replace with contact link + channel link fields
 - **Subname management UI** — subnames are off-chain per whitepaper, disable on-chain subname creation UI
-- **ETH payment flow** — replace with USDC approval + transferFrom flow
-- **Price oracle integration** — replace Chainlink USD/ETH oracle calls with direct stablecoin price reads from SimplexPriceOracle
 
 #### D. Features to add/adapt
 
 - **TLD selector**: Add `.simplex` / `.testing` toggle to the search bar and registration flow. The ENS app hardcodes `.eth` — parameterize this.
 - **NFT gate indicator**: On `.simplex` registration, check `smpxNft.balanceOf(sender)` and show status (gated/ungated, holder/non-holder). Block registration with clear message if gate active and user has no NFT.
-- **USDC approval step**: Before commit, check `paymentToken.allowance(sender, controller)`. If insufficient, prompt approve tx first. Show USDC balance.
 - **Categorized link editor**: Replace ENS's text-record/content-hash editor with contact link + channel link fields in the name management view.
-- **Pricing display**: Show SNRC pricing table (1/8/32/128 USDC) instead of ENS pricing.
+- **Pricing display**: Show SNRC pricing ($1/$8/$32/$128 USD, paid in ETH) instead of ENS pricing.
 - **Admin panel**: New page (`src/pages/admin.tsx`) for admin functions: manage reserved names, adjust min char length, toggle NFT gate. Only visible when connected wallet is admin.
 
 #### E. Test account support for local dev
@@ -454,18 +432,18 @@ frontend/                          (clone of ens-app-v3)
       useNameAvailability.ts       MODIFIED — call BaseRegistrarImplementation.available()
       useRegistration.ts           MODIFIED — call SimplexController
       useNftGate.ts                NEW — check SMPXNFT balance
-      usePricing.ts                MODIFIED — call SimplexPriceOracle
+      usePricing.ts                MODIFIED — configure SNRC price tiers (ENS oracle, different USD amounts)
     transaction-flow/
       transaction/
-        registerName.ts            MODIFIED — USDC approve + SimplexController.register
-        renewNames.ts              MODIFIED — USDC + SimplexController.renew
+        registerName.ts            MODIFIED — SimplexController.register (ETH payment unchanged)
+        renewNames.ts              MODIFIED — SimplexController.renew (ETH payment unchanged)
       input/
-        [registration inputs]      MODIFIED — add TLD selector, NFT gate, USDC approval
+        [registration inputs]      MODIFIED — add TLD selector, NFT gate
     components/
       pages/profile/               MODIFIED — contact/channel link fields instead of text records
     pages/
       index.tsx                    MODIFIED — TLD selector in search
-      register.tsx                 MODIFIED — USDC flow, NFT gate
+      register.tsx                 MODIFIED — NFT gate check
       admin.tsx                    NEW — admin panel
       import.tsx                   DISABLED
       ens-v2.tsx                   DISABLED
@@ -475,14 +453,14 @@ frontend/                          (clone of ens-app-v3)
   next.config.mjs                  MODIFIED — remove ENS-specific rewrites if any
 ```
 
-**Verify**: `pnpm dev` opens at localhost:3000. Connect MetaMask to local Hardhat node. Search for name, see availability with correct SNRC pricing, complete registration flow (USDC approve → commit → wait → register), see name in "My Names" with contact/channel link fields.
+**Verify**: `pnpm dev` opens at localhost:3000. Connect MetaMask to local Hardhat node. Search for name, see availability with correct pricing, complete registration flow (commit → wait → register, pay ETH), see name in "My Names" with contact/channel link fields.
 
 ### Phase 12: Playwright e2e
 
 Adapt the existing ENS app Playwright suite (`e2e/specs/`) rather than writing from scratch. The ENS app already has stateless and stateful e2e test infrastructure with Hardhat/Anvil backends.
 
 - **Keep**: ENS app's Playwright config, fixtures, wallet injection pattern (test mnemonic)
-- **Adapt existing specs**: rewire registration, renewal, profile specs to use SNRC contracts + USDC flow
+- **Adapt existing specs**: rewire registration, renewal, profile specs to use SNRC contracts
 - **Add new specs**:
   - `nft-gate.spec.ts`: .simplex blocked without NFT, mint NFT, retry → succeeds
   - `categorized-links.spec.ts`: set + read contact and channel links
