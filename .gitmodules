@@ -1,0 +1,8 @@
+[submodule "ens-contracts"]
+	path = ens-contracts
+	url = git@github.com:simplex-network/ens-contracts.git
+	branch = simplex
+[submodule "ens-app-v3"]
+	path = ens-app-v3
+	url = git@github.com:simplex-network/ens-app-v3.git
+	branch = simplex
