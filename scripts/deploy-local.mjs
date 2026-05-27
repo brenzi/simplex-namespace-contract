@@ -163,7 +163,7 @@ async function main() {
 
   console.log('\n=== DEPLOYMENT ADDRESSES ===')
   console.log(JSON.stringify(addresses, null, 2))
-  console.log(`\nNEXT_PUBLIC_DEPLOYMENT_ADDRESSES='${JSON.stringify(addresses)}'`)
+  console.log(`\nNEXT_PUBLIC_DEPLOYMENT_ADDRESSES=${JSON.stringify(addresses)}`)
 }
 
 main().catch((err) => { console.error(err); process.exit(1) })
