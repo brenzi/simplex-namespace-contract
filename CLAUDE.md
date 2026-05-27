@@ -25,13 +25,21 @@ GitHub forks of [ENS contracts](https://github.com/ensdomains/ens-contracts) + [
 
 ## Repo structure
 
-Work happens on `simplex` branch in two private forks owned by `epoberezkin`:
-- `epoberezkin/ens-contracts` — all contracts, tests, deployment scripts, mocks, docs
-- `epoberezkin/ens-app-v3` — frontend
+Public forks as git submodules of this repo:
 
-`main` tracks upstream ENS (fetch-only, never commit). When ready, `simplex-chat` org forks officially and we push our `simplex` branch — the public diff `main...simplex` is the audit surface.
+```
+simplex-namespace-contract/           ← this repo (parent)
+  ens-contracts/                      ← submodule → simplex-network/ens-contracts
+  ens-app-v3/                         ← submodule → simplex-network/ens-app-v3
+  scripts/                            ← cross-repo deployment helpers
+  docs/                               ← project-level docs
+  test/                               ← cross-repo test fixtures
+```
 
-This repo (`simplex-namespace-contract`) is for coordination/planning only — no contract or app code here.
+- `main` in each fork tracks upstream ENS (fetch-only)
+- `simplex` branch is our working branch — all SNRC changes here
+- `main...simplex` diff on GitHub is the audit surface
+- This parent repo holds the plan, docs, and cross-repo tooling
 
 ## Architecture
 

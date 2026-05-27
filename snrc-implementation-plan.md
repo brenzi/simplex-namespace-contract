@@ -35,36 +35,37 @@ Existing assets to reuse:
 
 ## Repository strategy
 
-We work on GitHub forks of the original ENS repos, not standalone repos. This ensures `git diff` against upstream is always trivially available.
+We work on public GitHub forks of the original ENS repos. This ensures `git diff` against upstream is always trivially available for auditors.
 
-### Two forked repos
+### Repos
 
-1. **`epoberezkin/ens-contracts`** — private fork of `ensdomains/ens-contracts`
-2. **`epoberezkin/ens-app-v3`** — private fork of `ensdomains/ens-app-v3`
+| Repo | Upstream | Content |
+|------|----------|---------|
+| [`simplex-network/ens-contracts`](https://github.com/simplex-network/ens-contracts) | `ensdomains/ens-contracts` | All Solidity contracts, tests, deployment scripts, mocks |
+| [`simplex-network/ens-app-v3`](https://github.com/simplex-network/ens-app-v3) | `ensdomains/ens-app-v3` | Frontend |
+| `simplex-namespace-contract` (this repo) | — | Coordination: plan, docs, deployment helpers, test fixtures. Submodule parent. |
 
-Both start as private repos owned by `epoberezkin` (clandestine phase). All SNRC work lives on a `simplex` branch off the upstream default branch.
+### Workspace layout
 
-### Going public
+Both forks are git submodules of this repo so everything is accessible from a single working directory:
 
-When ready, `simplex-chat` org forks the same upstream repos officially. We push our `simplex` branch there. The public PR/diff `main...simplex` shows exactly what we changed — reviewers and auditors can inspect it on GitHub.
-
-### What lives where
-
-| Content | Repo |
-|---------|------|
-| All Solidity contracts (verbatim ENS + modified + new) | `ens-contracts` fork, `simplex` branch |
-| Deployment scripts, Hardhat config, test suite | `ens-contracts` fork, `simplex` branch |
-| Mock contracts (`MockSMPXNFT.sol`) | `ens-contracts` fork, `simplex` branch |
-| Frontend (ENS app + SNRC adaptations) | `ens-app-v3` fork, `simplex` branch |
-| Documentation, deployment guides | `ens-contracts` fork, `simplex` branch |
-
-The current repo (`simplex-namespace-contract`) becomes a coordination/planning repo only — no contract code here.
+```
+simplex-namespace-contract/           ← this repo (parent)
+  ens-contracts/                      ← submodule → simplex-network/ens-contracts
+  ens-app-v3/                         ← submodule → simplex-network/ens-app-v3
+  snrc-implementation-plan.md
+  CLAUDE.md
+  scripts/                            ← cross-repo deployment helpers
+  docs/                               ← project-level documentation
+  test/                               ← cross-repo test fixtures (e2e orchestration)
+```
 
 ### Branch hygiene
 
-- `main` tracks upstream ENS (never commit to it, only sync via fetch/merge)
-- `simplex` is our working branch — all SNRC changes go here
-- Keep `simplex` rebased on `main` so the diff stays clean and reviewable
+- `main` in each fork tracks upstream ENS (fetch-only, never commit directly)
+- `simplex` branch in each fork is our working branch — all SNRC changes go here
+- The diff `main...simplex` on GitHub is the audit surface
+- Keep `simplex` rebased on `main` so the diff stays clean
 
 ---
 
@@ -215,18 +216,22 @@ Everything else is verbatim ENS (audited by Trail of Bits, OpenZeppelin) or stan
 
 ## Phases
 
-### Phase 1: Fork repos + scaffolding
+### Phase 1: Submodules + scaffolding
 
-**Goal**: Two private GitHub forks with `simplex` branches, compiling with existing ENS tests passing.
+**Goal**: Working workspace with both forks as submodules, ENS compiling and tests passing before any changes.
 
-1. Fork `ensdomains/ens-contracts` → `epoberezkin/ens-contracts` (private)
-2. Fork `ensdomains/ens-app-v3` → `epoberezkin/ens-app-v3` (private)
-3. Clone both locally, create `simplex` branch from default branch in each
-4. In `ens-contracts` fork: `pnpm install`, verify `npx hardhat compile` and existing ENS tests pass on our fork before any changes
-5. Add `@openzeppelin/contracts-upgradeable` v5 + `@openzeppelin/hardhat-upgrades` to dependencies (needed for UUPS)
-6. Add Hoodi network config (chainId 560048) to `hardhat.config.ts`
+1. Add submodules to this repo:
+   ```
+   git submodule add -b simplex https://github.com/simplex-network/ens-contracts.git ens-contracts
+   git submodule add -b simplex https://github.com/simplex-network/ens-app-v3.git ens-app-v3
+   ```
+2. In each fork, create `simplex` branch from the upstream default branch
+3. In `ens-contracts/`: `pnpm install`, verify `npx hardhat compile` and existing ENS tests pass unmodified
+4. Add `@openzeppelin/contracts-upgradeable` v5 + `@openzeppelin/hardhat-upgrades` to `ens-contracts` dependencies (needed for UUPS)
+5. Add Hoodi network config (chainId 560048) to `ens-contracts/hardhat.config.ts`
+6. Create `scripts/`, `docs/`, `test/` dirs in this parent repo for cross-repo helpers
 
-**Verify**: `npx hardhat compile` passes. Existing ENS test suite passes unmodified on `simplex` branch.
+**Verify**: `cd ens-contracts && npx hardhat compile` passes. Existing ENS test suite passes on `simplex` branch before any SNRC changes.
 
 ### Phase 2: Mock contracts
 
