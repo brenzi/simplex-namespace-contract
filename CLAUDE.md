@@ -43,15 +43,16 @@ simplex-namespace-contract/           ← this repo (parent)
 
 ## Architecture
 
-Single `ENSRegistry` (UUPS proxy, unchanged logic) with two TLDs:
-- `.simplex` — NFT-gated registration (SMPXNFT holders only initially), 6+ char minimum, reserved names
-- `.testing` — open registration, 3+ chars, same pricing
+Two separate deployments — one per TLD. Each is a near-standard ENS deployment with a custom controller. `.testing` launches first.
 
-Each TLD has its own `BaseRegistrarImplementation` (ERC-721, UUPS-wrapped, unchanged logic) + `SimplexController` (commit-reveal, pricing, gates — new). One shared `SimplexResolver` stores categorized links per name (`mapping(node => mapping(category => bytes))`) — new. `SNRCNameWrapper` provides ERC-1155 wrapping with fuses (moderate changes from ENS NameWrapper: parameterized TLD support).
+- `.testing` — NFT-gated (SMPXNFT holders only initially), 6+ char minimum, reserved names
+- `.simplex` — NO NFT gate, 6+ char minimum, reserved names
 
-Unchanged ENS contracts keep their original filenames for easy diffing against upstream.
+Each deployment: `ENSRegistry` + `BaseRegistrarImplementation` + `SimplexController` + `PublicResolver` + `NameWrapper` + `Root` + `ReverseRegistrar`. All ENS contracts verbatim except `SimplexController`.
 
-Payment is ETH (same as ENS). Pricing is USD-denominated, converted via Chainlink oracle: $1/year base (6+ chars), $8 (5-char), $32 (4-char), $128 (3-char). ENS's `StablePriceOracle` + `ExponentialPremiumPriceOracle` used verbatim.
+Resolver: ENS `PublicResolver` used verbatim. SimpleX links stored as text records: `simplex.contact`, `simplex.channel`.
+
+Payment is ETH (same as ENS). Pricing: $1/year (6+ chars), $8 (5), $32 (4), $128 (3). ENS price oracle verbatim.
 
 ## Key references
 
@@ -68,12 +69,13 @@ Name: "SimpleX NFT: SMPX testnet access", Symbol: SMPXNFT, ERC-721, 560 tokens.
 Key non-standard functions: `setMinter(address)`, `setNextTokenURI(string)`, `lockMintingPermanently()`, `burn(uint256)`, `withdraw()`. Sequential token IDs via `nextTokenId` counter. Gate check is `balanceOf(sender) > 0`.
 `MockSMPXNFT.sol` replicates this interface for local/testnet.
 
-## Resolver categories
+## SimpleX data in resolver
 
-The resolver uses `bytes32` keys (not a single blob). Initial categories:
-- `keccak256("contact")` — SimpleX contact short link
-- `keccak256("channel")` — SimpleX channel short link
-- Extensible: any `bytes32` key works without contract changes
+ENS PublicResolver used verbatim. SimpleX links stored as text records:
+- `simplex.contact` — contact short link (1:1 messaging)
+- `simplex.channel` — channel short link (group/channel)
+
+Set via `setText(node, "simplex.contact", value)`, read via `text(node, "simplex.contact")`. Standard ENS text-record pattern.
 
 ## Admin capabilities
 
@@ -97,19 +99,21 @@ The resolver uses `bytes32` keys (not a single blob). Initial categories:
 - **Hoodi testnet**: chainId 560048, MockSMPXNFT + DummyOracle
 - **Mainnet**: Chainlink ETH/USD oracle, real SMPXNFT (`0x3AF6D9Ee...`), treasury = SNCC multisig
 
-## Deployment order (dependencies)
+## Deployment order (per TLD)
 
-1. MockSMPXNFT (local/testnet only)
+Each TLD is an independent deployment:
+
+1. MockSMPXNFT (local/testnet only, shared)
 2. ENSRegistry (UUPS proxy)
-3. SimplexResolver (UUPS proxy)
+3. PublicResolver (verbatim ENS)
 4. ReverseRegistrar
 5. Root → transfer registry root → assign TLD ownership → lock
-6. BaseRegistrarImplementation × 2 (UUPS proxy, one per TLD)
-7. DummyOracle (local) or Chainlink oracle (mainnet) + ExponentialPremiumPriceOracle (all ENS verbatim)
-8. SimplexController × 2 (one per TLD, different gate configs)
-9. Add controllers to their base registrars
-10. SNRCNameWrapper (UUPS proxy)
-11. Output addresses to `deployments/<network>.json`
+6. BaseRegistrarImplementation (UUPS proxy)
+7. Price oracle (DummyOracle local / Chainlink mainnet) + ExponentialPremiumPriceOracle
+8. SimplexController (NFT gate on for .testing, off for .simplex)
+9. Add controller to base registrar
+10. NameWrapper (UUPS-wrapped, verbatim ENS)
+11. Output addresses to `deployments/<network>-<tld>.json`
 
 ## Conventions from the PoC to follow
 
@@ -118,10 +122,10 @@ The resolver uses `bytes32` keys (not a single blob). Initial categories:
 
 ## Frontend approach
 
-Fork ens-app-v3, minimal diff:
+Fork ens-app-v3, minimal diff. Each frontend deployment targets one TLD.
 - **Branding**: swap logo and favicon only. No theme/color/font changes.
 - **Contract rewiring**: replace `@ensdomains/ensjs` calls with direct viem calls to SNRC contracts via `src/contracts/snrc.ts`
-- **Disable**: DNS import, ENS v2 migration, legacy favourites, on-chain subname UI — short-circuit, don't delete
+- **Disable**: DNS import, ENS v2 migration, legacy favourites, on-chain subname UI, image upload/display — short-circuit, don't delete
 - **Payment**: ETH — same as ENS, no changes to payment flow
-- **Adapt**: registration flow (TLD selector + NFT gate), profile (contact/channel links), pricing display
-- **Add**: admin panel page, NFT gate indicator
+- **Adapt**: TLD name in config (not a selector), profile (highlight simplex.contact/channel fields), pricing display
+- **Add**: admin panel page, NFT gate indicator (.testing only)
