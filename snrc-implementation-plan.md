@@ -45,7 +45,7 @@ Full fork of `ensdomains/ens-contracts`, adapted. Unchanged contracts keep their
 - **Root + ReverseRegistrar**: verbatim ENS copies
 - **Payment**: ERC-20 stablecoin (USDC/USDT), not ETH
 - **NFT gate**: checks `balanceOf(sender) > 0` on the SMPXNFT contract (`0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291`, ERC-721, 560 tokens, name "SimpleX NFT: SMPX testnet access", symbol "SMPXNFT")
-- **Frontend**: fork of `ensdomains/ens-app-v3` (Next.js + styled-components + wagmi/viem), restyled to SimpleX branding, surgically adapted
+- **Frontend**: fork of `ensdomains/ens-app-v3` (Next.js + styled-components + wagmi/viem), minimal diff — logo swap + contract rewiring only
 - **Deployment targets**: Hardhat local, Hoodi testnet, Ethereum mainnet
 
 ---
@@ -387,24 +387,11 @@ Fork [ensdomains/ens-app-v3](https://github.com/ensdomains/ens-app-v3) and adapt
 - Playwright e2e test suite (we adapt rather than rewrite)
 - pnpm package manager
 
-**Approach: surgical changes only.** The ENS app has ~100+ components and a polished UX. We keep everything that works and change only what differs.
+**Approach: minimal diff.** The ENS app has ~100+ components and a polished UX. Keep ENS styling, layout, and Thorin design system entirely. Only change what is functionally different.
 
-#### A. Style changes (SimpleX branding)
+#### A. Branding (logo only)
 
-Override Thorin design tokens to match simplex.chat:
-- Font: `Raleway, Arial, Helvetica, sans-serif` (Thorin default is Inter)
-- Primary/accent: `#02c0ff` (cyan)
-- Text: `#062d56` (dark blue)
-- Highlight: `#fbd561` (yellow)
-- Error: `#f95a2c` (tomato)
-- Background: `#f8f8f6` (off-white)
-- Buttons: `border-radius: 25px`, bg `#02c0ff`
-- Inputs: bg `#f1f1f1`, `border-radius: 10px`
-
-Where to change:
-- `src/pages/_app.tsx` — replace Thorin `ThorinGlobalStyles` or provide custom theme override
-- Logo/favicon/meta in `public/` and `src/assets/`
-- If Thorin's `lightTheme`/`darkTheme` objects are passed to `ThemeProvider`, override the token values there (colors, fonts, radii) — this is one object, not scattered CSS
+Replace logo and favicon in `public/` and `src/assets/` with SimpleX equivalents. No theme overrides, no font changes, no color changes.
 
 #### B. Contract rewiring
 
@@ -477,14 +464,14 @@ frontend/                          (clone of ens-app-v3)
     components/
       pages/profile/               MODIFIED — contact/channel link fields instead of text records
     pages/
-      index.tsx                    MODIFIED — SimpleX branding, TLD selector in search
+      index.tsx                    MODIFIED — TLD selector in search
       register.tsx                 MODIFIED — USDC flow, NFT gate
       admin.tsx                    NEW — admin panel
       import.tsx                   DISABLED
       ens-v2.tsx                   DISABLED
       legacyfavourites.tsx         DISABLED
-    assets/                        MODIFIED — SimpleX logo, favicon
-  public/                          MODIFIED — SimpleX assets
+    assets/                        MODIFIED — SimpleX logo only
+  public/                          MODIFIED — SimpleX favicon only
   next.config.mjs                  MODIFIED — remove ENS-specific rewrites if any
 ```
 
