@@ -1,6 +1,7 @@
 {
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "deploy:local": "node scripts/deploy-local.mjs",
     "deploy:local:simplex": "SIMPLEX_TLD=simplex node scripts/deploy-local.mjs"
