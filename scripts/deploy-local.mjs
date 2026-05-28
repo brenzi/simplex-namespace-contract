@@ -130,8 +130,9 @@ async function main() {
     'universalResolver/UniversalResolver.sol/UniversalResolver.json',
     [account.address, ensRegistry.address, dummyGateway.address])
 
-  // Multicall3 not deployed (viem handles batching without it for localhost)
-  const multicall3Address = zeroAddress
+  const multicall3 = await deploy('Multicall3',
+    'mocks/Multicall3.sol/Multicall3.json')
+  const multicall3Address = multicall3.address
 
   // Set resolver then transfer TLD to BaseRegistrar
   await write(ensRegistry, 'setResolver', [tldNode, publicResolver.address])
