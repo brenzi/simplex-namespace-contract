@@ -86,7 +86,7 @@ pnpm dev
 1. Add network: **Settings → Networks → Add Network**
    - Network name: `Hardhat`
    - RPC URL: `http://127.0.0.1:8545`
-   - Chain ID: `31337`
+   - Chain ID: `1337`
    - Currency: `ETH`
 
 2. Import test account: **Settings → Import Account → Private Key**
@@ -104,6 +104,8 @@ pnpm dev
 - Search for a 5-character name like `short` → should show as unavailable (min char length is 6)
 
 ### Registration flow
+
+> Ignore the warning `Error syncing data`. It only appears on hardhat local testing
 
 1. Search for an available 6+ char name (e.g., `testname`)
 2. Click to register → should show pricing in ETH (converted from $1/year via oracle)
