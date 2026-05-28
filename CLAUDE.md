@@ -144,3 +144,37 @@ Fork ens-app-v3, minimal diff. Each frontend deployment targets one TLD via `NEX
 - **Real logo**: replace placeholder SVGs with SimpleX brand assets
 - **End-to-end test**: deploy contracts to Hardhat, point frontend, verify full registration flow
 - **Subgraph**: ENS app relies on The Graph for name queries — local dev without subgraph limits some features
+
+## Gotchas / time-sinks learned the hard way
+
+Don't re-derive these. Check here first.
+
+### Hardhat 3 (`hardhat@3.x` with `npx hardhat node`)
+- `npx hardhat node` uses the network named **`default`**, NOT `hardhat`. Setting `chainId` on the `hardhat` network in config does nothing. To get a non-default chainId, run `npx hardhat --network hardhat node`. Run script does this.
+- Default in-memory chainId is **31337**. Viem's `localhost` chain (which the ENS app uses) is **1337**. We standardised on 1337 so they match. If the test wallet's chainId differs from RPC's, `eth_sendRawTransaction` rejects with "invalid chainId".
+- Hardhat 3 doesn't implement `eth_createAccessList` (returns -32004). Viem uses this for gas-tightening; we patched `createAccessList.ts` to swallow that error and return an empty list.
+- `eth_estimateGas` with state overrides (3rd param) returns a JSON-parse error "trailing characters". Hardhat doesn't accept state overrides. The fallback in `createAccessList` returning empty avoids this.
+- Hardhat's block.timestamp drifts ahead of wall-clock after every `evm_increaseTime`. The advance is permanent for the node session. Fresh restart resets it. Frontend's CountdownCircle compares `block.timestamp*1000` against `Date.now()`, so big drift breaks the wait.
+
+### viem batching
+- viem batches reads via Multicall3's `aggregate3` (`0x82ad56cb`), **NOT `tryAggregate`**. Our mock must implement both. Symptom: every read fails with Hardhat "Internal error" → wagmi shows `data: undefined`.
+
+### ENS app local dev expectations
+- `useEthPrice` hardcodes `eth-usd.data.eth` — must be registered locally with addr → DummyOracle. Without it, the Pricing-step Next button is disabled forever ("Loading"). Deploy script handles this.
+- `localhost` chain in ENS app's frontend config = chainId 1337. Resolver address tables in `src/constants/{resolverAddressData,tldData}.ts` key off `'1337'`. If you change one, change all.
+
+### Process hygiene
+- Always `pkill -9 -f "hardhat\|next\|playwright"` AND `lsof -ti :8545 :3000 | xargs -r kill -9` before restarting the stack. Background playwright runs from prior turns will silently re-grep the same test you're trying to run now.
+- `pnpm dev` Fast Refresh can get stuck in a reload loop after many code edits in the same session — `rm -rf ens-app-v3/.next` between major restarts.
+- `bash scripts/run-local.sh` must run from `/work/simplex-namespace-contract/` (it doesn't `cd` to repo root).
+
+### PublicResolver `trustedETHController` parameter
+- PublicResolver constructor takes `(ENS, NameWrapper, trustedETHController, trustedReverseRegistrar)`. Passing zero for trustedETHController means the controller **cannot** write resolver records during `register()`. Symptom: register reverts deep in `multicallWithNodeCheck` (used when `registration.data` is non-empty, e.g. setting a resolver + addr record + reverseRecord). The deploy script must deploy the controller FIRST, then the resolver with the controller address as the trusted controller. Don't pass zeroAddress.
+- Same applies to `trustedReverseRegistrar`. We pass the ReverseRegistrar address there.
+
+### Playwright fixture playbook (steal from ens-app-v3)
+- `ens-app-v3/playwright/fixtures/time.ts` already solves the wall-clock vs block-clock issue: `page.clock.install({ time: blockTimestamp })` overrides browser `Date.now()` to match chain time, then `page.clock.runFor(ms)` + `testClient.increaseTime` advance both in lockstep. Use this pattern instead of `await page.waitForTimeout(60000)`.
+- `ens-app-v3/e2e/specs/stateless/registerName.spec.ts` is a 2391-line existing test for the full registration flow. Before writing custom e2e tests from scratch, check whether an adapted ENS spec covers the same flow — that's likely the lower-diff path long-term.
+
+### Stateful test names
+- Hardhat runs in a single shared session — names registered by one test persist for the rest of the suite. Either use unique per-run name (e.g. `reg${Date.now().toString(36)}`) or reset chain state between tests. Symptom: a test passes when run alone but fails in suite (the previously-registered name is no longer `available`).

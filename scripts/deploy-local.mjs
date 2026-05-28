@@ -7,7 +7,7 @@
  * Outputs NEXT_PUBLIC_DEPLOYMENT_ADDRESSES JSON for the frontend.
  */
 import { createPublicClient, createWalletClient, http, labelhash, namehash, zeroHash, zeroAddress } from 'viem'
-import { hardhat } from 'viem/chains'
+import { localhost } from 'viem/chains'
 import { readFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
@@ -27,9 +27,9 @@ const tldNode = namehash(tld)
 const nftGateEnabled = tld === 'testing'
 
 const transport = http(rpcUrl)
-const publicClient = createPublicClient({ chain: hardhat, transport })
+const publicClient = createPublicClient({ chain: localhost, transport })
 const walletClient = createWalletClient({
-  chain: hardhat,
+  chain: localhost,
   transport,
   account: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266', // Hardhat account #0
 })
@@ -83,12 +83,6 @@ async function main() {
     'wrapper/NameWrapper.sol/NameWrapper.json',
     [ensRegistry.address, baseRegistrar.address, account.address])
 
-  const publicResolver = await deploy('PublicResolver',
-    'resolvers/PublicResolver.sol/PublicResolver.json',
-    [ensRegistry.address, nameWrapper.address, zeroAddress, reverseRegistrar.address])
-
-  await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
-
   const dummyOracle = await deploy('DummyOracle',
     'ethregistrar/DummyOracle.sol/DummyOracle.json',
     [100000000n])
@@ -116,6 +110,13 @@ async function main() {
       [tldNode, `.${tld}`, 6, nftGateEnabled ? mockNft.address : zeroAddress, nftGateEnabled],
     ])
 
+  // PublicResolver must trust the controller so it can write records during register()
+  const publicResolver = await deploy('PublicResolver',
+    'resolvers/PublicResolver.sol/PublicResolver.json',
+    [ensRegistry.address, nameWrapper.address, controller.address, reverseRegistrar.address])
+
+  await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
+
   // Wire up
   await write(baseRegistrar, 'addController', [controller.address])
   await write(reverseRegistrar, 'setController', [controller.address, true])
@@ -137,7 +138,18 @@ async function main() {
   // Set resolver then transfer TLD to BaseRegistrar
   await write(ensRegistry, 'setResolver', [tldNode, publicResolver.address])
   await write(ensRegistry, 'setOwner', [tldNode, baseRegistrar.address])
-  console.log(`.${tld} node transferred to BaseRegistrar\n`)
+  console.log(`.${tld} node transferred to BaseRegistrar`)
+
+  // Frontend's useEthPrice resolves eth-usd.data.eth -> ChainLink-like oracle.
+  // Register the path under root and point its addr record at DummyOracle (has latestAnswer()).
+  await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash('eth'), account.address])
+  await write(ensRegistry, 'setResolver', [namehash('eth'), publicResolver.address])
+  await write(ensRegistry, 'setSubnodeOwner', [namehash('eth'), labelhash('data'), account.address])
+  await write(ensRegistry, 'setResolver', [namehash('data.eth'), publicResolver.address])
+  await write(ensRegistry, 'setSubnodeOwner', [namehash('data.eth'), labelhash('eth-usd'), account.address])
+  await write(ensRegistry, 'setResolver', [namehash('eth-usd.data.eth'), publicResolver.address])
+  await write(publicResolver, 'setAddr', [namehash('eth-usd.data.eth'), dummyOracle.address])
+  console.log(`eth-usd.data.eth -> DummyOracle\n`)
 
   const addresses = {
     ENSRegistry: ensRegistry.address,

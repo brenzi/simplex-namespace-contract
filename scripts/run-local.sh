@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 TLD="${SIMPLEX_TLD:-testing}"
 
 echo "=== Starting Hardhat node ==="
-(cd ens-contracts && npx hardhat node) &
+(cd ens-contracts && npx hardhat --network hardhat node) &
 NODE_PID=$!
 sleep 4
 

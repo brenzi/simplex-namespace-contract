@@ -32,6 +32,21 @@ async function advanceTime(seconds: number) {
   })
 }
 
+async function getBlockTimestamp(): Promise<number> {
+  const res = await fetch('http://127.0.0.1:8545', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_getBlockByNumber', params: ['latest', false], id: 1 }),
+  })
+  const { result } = await res.json()
+  return parseInt(result.timestamp, 16)
+}
+
+async function syncBrowserClockToChain(page: any, offset: number = 0) {
+  const blockTs = await getBlockTimestamp()
+  await page.clock.install({ time: new Date((blockTs + offset) * 1000) })
+}
+
 async function connectWallet(page: any, wallet: any) {
   const connectButton = page.locator('[data-testid="connect-button"]').first()
   await connectButton.waitFor({ timeout: 10_000 })
@@ -166,15 +181,17 @@ test.describe('SimpleX Namespace', () => {
   })
 
   test('full registration flow: commit and register', async ({ page }) => {
+    await syncBrowserClockToChain(page)
     const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
 
     await page.goto('/')
     await page.waitForTimeout(2000)
     await connectWallet(page, wallet)
 
-    // Search and navigate to registration
+    // Use a unique name per run to avoid collision with already-registered names
+    const uniqueName = `reg${Date.now().toString(36)}`
     const searchInput = page.locator('input[placeholder]').first()
-    await searchInput.fill('testname')
+    await searchInput.fill(uniqueName)
     await page.waitForTimeout(3000)
     await dismissOverlay(page)
 
@@ -225,9 +242,13 @@ test.describe('SimpleX Namespace', () => {
     // Wait for countdown to appear
     await expect(page.getByTestId('countdown-circle')).toBeVisible({ timeout: 10_000 })
 
-    // Advance time on Hardhat (60+ seconds for commit age)
-    await advanceTime(65)
-    await page.waitForTimeout(3000)
+    // Advance chain past minCommitmentAge, then set browser clock well past commit timestamp.
+    // Browser cushion = 70s ensures countdown's commitTimestamp + 60000 < Date.now() is satisfied
+    // regardless of which block the commit landed in.
+    await advanceTime(70)
+    await syncBrowserClockToChain(page, 70)
+    await page.clock.runFor(1000)
+    await page.waitForTimeout(1000)
 
     // Should show finish button enabled
     await expect(page.getByTestId('finish-button')).toBeEnabled({ timeout: 30_000 })
