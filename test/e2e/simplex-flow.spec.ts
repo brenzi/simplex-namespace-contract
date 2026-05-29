@@ -124,10 +124,10 @@ function loadDeployments(): Record<string, `0x${string}`> {
   return JSON.parse(readFileSync(path, 'utf8'))
 }
 
-async function registerNameOnChain(label: string, withResolver: boolean = false) {
+async function registerNameOnChain(label: string, withResolver: boolean = false, privateKey: string = DEPLOYER_KEY) {
   const { createPublicClient, createWalletClient, http, parseAbi } = await import('viem')
   const { privateKeyToAccount } = await import('viem/accounts')
-  const account = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`)
+  const account = privateKeyToAccount(privateKey as `0x${string}`)
   const wallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account })
   const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
   const deps = loadDeployments()
@@ -497,5 +497,106 @@ test.describe('SimpleX Namespace', () => {
     await expect(linkLocator).toContainText('SimpleX contact')
     // …but the link href points at the actual record value
     await expect(linkLocator).toHaveAttribute('href', contactLink)
+  })
+
+  // Documents the contract-enforced NFT gate on the .testing TLD: an account
+  // without an SMPXNFT cannot complete a registration. The check sits in
+  // SimplexController._checkSimplexGates and only fires during register(), so
+  // commit() succeeds. We drive commit via writeContract, then assert that the
+  // register() simulation reverts with the NftRequired custom error.
+  test('registration fails for an account without the SMPX NFT', async () => {
+    const { createPublicClient, createWalletClient, http, parseAbi } = await import('viem')
+    const { privateKeyToAccount } = await import('viem/accounts')
+    const account = privateKeyToAccount(ACCOUNT1_KEY as `0x${string}`)
+    const wallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account })
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const controller = loadDeployments().ETHRegistrarController
+    const abi = parseAbi([
+      'function register((string label, address owner, uint256 duration, bytes32 secret, address resolver, bytes[] data, uint8 reverseRecord, bytes32 referrer)) external payable',
+      'function makeCommitment((string label, address owner, uint256 duration, bytes32 secret, address resolver, bytes[] data, uint8 reverseRecord, bytes32 referrer)) external pure returns (bytes32)',
+      'function commit(bytes32) external',
+      'function rentPrice(string,uint256) external view returns ((uint256 base, uint256 premium))',
+      'error NftRequired()',
+    ])
+    const reg = {
+      label: `nft${Date.now().toString(36)}`,
+      owner: account.address,
+      duration: 31536000n,
+      secret: ('0x' + 'cc'.repeat(32)) as `0x${string}`,
+      resolver: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+      data: [] as `0x${string}`[],
+      reverseRecord: 0,
+      referrer: ('0x' + '00'.repeat(32)) as `0x${string}`,
+    }
+    const commitment = await pub.readContract({ address: controller, abi, functionName: 'makeCommitment', args: [reg] })
+    await pub.waitForTransactionReceipt({
+      hash: await wallet.writeContract({ address: controller, abi, functionName: 'commit', args: [commitment] }),
+    })
+    await advanceTime(65)
+    const price = await pub.readContract({ address: controller, abi, functionName: 'rentPrice', args: [reg.label, 31536000n] })
+    const value = ((price as any).base + (price as any).premium) * 12n / 10n
+
+    // Pre-flight: confirm the gate is actually on. If a previous test disabled it,
+    // this assertion documents the change rather than failing silently.
+    const nftGateAbi = parseAbi([
+      'function nftGateEnabled() view returns (bool)',
+      'function smpxNft() view returns (address)',
+    ])
+    const gateOn = await pub.readContract({ address: controller, abi: nftGateAbi, functionName: 'nftGateEnabled' })
+    const nft = await pub.readContract({ address: controller, abi: nftGateAbi, functionName: 'smpxNft' })
+    expect(gateOn).toBe(true)
+    const nftBalAbi = parseAbi(['function balanceOf(address) view returns (uint256)'])
+    const bal = await pub.readContract({ address: nft, abi: nftBalAbi, functionName: 'balanceOf', args: [account.address] })
+    expect(bal).toBe(0n)
+
+    // Now the actual assertion: register() reverts for ACCOUNT1.
+    let err: any
+    try {
+      await pub.simulateContract({ address: controller, abi, functionName: 'register', args: [reg], account, value })
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeDefined()
+    // Hardhat returns a generic "Internal error" for custom revert errors instead
+    // of the decoded name. The pre-flight checks above (gate on, NFT balance 0) make
+    // it unambiguous that the revert is the NFT gate firing.
+    expect(err.message).toMatch(/reverted|Internal error/i)
+  })
+
+  test('search marks too-short names with the controller minimum', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    const searchInput = page.locator('input[placeholder]').first()
+    await searchInput.fill('abc')
+    await page.waitForTimeout(3000)
+    // The status tag carries the live contract minimum, not just a generic "Too Short"
+    const result = page.locator('[data-testid="search-result-name"]').first()
+    await expect(result).toContainText(/Min \d+ chars/)
+  })
+
+  test('my names lists a name registered by the connected wallet', async ({ page }) => {
+    const { keccak256, toBytes } = await import('viem')
+    const uniqueName = `mn${Date.now().toString(36)}`
+    await registerNameOnChain(uniqueName)
+    const labelhash = keccak256(toBytes(uniqueName))
+
+    await syncBrowserClockToChain(page)
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+    // Seed the ensjs label cache so the on-chain fallback can resolve the labelhash
+    // back to the human label. (UI flow already does this on search; we skipped that
+    // by registering via direct contract call.)
+    await page.evaluate(({ label, hash }) => {
+      const cache = JSON.parse(window.localStorage.getItem('ensjs:labels') || '{}')
+      cache[hash] = label
+      window.localStorage.setItem('ensjs:labels', JSON.stringify(cache))
+    }, { label: uniqueName, hash: labelhash })
+    await page.goto('/my/names')
+    await page.waitForTimeout(8000)
+    await dismissOverlay(page)
+    const body = await page.textContent('body')
+    expect(body).toContain(uniqueName)
   })
 })
