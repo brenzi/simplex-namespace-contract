@@ -574,7 +574,10 @@ test.describe('SimpleX Namespace', () => {
     await page.goto('/')
     await page.waitForTimeout(2000)
     const searchInput = page.locator('input[placeholder]').first()
-    await searchInput.fill('abc')
+    // 2-char label stays below the floor for any contract minCharLength >= 3,
+    // which avoids a state-pollution failure after a prior test that lowered
+    // the minimum to 3.
+    await searchInput.fill('ab')
     await page.waitForTimeout(3000)
     // The status tag carries the live contract minimum, not just a generic "Too Short"
     const result = page.locator('[data-testid="search-result-name"]').first()
@@ -633,7 +636,18 @@ test.describe('SimpleX Namespace', () => {
   // 3-char name end-to-end. Asserts: (1) admin tx confirms and the page shows the
   // new minimum, (2) the search no longer marks the short name as Too Short,
   // (3) the full commit/register flow succeeds for the now-allowed 3-char label.
-  test('admin lowers min char length to 3 then registers a 3-char name', async ({ page }) => {
+  test('admin lowers min char length and registers a name at the new floor', async ({ page }) => {
+    // Read current minCharLength on-chain. Lowering is monotonic so this test
+    // is parametric in the starting state: from N, lower to N-1, then register
+    // an (N-1)-char name. Skips if the floor is already below 2.
+    const { createPublicClient, http, parseAbi, keccak256, toBytes } = await import('viem')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const controller = loadDeployments().ETHRegistrarController
+    const minAbi = parseAbi(['function minCharLength() view returns (uint8)'])
+    const currentMin = (await pub.readContract({ address: controller, abi: minAbi, functionName: 'minCharLength' })) as number
+    test.skip(currentMin < 2, `min char length is ${currentMin}; nothing left to lower`)
+    const newMin = currentMin - 1
+
     await syncBrowserClockToChain(page)
     const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
 
@@ -645,34 +659,25 @@ test.describe('SimpleX Namespace', () => {
     await page.waitForTimeout(5000)
     await dismissOverlay(page)
 
-    // Confirm the initial state — controller-enforced minimum is still 6.
-    await expect(page.locator('text=Min char length: 6')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator(`text=Min char length: ${currentMin}`)).toBeVisible({ timeout: 15_000 })
 
-    // Lower the limit to 3 in a single call (the contract allows monotonic decrease,
-    // so 6 → 3 is fine).
-    await page.getByTestId('admin-new-min-char-input').fill('3')
+    await page.getByTestId('admin-new-min-char-input').fill(String(newMin))
     await page.getByTestId('admin-set-min-char-button').click()
     await wallet.authorize(Web3RequestKind.SendTransaction)
     await page.waitForTimeout(3000)
-    await expect(page.locator('text=Min char length: 3')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator(`text=Min char length: ${newMin}`)).toBeVisible({ timeout: 15_000 })
 
-    // Now register a 3-char name via the regular UI flow.
-    // Random 3 lowercase letters keeps tests independent of prior runs as long as the
-    // chain is fresh.
+    // Register an (newMin)-char name via the regular UI flow.
     const rand = () => 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
-    const threeCharName = `${rand()}${rand()}${rand()}`
+    const newMinName = Array.from({ length: newMin }, rand).join('')
 
     await page.goto('/')
     await page.waitForTimeout(3000)
     await dismissOverlay(page)
-    await registerNameOnUI(page, wallet, threeCharName)
+    await registerNameOnUI(page, wallet, newMinName)
 
-    // Verify on-chain ownership (registerNameOnUI already asserts the view-name
-    // button appeared, which proves the UI saw the registration succeed).
-    const { createPublicClient, http, parseAbi, keccak256, toBytes } = await import('viem')
-    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
     const base = loadDeployments().BaseRegistrarImplementation
-    const labelhash = keccak256(toBytes(threeCharName))
+    const labelhash = keccak256(toBytes(newMinName))
     const owner = await pub.readContract({
       address: base,
       abi: parseAbi(['function ownerOf(uint256) view returns (address)']),
@@ -683,7 +688,19 @@ test.describe('SimpleX Namespace', () => {
   })
 
   test('NFT-gate banner shows and Next is disabled for a wallet without SMPXNFT', async ({ page }) => {
-    // ACCOUNT1 has no SMPXNFT — the gate is on for .testing.
+    // The gate is required on .testing; skip if a prior test in the same session
+    // disabled it (`disableNftGate` is a one-way switch).
+    const { createPublicClient, http, parseAbi } = await import('viem')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const controller = loadDeployments().ETHRegistrarController
+    const gateOn = (await pub.readContract({
+      address: controller,
+      abi: parseAbi(['function nftGateEnabled() view returns (bool)']),
+      functionName: 'nftGateEnabled',
+    })) as boolean
+    test.skip(gateOn === false, 'NFT gate was already disabled by a prior test')
+
+    // ACCOUNT1 has no SMPXNFT — the gate blocks them.
     const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [ACCOUNT1_KEY], chains: [hardhatChain] })
     await page.goto('/')
     await page.waitForTimeout(2000)
@@ -707,12 +724,31 @@ test.describe('SimpleX Namespace', () => {
     await expect(nextBtn).toContainText(/SimpleX NFT required/i)
   })
 
-  // Combined UI test: after the admin has already lowered the limit to 3 (the
-  // previous test does that), drop a 4-char name on the registration page and
-  // verify that the SimpleX info panel highlights the $32 tier and the FullInvoice
-  // displays a yearly fee in the $32 ballpark. With the DummyOracle, $1 == 1 ETH,
-  // so the displayed yearly ETH cost should be ≈ 32 ETH.
+  // UI test: drop a 4-char name on the registration page and verify that the
+  // SimpleX info panel highlights the $32 tier and the FullInvoice displays a
+  // yearly fee in the $32 ballpark. With the DummyOracle, $1 == 1 ETH, so the
+  // displayed yearly ETH cost should be ≈ 32 ETH.
   test('pricing tier highlights the 4-char tier and the invoice agrees', async ({ page }) => {
+    // Ensure the on-chain min char length is ≤ 4 so a 4-char name is registrable.
+    const { createPublicClient, createWalletClient, http, parseAbi } = await import('viem')
+    const { privateKeyToAccount } = await import('viem/accounts')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const adminAccount = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`)
+    const adminWallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account: adminAccount })
+    const controller = loadDeployments().ETHRegistrarController
+    const minAbi = parseAbi([
+      'function minCharLength() view returns (uint8)',
+      'function setMinCharLength(uint8) external',
+    ])
+    const currentMin = (await pub.readContract({ address: controller, abi: minAbi, functionName: 'minCharLength' })) as number
+    if (currentMin > 4) {
+      await pub.waitForTransactionReceipt({
+        hash: await adminWallet.writeContract({
+          address: controller, abi: minAbi, functionName: 'setMinCharLength', args: [4],
+        }),
+      })
+    }
+
     await syncBrowserClockToChain(page)
     const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
 
