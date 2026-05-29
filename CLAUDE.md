@@ -87,6 +87,10 @@ Set via `setText(node, "simplex.contact", value)`, read via `text(node, "simplex
 - `setTreasury` (where ETH fees go)
 - UUPS upgrade authority (can be renounced)
 
+## Deviations from `snrc-implementation-plan.md`
+
+- **NameWrapper not UUPS-wrapped.** Plan called for it (for upgradeability + marketplace flexibility), but NameWrapper is 25,925 bytes — already over the 24,576-byte EIP-170 limit before UUPS boilerplate is added. Adding `UUPSUpgradeable + Initializable + _authorizeUpgrade` pushes it to ~27,500 bytes. Two options were considered and rejected: BeaconProxy (same size constraint) and slimming NameWrapper by stripping ReverseClaimer/ERC20Recoverable/legacy upgrade path (too large a diff from upstream ENS, hurts auditability). Decision: keep NameWrapper verbatim, accept non-upgradeability. If a serious bug requires fixing post-launch, migrate names to a new wrapper via the existing `upgradeContract` hook ENS already provides.
+
 ## Toolchain
 
 - Node 22.x, pnpm 9.x

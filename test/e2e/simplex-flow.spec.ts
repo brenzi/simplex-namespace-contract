@@ -599,4 +599,51 @@ test.describe('SimpleX Namespace', () => {
     const body = await page.textContent('body')
     expect(body).toContain(uniqueName)
   })
+
+  test('registration pricing page shows the SimpleX USD tiers', async ({ page }) => {
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    const uniqueName = `tier${Date.now().toString(36)}`
+    const searchInput = page.locator('input[placeholder]').first()
+    await searchInput.fill(uniqueName)
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+    await page.locator('[data-testid="search-result-name"]').first().click()
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+
+    await expect(page.getByTestId('simplex-info-panel')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('simplex-tier-3')).toContainText('$128')
+    await expect(page.getByTestId('simplex-tier-4')).toContainText('$32')
+    await expect(page.getByTestId('simplex-tier-5')).toContainText('$8')
+    await expect(page.getByTestId('simplex-tier-6')).toContainText('$1')
+  })
+
+  test('NFT-gate banner shows and Next is disabled for a wallet without SMPXNFT', async ({ page }) => {
+    // ACCOUNT1 has no SMPXNFT — the gate is on for .testing.
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [ACCOUNT1_KEY], chains: [hardhatChain] })
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    const uniqueName = `nft${Date.now().toString(36)}`
+    const searchInput = page.locator('input[placeholder]').first()
+    await searchInput.fill(uniqueName)
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+    await page.locator('[data-testid="search-result-name"]').first().click()
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+
+    await expect(page.getByTestId('simplex-nft-gate-helper')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('simplex-nft-gate-helper')).toContainText(
+      /does not currently hold one/i,
+    )
+    const nextBtn = page.getByTestId('next-button')
+    await expect(nextBtn).toBeDisabled({ timeout: 15_000 })
+    await expect(nextBtn).toContainText(/SimpleX NFT required/i)
+  })
 })
