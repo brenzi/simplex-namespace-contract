@@ -1,0 +1,95 @@
+name: Build & deploy SPA to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# GitHub Pages settings — must be enabled in the repository's Settings → Pages
+# with "Source = GitHub Actions" before the first run.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Avoid stomping on a deploy that's already in flight.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            ens-app-v3/pnpm-lock.yaml
+            ens-contracts/pnpm-lock.yaml
+
+      - name: Install parent + submodule deps
+        run: |
+          pnpm install --frozen-lockfile
+          cd ens-contracts && pnpm install --frozen-lockfile && cd ..
+          cd ens-app-v3 && pnpm install --frozen-lockfile && cd ..
+
+      - name: Compile contracts (artifacts needed by frontend builds that read ABIs)
+        working-directory: ens-contracts
+        run: npx hardhat compile
+
+      - name: Load Sepolia deployment addresses
+        id: addrs
+        run: |
+          if [ ! -f deployments.sepolia.json ]; then
+            echo "::error::deployments.sepolia.json not found. Run scripts/deploy-testnet.mjs and commit the result before pushing."
+            exit 1
+          fi
+          # Strip whitespace so it fits on a single env-var line.
+          ADDRS=$(jq -c . deployments.sepolia.json)
+          echo "addrs<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$ADDRS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Build static SPA
+        working-directory: ens-app-v3
+        env:
+          NEXT_PUBLIC_IPFS: '1'
+          NEXT_PUBLIC_CHAIN_NAME: sepolia
+          NEXT_PUBLIC_SIMPLEX_TLD: testing
+          NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES: ${{ steps.addrs.outputs.addrs }}
+        run: |
+          pnpm build
+          pnpm export
+          # `next export` emits to ./out — keep that as the artifact root.
+          # Adding .nojekyll so Pages doesn't try to process the `_next/` dir.
+          touch out/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ens-app-v3/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

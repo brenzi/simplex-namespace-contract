@@ -102,7 +102,7 @@ Set via `setText(node, "simplex.contact", value)`, read via `text(node, "simplex
 ## Deployment targets
 
 - **Local**: Hardhat node, MockSMPXNFT + DummyOracle (fixed ETH/USD rate)
-- **Hoodi testnet**: chainId 560048, MockSMPXNFT + DummyOracle
+- **Sepolia testnet**: chainId 11155111, MockSMPXNFT deployed once + Chainlink ETH/USD feed (`0x694AA17…`)
 - **Mainnet**: Chainlink ETH/USD oracle, real SMPXNFT (`0x3AF6D9Ee...`), treasury = SNCC multisig
 
 ## Deployment order (per TLD)
@@ -137,7 +137,7 @@ Fork ens-app-v3, minimal diff. Each frontend deployment targets one TLD via `NEX
 - **Branding**: placeholder logo SVGs (need real SimpleX logo)
 - **Disable**: DNS import, ENS v2, legacy favourites, ENS nav links — short-circuited
 - **Images**: avatar upload hidden, avatar display disabled (useEnsAvatar returns null)
-- **Chains**: Hoodi testnet added
+- **Chains**: Sepolia testnet wired (Hoodi was rejected — Sepolia gives us Chainlink ETH/USD and a public subgraph)
 - **Config**: `.env.simplex` with all env vars, contract addresses via `NEXT_PUBLIC_DEPLOYMENT_ADDRESSES`
 - **Build**: `pnpm build` passes
 

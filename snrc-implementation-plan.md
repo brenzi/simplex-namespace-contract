@@ -83,7 +83,7 @@ Full fork of `ensdomains/ens-contracts`, adapted. Unchanged contracts keep their
 - **Payment**: ETH (same as ENS)
 - **NFT gate**: `.testing` only — checks `balanceOf(sender) > 0` on SMPXNFT (`0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291`). `.simplex` has no NFT gate.
 - **Frontend**: fork of `ensdomains/ens-app-v3`, minimal diff — logo swap + contract rewiring + hide images
-- **Deployment targets**: Hardhat local, Hoodi testnet, Ethereum mainnet (both TLDs on mainnet)
+- **Deployment targets**: Hardhat local, Sepolia testnet, Ethereum mainnet (both TLDs on mainnet)
 
 ---
 
@@ -235,7 +235,7 @@ Every modification to ENS code traced to the feature that requires it. If a chan
 | ↳ `registerReserved` admin function | **Assigning reserved names**: admin can register a reserved name to a specific address (e.g., assign `simplex.testing` to the official SimpleX account). |
 | **New: MockSMPXNFT.sol** | **Testing**: faithful mock of the mainnet SMPXNFT contract for local dev and testnet. Not deployed to mainnet. |
 | **Add OZ upgradeable deps** to package.json | **Upgradeability**: required by UUPS wrapping above. |
-| **Add Hoodi network** to hardhat.config | **Testnet deployment**: Hoodi is the target testnet. |
+| **Add Sepolia network** to hardhat.config | **Testnet deployment**: Sepolia is the target testnet. |
 | **Drop `dnsregistrar/` + `dnssec-oracle/`** | **Not needed**: SimpleX namespaces are not DNS domains. Including these would add unused code and attack surface. |
 
 ### Frontend changes (ens-app-v3 fork)
@@ -256,7 +256,7 @@ Every modification to ENS code traced to the feature that requires it. If a chan
 | **Hide reverse resolution UI** | **Not launched**: reverse resolution is deployed (contract verbatim) but not exposed to users yet. Can be re-enabled later. |
 | **Hide image upload/display** | **Scope reduction**: avatar/image features are not part of the SimpleX namespace MVP. Hiding them reduces UI complexity. Contracts unchanged — images can be re-enabled later. |
 | ~~Subname management UI~~ | **Kept**: subnames are on-chain via NameWrapper. ENS subname UI stays as-is. |
-| **Hoodi chain config** | **Testnet deployment**: frontend must support connecting to Hoodi testnet. |
+| **Sepolia chain config** | **Testnet deployment**: frontend must support connecting to Sepolia testnet. |
 
 ---
 
@@ -274,7 +274,7 @@ Every modification to ENS code traced to the feature that requires it. If a chan
 2. In each fork, create `simplex` branch from the upstream default branch
 3. In `ens-contracts/`: `pnpm install`, verify `npx hardhat compile` and existing ENS tests pass unmodified
 4. Add `@openzeppelin/contracts-upgradeable` v5 + `@openzeppelin/hardhat-upgrades` to `ens-contracts` dependencies (needed for UUPS)
-5. Add Hoodi network config (chainId 560048) to `ens-contracts/hardhat.config.ts`
+5. Add Sepolia network config (chainId 11155111) to `ens-contracts/hardhat.config.ts`
 6. Create `scripts/`, `docs/`, `test/` dirs in this parent repo for cross-repo helpers
 
 **Verify**: `cd ens-contracts && npx hardhat compile` passes. Existing ENS test suite passes on `simplex` branch before any SNRC changes.
@@ -485,7 +485,7 @@ Disable at the route/component level (short-circuit, don't delete ENS code):
 The ENS app already supports local dev via `pnpm dev:glocal` (Hardhat + Anvil). Adapt this:
 - Configure local Hardhat node as a chain option in wagmi config
 - Use Hardhat's default test accounts (the "test test test..." mnemonic the ENS app already documents)
-- Add Hoodi testnet as a chain option
+- Add Sepolia testnet as a chain option
 
 #### F. File structure (what changes vs. stays)
 
@@ -496,7 +496,7 @@ frontend/                          (clone of ens-app-v3)
       snrc.ts                      NEW — SNRC contract ABIs + typed instances
       addresses.ts                 NEW — load from deployments/<network>.json
     constants/
-      chains.ts                    MODIFIED — add Hardhat local, Hoodi
+      chains.ts                    MODIFIED — add Hardhat local, Sepolia
       contracts.ts                 MODIFIED — replace ENS addresses with SNRC
     hooks/
       useNameAvailability.ts       MODIFIED — call BaseRegistrarImplementation.available()

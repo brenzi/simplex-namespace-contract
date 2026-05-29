@@ -116,8 +116,8 @@ expired names) verbatim.
 | 4      | $32         |
 | 3      | $128        |
 
-For local dev, we use ENS's `DummyOracle` (fixed ETH/USD = $1). On Hoodi and
-mainnet we point the oracle at the live Chainlink feed.
+For local dev, we use ENS's `DummyOracle` (fixed ETH/USD = $1). On Sepolia
+and mainnet we point the oracle at the live Chainlink ETH/USD feed.
 
 ## Admin authority
 
@@ -152,7 +152,7 @@ The full per-file diff against `ensdomains/ens-app-v3` is the audit surface.
 | Network | Provider              | NFT contract                                  | Oracle                                  |
 |---------|-----------------------|-----------------------------------------------|------------------------------------------|
 | local   | Hardhat node          | `MockSMPXNFT`                                 | `DummyOracle` (fixed $1/ETH)             |
-| Hoodi   | Hoodi testnet         | `MockSMPXNFT` deployed once                   | `DummyOracle`                            |
+| Sepolia | Sepolia testnet       | `MockSMPXNFT` deployed once                   | Chainlink ETH/USD `0x694AA17…`           |
 | Mainnet | Ethereum              | `0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291` | Chainlink ETH/USD                        |
 
 See [`deployment.md`](./deployment.md) for the per-network checklist.
