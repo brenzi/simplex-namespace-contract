@@ -136,6 +136,28 @@ pnpm dev
 6. **Register reserved**: reserve a name, then use "Register Reserved Name" to assign it to a specific address
 7. **Disable NFT gate**: click → confirm → now any account can register (one-way, can't re-enable)
 
+#### Lowering the minimum character length
+
+At launch, only names of 6 characters or longer can be registered. The
+contract owner can lower this limit over time as the namespace matures —
+typically 6 → 5 → 4 → 3 — to ration out shorter, more desirable names.
+
+To lower it from the UI:
+
+1. Connect the deployer (admin) wallet and open http://localhost:3000/admin.
+2. In the **Min Character Length** card, type the new minimum (lower than the
+   current value) into the input.
+3. Click **Set** and confirm the `setMinCharLength` transaction in MetaMask.
+4. The status line reports `setMinCharLength confirmed`, then "Min char length"
+   re-reads as the new value.
+5. Search for a name shorter than the previous floor — the **"Min N chars"**
+   tag disappears, the result shows **Available**, and the registration flow
+   proceeds normally.
+
+The change is **monotonic — strictly decreasing**. The contract reverts with
+`MinCharLengthCanOnlyDecrease` if you submit a value greater than or equal
+to the current minimum, so once a length tier opens it cannot be re-closed.
+
 ### Known limitations
 
 - **No subgraph**: The ENS app uses The Graph for name queries. Without a local subgraph, some features (name list, search suggestions) may not work fully. Direct contract interactions (registration, profile editing) work.

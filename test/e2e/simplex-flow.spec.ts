@@ -622,6 +622,59 @@ test.describe('SimpleX Namespace', () => {
     await expect(page.getByTestId('simplex-tier-6')).toContainText('$1')
   })
 
+  // Admin lowers the controller's minimum char length from 6 to 3, then registers a
+  // 3-char name end-to-end. Asserts: (1) admin tx confirms and the page shows the
+  // new minimum, (2) the search no longer marks the short name as Too Short,
+  // (3) the full commit/register flow succeeds for the now-allowed 3-char label.
+  test('admin lowers min char length to 3 then registers a 3-char name', async ({ page }) => {
+    await syncBrowserClockToChain(page)
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    await page.goto('/admin')
+    await page.waitForTimeout(5000)
+    await dismissOverlay(page)
+
+    // Confirm the initial state — controller-enforced minimum is still 6.
+    await expect(page.locator('text=Min char length: 6')).toBeVisible({ timeout: 15_000 })
+
+    // Lower the limit to 3 in a single call (the contract allows monotonic decrease,
+    // so 6 → 3 is fine).
+    await page.getByTestId('admin-new-min-char-input').fill('3')
+    await page.getByTestId('admin-set-min-char-button').click()
+    await wallet.authorize(Web3RequestKind.SendTransaction)
+    await page.waitForTimeout(3000)
+    await expect(page.locator('text=Min char length: 3')).toBeVisible({ timeout: 15_000 })
+
+    // Now register a 3-char name via the regular UI flow.
+    // Random 3 lowercase letters keeps tests independent of prior runs as long as the
+    // chain is fresh.
+    const rand = () => 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
+    const threeCharName = `${rand()}${rand()}${rand()}`
+
+    await page.goto('/')
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+    await registerNameOnUI(page, wallet, threeCharName)
+
+    // Verify on-chain ownership (registerNameOnUI already asserts the view-name
+    // button appeared, which proves the UI saw the registration succeed).
+    const { createPublicClient, http, parseAbi, keccak256, toBytes } = await import('viem')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const base = loadDeployments().BaseRegistrarImplementation
+    const labelhash = keccak256(toBytes(threeCharName))
+    const owner = await pub.readContract({
+      address: base,
+      abi: parseAbi(['function ownerOf(uint256) view returns (address)']),
+      functionName: 'ownerOf',
+      args: [BigInt(labelhash)],
+    })
+    expect((owner as string).toLowerCase()).toBe('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266')
+  })
+
   test('NFT-gate banner shows and Next is disabled for a wallet without SMPXNFT', async ({ page }) => {
     // ACCOUNT1 has no SMPXNFT — the gate is on for .testing.
     const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [ACCOUNT1_KEY], chains: [hardhatChain] })
