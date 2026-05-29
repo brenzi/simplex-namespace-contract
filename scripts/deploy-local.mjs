@@ -180,6 +180,10 @@ async function main() {
   console.log('\n=== DEPLOYMENT ADDRESSES ===')
   console.log(JSON.stringify(addresses, null, 2))
   console.log(`\nNEXT_PUBLIC_DEPLOYMENT_ADDRESSES=${JSON.stringify(addresses)}`)
+
+  // Persist for tests that need to reach the contracts directly.
+  const { writeFileSync } = await import('fs')
+  writeFileSync(join(__dirname, '..', 'deployments.local.json'), JSON.stringify(addresses, null, 2))
 }
 
 main().catch((err) => { console.error(err); process.exit(1) })

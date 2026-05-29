@@ -4,6 +4,8 @@
  * Requires: ./scripts/run-local.sh running (Hardhat node + contracts + frontend)
  */
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import {
   injectHeadlessWeb3Provider,
   Web3RequestKind,
@@ -82,6 +84,155 @@ async function confirmTransaction(page: any, wallet: any) {
   await confirmBtn.click()
   await wallet.authorize(Web3RequestKind.SendTransaction)
   await page.waitForTimeout(2000)
+}
+
+// Add a single record (key=value) via the add-records modal.
+// If `key` matches a predefined option (e.g. simplex.contact, com.twitter), uses it;
+// otherwise falls back to the "custom" option.
+// Must be called from the Profile step (registration) or the Edit Profile modal (post-registration).
+async function addProfileRecord(page: any, key: string, value: string) {
+  await page.getByTestId('show-add-profile-records-modal-button').click()
+  await page.waitForTimeout(500)
+  const confirmDlg = page.getByTestId('confirmation-dialog-confirm-button')
+  if (await confirmDlg.isVisible({ timeout: 1500 }).catch(() => false)) {
+    await confirmDlg.click()
+    await page.waitForTimeout(300)
+  }
+  const predefined = page.getByTestId(`profile-record-option-${key}`)
+  const isPredefined = await predefined.isVisible({ timeout: 1000 }).catch(() => false)
+  if (isPredefined) {
+    await predefined.click()
+    await page.getByTestId('add-profile-records-button').click()
+    await page.waitForTimeout(500)
+    await page.getByTestId(`profile-record-input-input-${key}`).fill(value)
+  } else {
+    await page.getByTestId('profile-record-option-custom').click()
+    await page.getByTestId('add-profile-records-button').click()
+    await page.waitForTimeout(500)
+    await page.getByTestId('custom-profile-record-input-key').fill(key)
+    await page.getByTestId('custom-profile-record-input-value').fill(value)
+  }
+  await page.waitForTimeout(300)
+}
+
+// Register a name end-to-end via direct contract calls (no UI). Used to set up
+// state for tests that exercise post-registration flows without dragging in the
+// frontend's registration-flow localStorage / cache quirks.
+function loadDeployments(): Record<string, `0x${string}`> {
+  // Resolve from the test file's location regardless of how the runner sets cwd.
+  const path = join(process.cwd(), 'deployments.local.json')
+  return JSON.parse(readFileSync(path, 'utf8'))
+}
+
+async function registerNameOnChain(label: string, withResolver: boolean = false) {
+  const { createPublicClient, createWalletClient, http, parseAbi } = await import('viem')
+  const { privateKeyToAccount } = await import('viem/accounts')
+  const account = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`)
+  const wallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account })
+  const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+  const deps = loadDeployments()
+  const controller = deps.ETHRegistrarController
+  const resolverAddr = withResolver ? deps.PublicResolver : ('0x0000000000000000000000000000000000000000' as `0x${string}`)
+  const abi = parseAbi([
+    'function register((string label, address owner, uint256 duration, bytes32 secret, address resolver, bytes[] data, uint8 reverseRecord, bytes32 referrer)) external payable',
+    'function makeCommitment((string label, address owner, uint256 duration, bytes32 secret, address resolver, bytes[] data, uint8 reverseRecord, bytes32 referrer)) external pure returns (bytes32)',
+    'function commit(bytes32) external',
+    'function rentPrice(string,uint256) external view returns ((uint256 base, uint256 premium))',
+  ])
+  const reg = {
+    label,
+    owner: account.address,
+    duration: 31536000n,
+    secret: ('0x' + 'aa'.repeat(32)) as `0x${string}`,
+    resolver: resolverAddr,
+    data: [] as `0x${string}`[],
+    reverseRecord: 0,
+    referrer: ('0x' + '00'.repeat(32)) as `0x${string}`,
+  }
+  const commitment = await pub.readContract({ address: controller, abi, functionName: 'makeCommitment', args: [reg] })
+  await pub.waitForTransactionReceipt({ hash: await wallet.writeContract({ address: controller, abi, functionName: 'commit', args: [commitment] }) })
+  await advanceTime(65)
+  const price = await pub.readContract({ address: controller, abi, functionName: 'rentPrice', args: [label, 31536000n] })
+  const value = ((price as any).base + (price as any).premium) * 12n / 10n
+  await pub.waitForTransactionReceipt({ hash: await wallet.writeContract({ address: controller, abi, functionName: 'register', args: [reg], value }) })
+}
+
+async function readTextRecord(name: string, key: string): Promise<string | null> {
+  const { createPublicClient, http, namehash, encodeFunctionData, decodeFunctionResult, parseAbi } = await import('viem')
+  const client = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+  const node = namehash(name)
+  const registry = loadDeployments().ENSRegistry
+  const registryAbi = parseAbi(['function resolver(bytes32) view returns (address)'])
+  const resolver = await client.readContract({ address: registry, abi: registryAbi, functionName: 'resolver', args: [node] })
+  if (!resolver || resolver === '0x0000000000000000000000000000000000000000') return null
+  const resolverAbi = parseAbi(['function text(bytes32, string) view returns (string)'])
+  return await client.readContract({ address: resolver, abi: resolverAbi, functionName: 'text', args: [node, key] })
+}
+
+// Drives the registration flow from a connected wallet on the search page.
+// If recordsToSet is supplied, adds them via the Profile step before continuing.
+async function registerNameOnUI(
+  page: any,
+  wallet: any,
+  uniqueName: string,
+  recordsToSet?: Array<{ key: string; value: string }>,
+) {
+  const searchInput = page.locator('input[placeholder]').first()
+  await searchInput.fill(uniqueName)
+  await page.waitForTimeout(3000)
+  await dismissOverlay(page)
+
+  const result = page.locator('[data-testid="search-result-name"]').first()
+  await result.click()
+  await page.waitForTimeout(3000)
+  await dismissOverlay(page)
+
+  await expect(page.getByRole('heading', { name: /Register/ })).toBeVisible({ timeout: 15_000 })
+
+  // Step 1: Pricing → Next
+  await page.getByTestId('next-button').click()
+  await page.waitForTimeout(1000)
+
+  // Step 2: Profile — add records if requested, then submit
+  const profileSubmit = page.getByTestId('profile-submit-button')
+  if (await profileSubmit.isVisible({ timeout: 3000 }).catch(() => false)) {
+    if (recordsToSet?.length) {
+      for (const r of recordsToSet) await addProfileRecord(page, r.key, r.value)
+    }
+    await profileSubmit.click()
+    await page.waitForTimeout(1000)
+  }
+
+  // Step 3: Info → Begin
+  const beginButton = page.getByTestId('next-button')
+  if (await beginButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await beginButton.click()
+    await page.waitForTimeout(1000)
+  }
+
+  const closeIcon = page.getByTestId('close-icon')
+  if (await closeIcon.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await closeIcon.click()
+    await page.waitForTimeout(500)
+  }
+
+  // Start timer → commit
+  await page.getByTestId('start-timer-button').click()
+  await page.waitForTimeout(1000)
+  await confirmTransaction(page, wallet)
+
+  await expect(page.getByTestId('countdown-circle')).toBeVisible({ timeout: 10_000 })
+  await advanceTime(70)
+  await syncBrowserClockToChain(page, 70)
+  await page.clock.runFor(1000)
+  await page.waitForTimeout(1000)
+
+  await expect(page.getByTestId('finish-button')).toBeEnabled({ timeout: 30_000 })
+  await page.getByTestId('finish-button').click()
+  await page.waitForTimeout(1000)
+  await confirmTransaction(page, wallet)
+
+  await expect(page.getByTestId('view-name')).toBeVisible({ timeout: 30_000 })
 }
 
 test.describe('SimpleX Namespace', () => {
@@ -277,5 +428,74 @@ test.describe('SimpleX Namespace', () => {
     await expect(page.locator('text=SimpleX Namespace Admin')).toBeVisible({ timeout: 15_000 })
     await expect(page.locator('text=Min char length')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('text=You are the owner')).toBeVisible({ timeout: 5_000 })
+  })
+
+  test('set simplex.contact during registration profile step', async ({ page }) => {
+    await syncBrowserClockToChain(page)
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    const uniqueName = `regp${Date.now().toString(36)}`
+    const contactLink = `https://simplex.chat/contact#/?v=2-7&smp=smp%3A%2F%2Fexample-${uniqueName}`
+
+    await registerNameOnUI(page, wallet, uniqueName, [
+      { key: 'simplex.contact', value: contactLink },
+    ])
+
+    // Verify on-chain that the resolver has the text record set.
+    const stored = await readTextRecord(`${uniqueName}.testing`, 'simplex.contact')
+    expect(stored).toBe(contactLink)
+  })
+
+  test('set simplex.contact after registration via profile editor', async ({ page }) => {
+    const uniqueName = `rege${Date.now().toString(36)}`
+    const contactLink = `https://simplex.chat/contact#/?v=2-7&smp=smp%3A%2F%2Fexample-${uniqueName}`
+
+    // Pre-register the name + set up a resolver via direct contract call. We need a
+    // resolver attached for the profile page to show the Edit Profile action.
+    await registerNameOnChain(uniqueName, /* withResolver */ true)
+
+    await syncBrowserClockToChain(page)
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    await page.goto(`/${uniqueName}.testing`)
+    await page.waitForTimeout(8000)
+    await dismissOverlay(page)
+
+    const editBtn = page.getByTestId('profile-action-Edit profile')
+    await editBtn.waitFor({ timeout: 15_000 })
+    await editBtn.click()
+    await page.waitForTimeout(1000)
+
+    await addProfileRecord(page, 'simplex.contact', contactLink)
+
+    await page.getByTestId('profile-submit-button').click()
+    await page.waitForTimeout(1000)
+    await confirmTransaction(page, wallet)
+    await page.waitForTimeout(2000)
+
+    // Verify on-chain
+    const stored = await readTextRecord(`${uniqueName}.testing`, 'simplex.contact')
+    expect(stored).toBe(contactLink)
+
+    // Verify the record actually shows in the profile UI (the bug the user hit:
+    // setting a record persisted on-chain but didn't display because the profile
+    // didn't fetch unknown keys without a subgraph).
+    await page.reload()
+    await page.waitForTimeout(5000)
+    await dismissOverlay(page)
+    const linkLocator = page.getByTestId('social-profile-button-simplex.contact')
+    await expect(linkLocator).toBeVisible({ timeout: 15_000 })
+    // Display text is the friendly label, not the raw URL
+    await expect(linkLocator).toContainText('SimpleX contact')
+    // …but the link href points at the actual record value
+    await expect(linkLocator).toHaveAttribute('href', contactLink)
   })
 })
