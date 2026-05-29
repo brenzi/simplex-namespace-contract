@@ -158,7 +158,96 @@ The change is **monotonic — strictly decreasing**. The contract reverts with
 `MinCharLengthCanOnlyDecrease` if you submit a value greater than or equal
 to the current minimum, so once a length tier opens it cannot be re-closed.
 
-### Known limitations
+## Managing the set of registered names
+
+Two distinct lifecycles change the on-chain registry: the **genesis state**
+baked in by the deploy script, and **post-launch** owner-only operations
+exposed through `SimplexController`. The admin panel
+(`http://localhost:3000/admin`) is a thin wrapper over the post-launch
+functions; you can call the same functions from a script or block explorer if
+you prefer.
+
+### Pre-deployment (genesis state)
+
+Before the controller is renounced or handed off, every `.testing` /
+`.simplex` deployment can be seeded with names in two ways. Edit
+[`scripts/deploy-local.mjs`](./scripts/deploy-local.mjs) (or a copy adapted
+for testnet / mainnet) and add the calls below at the end of `main()`, after
+`controller` and `publicResolver` are deployed:
+
+1. **Pre-reserve names** — prevents them from being publicly registered. Use
+   for trademarks, official SimpleX names, abuse-prone words, or anything you
+   want to hand-assign later.
+
+   ```js
+   for (const label of ['simplex', 'admin', 'support', 'help']) {
+     await write(controller, 'addReservedName', [label])
+   }
+   ```
+
+2. **Pre-register a reserved name to a known address** — calls
+   `registerReserved(label, owner, duration)` which bypasses the public gate
+   checks (length, NFT, even the reserved-name check itself). Use for
+   handing out names to founders, partners, or a community multisig before
+   the public phase.
+
+   ```js
+   const oneYear = 31536000n
+   await write(controller, 'registerReserved', ['simplex', officialOwner, oneYear])
+   ```
+
+After running the modified deploy script the controller starts in the desired
+state — `addReservedName` calls produce an entry in `reservedNames`,
+`registerReserved` mints the BaseRegistrar ERC-721 to the chosen owner.
+
+### Post-launch (admin operations)
+
+After deployment the same calls are still available, just gated to the
+controller owner. The admin panel exposes them as separate cards:
+
+| What you want                                | Admin-panel card             | Underlying call                              |
+|---------------------------------------------|------------------------------|----------------------------------------------|
+| Block a name from public registration       | **Reserve a name**           | `addReservedName(label)`                     |
+| Restore a name to public registration       | **Unreserve a name**         | `removeReservedName(label)`                  |
+| Check whether a name is currently reserved  | **Check Reserved**           | `reservedNames(keccak256(label))` (read-only)|
+| Assign a reserved name to a specific address | **Register Reserved Name**  | `registerReserved(label, owner, duration)`   |
+
+Step-by-step (from the UI):
+
+1. Connect the deployer/owner wallet and open `/admin`.
+2. **To reserve**: type the bare label (e.g. `simplex`, not `simplex.testing`)
+   in the **Reserve a name** input → **Reserve** → confirm tx. Any
+   subsequent public `register()` for that label reverts with
+   `NameReserved`.
+3. **To unreserve**: type the same label in the **Unreserve a name** input →
+   **Unreserve** → confirm tx. The name is back in the public pool.
+4. **To assign**: fill **Register Reserved Name** with the label, the
+   recipient address, and a duration in days. Click **Register**, confirm
+   the tx, and the recipient becomes the owner of the BaseRegistrar NFT for
+   that labelhash. This works whether or not the name was previously
+   reserved — the function bypasses every gate including length, NFT, and
+   reserved-name checks.
+
+All four operations require the connected wallet to be `controller.owner()`.
+Once the SimpleX namespace is mature you can renounce ownership (`Ownable`
+inherits the standard OpenZeppelin pattern) to remove the admin's ability
+to mutate this set further; from that point only public registrations and
+expiries change the set.
+
+### Verifying the on-chain state
+
+Without a subgraph, the source of truth is the chain. Two quick checks:
+
+- **Was a name reserved?** Read `reservedNames(keccak256("label"))` on the
+  controller — returns `true` if reserved.
+- **Who owns a name?** Read `ownerOf(uint256(keccak256("label")))` on the
+  BaseRegistrar — reverts if the name is unregistered or expired.
+
+The contract addresses are written to `deployments.local.json` after each
+local deploy; use that file (or the equivalent for testnet/mainnet) to
+target the right contracts.
+
+## Known limitations
 
 - **No subgraph**: The ENS app uses The Graph for name queries. Without a local subgraph, some features (name list, search suggestions) may not work fully. Direct contract interactions (registration, profile editing) work.
 - **Avatar/images disabled**: Avatar upload and display are intentionally hidden.

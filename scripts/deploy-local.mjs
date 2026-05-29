@@ -123,6 +123,13 @@ async function main() {
   await write(defaultReverseRegistrar, 'setController', [controller.address, true])
   console.log(`Controller wired up`)
 
+  // Genesis reserved-names list — these labels cannot be registered by the public.
+  // Extend as needed before deploying to testnet / mainnet.
+  for (const label of ['simplex', 'simplex-chat']) {
+    await write(controller, 'addReservedName', [label])
+    console.log(`Reserved: ${label}.${tld}`)
+  }
+
   // UniversalResolver (needed by the frontend for name lookups)
   const dummyGateway = await deploy('DummyGatewayProvider',
     'mocks/DummyGatewayProvider.sol/DummyGatewayProvider.json')

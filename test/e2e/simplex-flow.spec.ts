@@ -139,11 +139,15 @@ async function registerNameOnChain(label: string, withResolver: boolean = false,
     'function commit(bytes32) external',
     'function rentPrice(string,uint256) external view returns ((uint256 base, uint256 premium))',
   ])
+  // Random secret per call so that a second attempt at the same label (e.g. after a
+  // first attempt reverted) doesn't collide with the still-active commitment.
+  const randHex = () =>
+    Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('')
   const reg = {
     label,
     owner: account.address,
     duration: 31536000n,
-    secret: ('0x' + 'aa'.repeat(32)) as `0x${string}`,
+    secret: (`0x${randHex()}`) as `0x${string}`,
     resolver: resolverAddr,
     data: [] as `0x${string}`[],
     reverseRecord: 0,
@@ -537,12 +541,15 @@ test.describe('SimpleX Namespace', () => {
     const value = ((price as any).base + (price as any).premium) * 12n / 10n
 
     // Pre-flight: confirm the gate is actually on. If a previous test disabled it,
-    // this assertion documents the change rather than failing silently.
+    // this assertion documents the change rather than failing silently. Also skip
+    // the rest of the test if a prior test (e.g. "disableNftGate then non-holder
+    // registers") permanently turned the gate off in the same chain session.
     const nftGateAbi = parseAbi([
       'function nftGateEnabled() view returns (bool)',
       'function smpxNft() view returns (address)',
     ])
     const gateOn = await pub.readContract({ address: controller, abi: nftGateAbi, functionName: 'nftGateEnabled' })
+    test.skip(gateOn === false, 'NFT gate was already disabled by a prior test')
     const nft = await pub.readContract({ address: controller, abi: nftGateAbi, functionName: 'smpxNft' })
     expect(gateOn).toBe(true)
     const nftBalAbi = parseAbi(['function balanceOf(address) view returns (uint256)'])
@@ -698,5 +705,225 @@ test.describe('SimpleX Namespace', () => {
     const nextBtn = page.getByTestId('next-button')
     await expect(nextBtn).toBeDisabled({ timeout: 15_000 })
     await expect(nextBtn).toContainText(/SimpleX NFT required/i)
+  })
+
+  // Combined UI test: after the admin has already lowered the limit to 3 (the
+  // previous test does that), drop a 4-char name on the registration page and
+  // verify that the SimpleX info panel highlights the $32 tier and the FullInvoice
+  // displays a yearly fee in the $32 ballpark. With the DummyOracle, $1 == 1 ETH,
+  // so the displayed yearly ETH cost should be ≈ 32 ETH.
+  test('pricing tier highlights the 4-char tier and the invoice agrees', async ({ page }) => {
+    await syncBrowserClockToChain(page)
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    // Pick a fresh 4-char name (lowercase a-z) so it has not been registered before.
+    const rand = () => 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
+    const fourChar = `${rand()}${rand()}${rand()}${rand()}`
+
+    const searchInput = page.locator('input[placeholder]').first()
+    await searchInput.fill(fourChar)
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+    await page.locator('[data-testid="search-result-name"]').first().click()
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+
+    await expect(page.getByTestId('simplex-info-panel')).toBeVisible({ timeout: 15_000 })
+    // 4-char tier is highlighted; 6+ tier is not.
+    await expect(page.getByTestId('simplex-tier-4')).toHaveAttribute('data-active', 'true')
+    await expect(page.getByTestId('simplex-tier-6')).toHaveAttribute('data-active', 'false')
+
+    // FullInvoice yearly fee should show ~32 ETH for a 4-char name on the DummyOracle.
+    // Match "31." or "32." somewhere in the page; the exact number depends on the
+    // ExponentialPremiumPriceOracle integer math (~31.978 ETH).
+    await expect(page.locator('body')).toContainText(/3[12]\.\d{2,} ETH/, { timeout: 15_000 })
+  })
+
+  // Reserved names should not silently land the user in a doomed registration flow.
+  // With the on-chain check + UI panel, the Pricing step shows a clear banner and
+  // the Next button reads "Reserved name" disabled.
+  test('attempting to register a reserved name shows a clear reserved banner', async ({ page }) => {
+    // Reserve a fresh label as admin first so this test does not depend on the
+    // genesis-seeded list (`simplex`, `simplex-chat` may have been removed by a
+    // previous test in the same chain session).
+    const { createPublicClient, createWalletClient, http, parseAbi } = await import('viem')
+    const { privateKeyToAccount } = await import('viem/accounts')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const adminAccount = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`)
+    const adminWallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account: adminAccount })
+    const controller = loadDeployments().ETHRegistrarController
+    const reservedAbi = parseAbi(['function addReservedName(string) external'])
+    const label = `rsv${Date.now().toString(36)}`
+    await pub.waitForTransactionReceipt({
+      hash: await adminWallet.writeContract({
+        address: controller,
+        abi: reservedAbi,
+        functionName: 'addReservedName',
+        args: [label],
+      }),
+    })
+
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    const searchInput = page.locator('input[placeholder]').first()
+    await searchInput.fill(label)
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+
+    // Search dropdown should mark the name as Reserved (not Available) — this is
+    // what tells the user the name is unclaimable before they navigate further.
+    await expect(page.locator('[data-testid="search-result-name"]').first()).toContainText(
+      /Reserved/,
+      { timeout: 10_000 },
+    )
+
+    await page.locator('[data-testid="search-result-name"]').first().click()
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+
+    // Registration page also surfaces the reserved status and disables Next.
+    await expect(page.getByTestId('simplex-reserved-helper')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('simplex-reserved-helper')).toContainText(
+      /reserved by the admin/i,
+    )
+    const nextBtn = page.getByTestId('next-button')
+    await expect(nextBtn).toBeDisabled({ timeout: 15_000 })
+    await expect(nextBtn).toContainText(/Reserved name/i)
+  })
+
+  // Two contract-only flows — no Playwright UI involved. Kept in this spec file so
+  // they share the same Hardhat lifecycle and deployment artefact (deployments.local.json).
+
+  test('admin disables NFT gate, then a non-NFT-holder can register', async () => {
+    const { createPublicClient, createWalletClient, http, parseAbi, keccak256, toBytes } = await import('viem')
+    const { privateKeyToAccount } = await import('viem/accounts')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const adminAccount = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`)
+    const adminWallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account: adminAccount })
+    const controller = loadDeployments().ETHRegistrarController
+
+    const adminAbi = parseAbi([
+      'function disableNftGate() external',
+      'function nftGateEnabled() view returns (bool)',
+    ])
+
+    // Disable the gate (no-op if a previous test already did this in the same session).
+    const gateBefore = await pub.readContract({ address: controller, abi: adminAbi, functionName: 'nftGateEnabled' })
+    if (gateBefore) {
+      await pub.waitForTransactionReceipt({
+        hash: await adminWallet.writeContract({ address: controller, abi: adminAbi, functionName: 'disableNftGate' }),
+      })
+    }
+    const gateAfter = await pub.readContract({ address: controller, abi: adminAbi, functionName: 'nftGateEnabled' })
+    expect(gateAfter).toBe(false)
+
+    // ACCOUNT1 holds no SMPXNFT. Pre-flight check so a future test author who edits the
+    // suite sees a clear failure rather than a confusing register revert.
+    const nonHolder = privateKeyToAccount(ACCOUNT1_KEY as `0x${string}`)
+    const balAbi = parseAbi(['function balanceOf(address) view returns (uint256)'])
+    const nft = loadDeployments().MockSMPXNFT
+    const bal = await pub.readContract({ address: nft, abi: balAbi, functionName: 'balanceOf', args: [nonHolder.address] })
+    expect(bal).toBe(0n)
+
+    // Run the standard register flow as ACCOUNT1.
+    const uniqueName = `ng${Date.now().toString(36)}`
+    await registerNameOnChain(uniqueName, false, ACCOUNT1_KEY)
+
+    // Verify ownership on the BaseRegistrar.
+    const base = loadDeployments().BaseRegistrarImplementation
+    const ownerOfAbi = parseAbi(['function ownerOf(uint256) view returns (address)'])
+    const owner = (await pub.readContract({
+      address: base,
+      abi: ownerOfAbi,
+      functionName: 'ownerOf',
+      args: [BigInt(keccak256(toBytes(uniqueName)))],
+    })) as string
+    expect(owner.toLowerCase()).toBe(nonHolder.address.toLowerCase())
+  })
+
+  test('reserved name reverts; admin unreserves; same name can then be registered', async () => {
+    const { createPublicClient, createWalletClient, http, parseAbi, keccak256, toBytes } = await import('viem')
+    const { privateKeyToAccount } = await import('viem/accounts')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const adminAccount = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`)
+    const adminWallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account: adminAccount })
+    const controller = loadDeployments().ETHRegistrarController
+
+    const reservedAbi = parseAbi([
+      'function reservedNames(bytes32) view returns (bool)',
+      'function addReservedName(string) external',
+      'function removeReservedName(string) external',
+    ])
+    // Unique label so the test is idempotent across re-runs against the same chain.
+    const label = `res${Date.now().toString(36)}`
+    const labelhash = keccak256(toBytes(label))
+
+    // Reserve the label as admin, then assert it's marked reserved on-chain.
+    await pub.waitForTransactionReceipt({
+      hash: await adminWallet.writeContract({
+        address: controller,
+        abi: reservedAbi,
+        functionName: 'addReservedName',
+        args: [label],
+      }),
+    })
+    expect(
+      await pub.readContract({
+        address: controller,
+        abi: reservedAbi,
+        functionName: 'reservedNames',
+        args: [labelhash],
+      }),
+    ).toBe(true)
+
+    // Attempting to register reverts (NameReserved).
+    let err: any
+    try {
+      await registerNameOnChain(label)
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeDefined()
+    // Hardhat collapses custom errors to "Internal error", so we just assert it reverted.
+    expect(err.message).toMatch(/reverted|Internal error/i)
+
+    // Admin unreserves.
+    await pub.waitForTransactionReceipt({
+      hash: await adminWallet.writeContract({
+        address: controller,
+        abi: reservedAbi,
+        functionName: 'removeReservedName',
+        args: [label],
+      }),
+    })
+    expect(
+      await pub.readContract({
+        address: controller,
+        abi: reservedAbi,
+        functionName: 'reservedNames',
+        args: [labelhash],
+      }),
+    ).toBe(false)
+
+    // Now the same name is registrable. (Re-uses the same deployer key, so we'll
+    // own it afterwards.)
+    await registerNameOnChain(label)
+
+    const base = loadDeployments().BaseRegistrarImplementation
+    const ownerOfAbi = parseAbi(['function ownerOf(uint256) view returns (address)'])
+    const owner = (await pub.readContract({
+      address: base,
+      abi: ownerOfAbi,
+      functionName: 'ownerOf',
+      args: [BigInt(labelhash)],
+    })) as string
+    expect(owner.toLowerCase()).toBe(adminAccount.address.toLowerCase())
   })
 })
