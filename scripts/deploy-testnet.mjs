@@ -222,6 +222,19 @@ async function main() {
   writeFileSync(outPath, JSON.stringify(addresses, null, 2))
   console.log(`\n=== DEPLOYMENT ADDRESSES (saved to ${outPath}) ===`)
   console.log(JSON.stringify(addresses, null, 2))
+
+  // Verification metadata — consumed by scripts/verify-sepolia.mjs.
+  // The proxy needs (impl, initData) to verify constructor args; the impl
+  // takes no args. Kept in a sibling file so deployments.sepolia.json
+  // stays clean for the frontend.
+  const verificationPath = join(__dirname, '..', 'verification.sepolia.json')
+  writeFileSync(verificationPath, JSON.stringify({
+    SimplexControllerImpl: controllerImpl.address,
+    SimplexControllerProxy: controllerProxy.address,
+    proxyInitData: initData,
+  }, null, 2))
+  console.log(`Verification metadata saved to ${verificationPath}`)
+  console.log(`Run: ETHERSCAN_API_KEY=... node scripts/verify-sepolia.mjs`)
   console.log(`\nNEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES=${JSON.stringify(addresses)}`)
 }
 
