@@ -20,6 +20,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      deployed: ${{ steps.addrs.outputs.deployed }}
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -55,9 +57,11 @@ jobs:
         id: addrs
         run: |
           if [ ! -f deployments.sepolia.json ]; then
-            echo "::error::deployments.sepolia.json not found. Run scripts/deploy-testnet.mjs and commit the result before pushing."
-            exit 1
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::deployments.sepolia.json not found — skipping Pages build. Run scripts/deploy-testnet.mjs and commit the result to publish."
+            exit 0
           fi
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
           # Strip whitespace so it fits on a single env-var line.
           ADDRS=$(jq -c . deployments.sepolia.json)
           echo "addrs<<EOF" >> "$GITHUB_OUTPUT"
@@ -65,6 +69,7 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Build static SPA
+        if: steps.addrs.outputs.deployed == 'true'
         working-directory: ens-app-v3
         env:
           NEXT_PUBLIC_IPFS: '1'
@@ -79,12 +84,14 @@ jobs:
           touch out/.nojekyll
 
       - name: Upload Pages artifact
+        if: steps.addrs.outputs.deployed == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ens-app-v3/out
 
   deploy:
     needs: build
+    if: needs.build.outputs.deployed == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
