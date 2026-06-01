@@ -6,7 +6,7 @@
  * Requires: ens-contracts compiled (npx hardhat compile)
  * Outputs NEXT_PUBLIC_DEPLOYMENT_ADDRESSES JSON for the frontend.
  */
-import { createPublicClient, createWalletClient, http, labelhash, namehash, zeroHash, zeroAddress } from 'viem'
+import { createPublicClient, createWalletClient, encodeFunctionData, http, labelhash, namehash, zeroHash, zeroAddress } from 'viem'
 import { localhost } from 'viem/chains'
 import { readFileSync } from 'fs'
 import { join, dirname } from 'path'
@@ -97,9 +97,15 @@ async function main() {
   await write(mockNft, 'mint', [account.address])
   console.log(`Minted NFT #0 to deployer`)
 
-  const controller = await deploy('SimplexController',
-    'simplex/SimplexController.sol/SimplexController.json',
-    [
+  // SimplexController is upgradeable. Deploy the implementation, then an
+  // ERC1967 proxy that calls initialize() atomically as constructor data.
+  const controllerImpl = await deploy('SimplexControllerImpl',
+    'simplex/SimplexController.sol/SimplexController.json')
+
+  const initData = encodeFunctionData({
+    abi: controllerImpl.abi,
+    functionName: 'initialize',
+    args: [
       baseRegistrar.address,
       priceOracle.address,
       60n,
@@ -107,8 +113,24 @@ async function main() {
       reverseRegistrar.address,
       defaultReverseRegistrar.address,
       ensRegistry.address,
-      [tldNode, `.${tld}`, 6, nftGateEnabled ? mockNft.address : zeroAddress, nftGateEnabled],
-    ])
+      {
+        tldNode,
+        tldSuffix: `.${tld}`,
+        minCharLength: 6,
+        smpxNft: nftGateEnabled ? mockNft.address : zeroAddress,
+        nftGateEnabled,
+      },
+      account.address,
+    ],
+  })
+
+  const controllerProxy = await deploy('SimplexControllerProxy',
+    'simplex/SimplexControllerProxy.sol/SimplexControllerProxy.json',
+    [controllerImpl.address, initData])
+
+  // Use the proxy address everywhere SimplexController is referenced. ABI
+  // is the implementation's; calls reach storage via the proxy.
+  const controller = { address: controllerProxy.address, abi: controllerImpl.abi }
 
   // PublicResolver must trust the controller so it can write records during register()
   const publicResolver = await deploy('PublicResolver',

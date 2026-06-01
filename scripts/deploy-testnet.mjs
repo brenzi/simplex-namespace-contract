@@ -15,7 +15,7 @@
  * Run from the parent repo:
  *   DEPLOYER_KEY=0x... SEPOLIA_RPC_URL=https://... node scripts/deploy-testnet.mjs
  */
-import { createPublicClient, createWalletClient, http, labelhash, namehash, zeroHash, zeroAddress } from 'viem'
+import { createPublicClient, createWalletClient, encodeFunctionData, http, labelhash, namehash, zeroHash, zeroAddress } from 'viem'
 import { sepolia } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
 import { readFileSync, writeFileSync } from 'fs'
@@ -116,9 +116,15 @@ async function main() {
   await write(mockNft, 'mint', [account.address])
   console.log(`Minted NFT #0 to deployer (mint additional tokens via the contract afterwards)`)
 
-  const controller = await deploy('SimplexController',
-    'simplex/SimplexController.sol/SimplexController.json',
-    [
+  // SimplexController is upgradeable. Deploy the implementation, then an
+  // ERC1967 proxy that calls initialize() atomically as constructor data.
+  const controllerImpl = await deploy('SimplexControllerImpl',
+    'simplex/SimplexController.sol/SimplexController.json')
+
+  const initData = encodeFunctionData({
+    abi: controllerImpl.abi,
+    functionName: 'initialize',
+    args: [
       baseRegistrar.address,
       priceOracle.address,
       60n,
@@ -126,8 +132,23 @@ async function main() {
       reverseRegistrar.address,
       defaultReverseRegistrar.address,
       ensRegistry.address,
-      [tldNode, `.${tld}`, 6, nftGateEnabled ? mockNft.address : zeroAddress, nftGateEnabled],
-    ])
+      {
+        tldNode,
+        tldSuffix: `.${tld}`,
+        minCharLength: 6,
+        smpxNft: nftGateEnabled ? mockNft.address : zeroAddress,
+        nftGateEnabled,
+      },
+      account.address,
+    ],
+  })
+
+  const controllerProxy = await deploy('SimplexControllerProxy',
+    'simplex/SimplexControllerProxy.sol/SimplexControllerProxy.json',
+    [controllerImpl.address, initData])
+
+  // Use the proxy address everywhere SimplexController is referenced.
+  const controller = { address: controllerProxy.address, abi: controllerImpl.abi }
 
   await write(baseRegistrar, 'addController', [controller.address])
   await write(reverseRegistrar, 'setController', [controller.address, true])
