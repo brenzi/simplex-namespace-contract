@@ -33,6 +33,15 @@ const nftGateEnabled = tld === 'testing'
 // `latestAnswer()` directly, so any Chainlink AggregatorV3-compatible feed works.
 const chainlinkEthUsd = process.env.ETHUSD_FEED || '0x694AA1769357215DE4FAC081bf1f309aDC325306'
 
+// Final owner of SimplexController (admin + UUPS upgrade authority).
+// 0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340 owns simplexchat.eth and is
+// held in cold storage. The DEPLOYER_KEY here is treated as ephemeral: it
+// holds only gas for the deploy, briefly holds owner during setup so it
+// can wire up reserved names and controllers, and is handed off at the
+// end via Ownable2Step's transferOwnership. The cold owner must call
+// acceptOwnership() afterwards to complete the handover.
+const ownerAddress = process.env.OWNER_ADDRESS || '0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340'
+
 if (!deployerKey) {
   console.error('ERROR: DEPLOYER_KEY env var is required (0x-prefixed private key).')
   process.exit(1)
@@ -112,9 +121,11 @@ async function main() {
     [chainlinkEthUsd, [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n], 100000000000000000000000000n, 21n])
 
   // Sepolia has no SMPXNFT, so deploy a MockSMPXNFT for the testing-phase gate.
+  // Token #0 goes straight to the cold owner so the deployer never holds an
+  // NFT; the cold owner mints additional ones for testers afterward.
   const mockNft = await deploy('MockSMPXNFT', 'mocks/MockSMPXNFT.sol/MockSMPXNFT.json')
-  await write(mockNft, 'mint', [account.address])
-  console.log(`Minted NFT #0 to deployer (mint additional tokens via the contract afterwards)`)
+  await write(mockNft, 'mint', [ownerAddress])
+  console.log(`Minted NFT #0 to ${ownerAddress}`)
 
   // SimplexController is upgradeable. Deploy the implementation, then an
   // ERC1967 proxy that calls initialize() atomically as constructor data.
@@ -190,6 +201,54 @@ async function main() {
   await write(publicResolver, 'setAddr', [namehash('eth-usd.data.eth'), chainlinkEthUsd])
   console.log('eth-usd.data.eth -> Chainlink feed')
 
+  // Hand every persistent role off to the cold owner. After this block,
+  // the deployer EOA holds nothing on any deployed contract — its only
+  // remaining capability is admin on SimplexController, gated behind
+  // Ownable2Step's acceptOwnership which only the cold owner can call.
+  //
+  // Skip the handoff if the deployer IS the configured owner (single-key
+  // dev mode used when OWNER_ADDRESS isn't set or matches the deployer).
+  if (ownerAddress.toLowerCase() !== account.address.toLowerCase()) {
+    console.log(`\n=== Handing off ownership to ${ownerAddress} ===`)
+
+    // Ownable (single-step — these transfer immediately).
+    await write(baseRegistrar, 'transferOwnership', [ownerAddress])
+    console.log(`  BaseRegistrar owner -> cold`)
+    await write(nameWrapper, 'transferOwnership', [ownerAddress])
+    console.log(`  NameWrapper owner -> cold`)
+    await write(mockNft, 'transferOwnership', [ownerAddress])
+    console.log(`  MockSMPXNFT owner -> cold`)
+    await write(reverseRegistrar, 'transferOwnership', [ownerAddress])
+    console.log(`  ReverseRegistrar owner -> cold`)
+    await write(defaultReverseRegistrar, 'transferOwnership', [ownerAddress])
+    console.log(`  DefaultReverseRegistrar owner -> cold`)
+
+    // ENS subnodes still owned by the deployer (from the dApp-helper
+    // setup of the eth-usd.data.eth path and the reverse namespace).
+    // Transfer them explicitly so the deployer can't change the price
+    // oracle pointer or rebind the reverse namespace post-handoff.
+    await write(ensRegistry, 'setOwner', [namehash('reverse'), ownerAddress])
+    await write(ensRegistry, 'setOwner', [namehash('eth-usd.data.eth'), ownerAddress])
+    await write(ensRegistry, 'setOwner', [namehash('data.eth'), ownerAddress])
+    await write(ensRegistry, 'setOwner', [namehash('eth'), ownerAddress])
+    console.log(`  ENS subnodes (reverse, eth-usd.data.eth, data.eth, eth) -> cold`)
+
+    // ENS root last. After this the deployer can't reassign any TLD.
+    await write(ensRegistry, 'setOwner', [zeroHash, ownerAddress])
+    console.log(`  ENS root -> cold`)
+
+    // SimplexController uses Ownable2Step — this sets pendingOwner but
+    // does NOT transfer admin until the cold owner accepts.
+    await write(controller, 'transferOwnership', [ownerAddress])
+    console.log(`\n  SimplexController pendingOwner -> ${ownerAddress}`)
+    console.log(`  To complete the handover, the cold owner must submit:`)
+    console.log(`      controller.acceptOwnership()  at ${controller.address}`)
+    console.log(`  Until then the deployer EOA (${account.address}) still has`)
+    console.log(`  SimplexController admin rights (and nothing else).`)
+  } else {
+    console.log(`\nDeployer (${account.address}) remains owner of all contracts — no handover.`)
+  }
+
   const addresses = {
     ENSRegistry: ensRegistry.address,
     BaseRegistrarImplementation: baseRegistrar.address,
@@ -232,6 +291,8 @@ async function main() {
     SimplexControllerImpl: controllerImpl.address,
     SimplexControllerProxy: controllerProxy.address,
     proxyInitData: initData,
+    coldOwner: ownerAddress,
+    deployer: account.address,
   }, null, 2))
   console.log(`Verification metadata saved to ${verificationPath}`)
   console.log(`Run: ETHERSCAN_API_KEY=... node scripts/verify-sepolia.mjs`)
