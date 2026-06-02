@@ -962,4 +962,180 @@ test.describe('SimpleX Namespace', () => {
     })) as string
     expect(owner.toLowerCase()).toBe(adminAccount.address.toLowerCase())
   })
+
+  // -- Regression tests for the UI hardening landed in this session. --
+
+  test('homepage shows yellow NFT-gate banner for a wallet without an SMPXNFT', async ({ page }) => {
+    // Skip if the on-chain gate has been disabled by an earlier test in the run.
+    const { createPublicClient, http, parseAbi } = await import('viem')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const controller = loadDeployments().ETHRegistrarController
+    const gateOn = (await pub.readContract({
+      address: controller,
+      abi: parseAbi(['function nftGateEnabled() view returns (bool)']),
+      functionName: 'nftGateEnabled',
+    })) as boolean
+    test.skip(gateOn === false, 'NFT gate was already disabled by a prior test')
+
+    // ACCOUNT1 has no SMPXNFT — the banner should appear.
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [ACCOUNT1_KEY], chains: [hardhatChain] })
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    const banner = page.getByRole('alert').filter({ hasText: /SimpleX NFT required/i }).first()
+    await expect(banner).toBeVisible({ timeout: 15_000 })
+    await expect(banner).toContainText(/holders of the SMPXNFT/i)
+    // Etherscan link is the canonical mainnet token page, irrespective of which
+    // chain the dApp is configured for.
+    await expect(banner.locator('a[href*="etherscan.io/token/0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291"]'))
+      .toHaveCount(1)
+  })
+
+  test('clicking an available name without NFT shows the SMPXNFT toast and does not navigate', async ({ page }) => {
+    const { createPublicClient, http, parseAbi } = await import('viem')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const controller = loadDeployments().ETHRegistrarController
+    const gateOn = (await pub.readContract({
+      address: controller,
+      abi: parseAbi(['function nftGateEnabled() view returns (bool)']),
+      functionName: 'nftGateEnabled',
+    })) as boolean
+    test.skip(gateOn === false, 'NFT gate was already disabled by a prior test')
+
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [ACCOUNT1_KEY], chains: [hardhatChain] })
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    const uniqueName = `nogate${Date.now().toString(36)}`
+    const searchInput = page.locator('input[placeholder]').first()
+    await searchInput.fill(uniqueName)
+    await page.waitForTimeout(2000)
+    await dismissOverlay(page)
+    await page.locator('[data-testid="search-result-name"]').first().click()
+    await page.waitForTimeout(2000)
+
+    // Toast surfaces the NFT-required message.
+    const toast = page.getByTestId('search-blocked-toast')
+    await expect(toast).toBeVisible({ timeout: 10_000 })
+    await expect(toast).toContainText(/SimpleX NFT required/i)
+    // URL did NOT change to /register/<name> — the handler short-circuited.
+    expect(page.url()).not.toMatch(/\/register\//)
+  })
+
+  test('clicking a reserved name shows the reserved toast even when the wallet holds the NFT', async ({ page }) => {
+    // Reserve a fresh label via the admin path — deployer holds the NFT, so
+    // the only block should be the reservation.
+    const { createPublicClient, createWalletClient, http, parseAbi } = await import('viem')
+    const { privateKeyToAccount } = await import('viem/accounts')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const adminAccount = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`)
+    const adminWallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account: adminAccount })
+    const controller = loadDeployments().ETHRegistrarController
+    const reservedAbi = parseAbi(['function addReservedName(string) external'])
+    const label = `resv${Date.now().toString(36)}`
+    await pub.waitForTransactionReceipt({
+      hash: await adminWallet.writeContract({
+        address: controller, abi: reservedAbi, functionName: 'addReservedName', args: [label],
+      }),
+    })
+
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+    await page.goto('/')
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+
+    const searchInput = page.locator('input[placeholder]').first()
+    await searchInput.fill(label)
+    await page.waitForTimeout(2000)
+    await dismissOverlay(page)
+    await page.locator('[data-testid="search-result-name"]').first().click()
+    await page.waitForTimeout(2000)
+
+    // Toast picks reserved, NOT NFT — reserved must beat NFT in the gate order.
+    const toast = page.getByTestId('search-blocked-toast')
+    await expect(toast).toBeVisible({ timeout: 10_000 })
+    await expect(toast).toContainText(/This name is reserved/i)
+    expect(page.url()).not.toMatch(/\/register\//)
+  })
+
+  test('direct nav to /<too-short>.testing/register stays on the page with a disabled "Name too short" button', async ({ page }) => {
+    // Read the current minCharLength; build a label exactly one short.
+    const { createPublicClient, http, parseAbi } = await import('viem')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const controller = loadDeployments().ETHRegistrarController
+    const minChar = (await pub.readContract({
+      address: controller,
+      abi: parseAbi(['function minCharLength() view returns (uint8)']),
+      functionName: 'minCharLength',
+    })) as number
+    test.skip(minChar <= 1, 'minCharLength too small to construct a too-short label')
+    const tooShort = 'a'.repeat(minChar - 1)
+
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+    await page.goto(`/${tooShort}.testing/register`)
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+    await page.waitForTimeout(2000)
+    await dismissOverlay(page)
+
+    // We must still be on the /register/ page — no silent redirect.
+    expect(page.url()).toMatch(/\/register/)
+
+    // Yellow min-chars helper shows the actual label + count.
+    const minHelper = page.getByTestId('simplex-min-chars-helper')
+    await expect(minHelper).toBeVisible({ timeout: 15_000 })
+    await expect(minHelper).toContainText(new RegExp(`Minimum ${minChar} characters`, 'i'))
+
+    // Next button is disabled and reads "Name too short".
+    const nextBtn = page.getByTestId('next-button')
+    await expect(nextBtn).toBeDisabled({ timeout: 15_000 })
+    await expect(nextBtn).toContainText(/Name too short/i)
+  })
+
+  test('direct nav to /<too-short>.testing (profile) renders the yellow "too short" warning', async ({ page }) => {
+    const { createPublicClient, http, parseAbi } = await import('viem')
+    const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
+    const controller = loadDeployments().ETHRegistrarController
+    const minChar = (await pub.readContract({
+      address: controller,
+      abi: parseAbi(['function minCharLength() view returns (uint8)']),
+      functionName: 'minCharLength',
+    })) as number
+    test.skip(minChar <= 1, 'minCharLength too small to construct a too-short label')
+    const tooShort = 'a'.repeat(minChar - 1)
+
+    await page.goto(`/${tooShort}.testing`)
+    await page.waitForTimeout(3000)
+
+    const warning = page.getByRole('alert').filter({ hasText: /is too short/i }).first()
+    await expect(warning).toBeVisible({ timeout: 15_000 })
+    await expect(warning).toContainText(new RegExp(`shorter than ${minChar} characters`, 'i'))
+  })
+
+  test('.testing register page hides pricing tiers and the credit-card payment option', async ({ page }) => {
+    // Use a name long enough to pass the min-char gate so we land in Pricing
+    // proper rather than the too-short warning.
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
+    const longName = `pricing${Date.now().toString(36)}`
+    await page.goto(`/${longName}.testing/register`)
+    await page.waitForTimeout(2000)
+    await connectWallet(page, wallet)
+    await page.waitForTimeout(3000)
+    await dismissOverlay(page)
+
+    // Wait for the Pricing step to render (FullInvoice is a reliable marker).
+    await page.waitForTimeout(5000)
+    // None of the 4 tier cards should render on .testing — they're hidden
+    // because registration is gas-only. The simplex-info-panel container
+    // itself is empty for an NFT-holder with a long, non-reserved name
+    // and does not render visibly; we assert on the tier ids directly.
+    await expect(page.getByTestId('simplex-tier-6')).toHaveCount(0)
+    await expect(page.getByTestId('simplex-tier-5')).toHaveCount(0)
+    await expect(page.getByTestId('simplex-tier-4')).toHaveCount(0)
+    await expect(page.getByTestId('simplex-tier-3')).toHaveCount(0)
+    // Credit-card / Moonpay option is hidden on .testing.
+    await expect(page.locator('text=/Credit card/i')).toHaveCount(0)
+  })
 })

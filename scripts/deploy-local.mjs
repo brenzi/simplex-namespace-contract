@@ -87,9 +87,14 @@ async function main() {
     'ethregistrar/DummyOracle.sol/DummyOracle.json',
     [100000000n])
 
+  // .testing is free during the testing phase (gas-only). .simplex keeps the
+  // production curve: $1 / $8 / $32 / $128 per year for 6+ / 5 / 4 / 3 chars.
+  const priceArray = tld === 'testing'
+    ? [0n, 0n, 0n, 0n, 0n]
+    : [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n]
   const priceOracle = await deploy('ExponentialPremiumPriceOracle',
     'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
-    [dummyOracle.address, [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n], 100000000000000000000000000n, 21n])
+    [dummyOracle.address, priceArray, 100000000000000000000000000n, 21n])
 
   const mockNft = await deploy('MockSMPXNFT',
     'mocks/MockSMPXNFT.sol/MockSMPXNFT.json')

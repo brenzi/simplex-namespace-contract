@@ -116,9 +116,17 @@ async function main() {
   // Use the real Chainlink feed as the oracle. The ENS pricing contracts call
   // `latestAnswer()` on it; ChainlinkAggregator and our DummyOracle share that
   // method, so the feed slots in directly.
+  //
+  // .testing is free during the testing phase — gas-only registration. Zero
+  // out every price-per-length slot. .simplex (and any future TLD) keeps the
+  // production pricing curve: $1 / $8 / $32 / $128 per year for 6+ / 5 / 4 / 3
+  // chars, with an exponential premium ramp on expired names.
+  const priceArray = tld === 'testing'
+    ? [0n, 0n, 0n, 0n, 0n]
+    : [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n]
   const priceOracle = await deploy('ExponentialPremiumPriceOracle',
     'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
-    [chainlinkEthUsd, [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n], 100000000000000000000000000n, 21n])
+    [chainlinkEthUsd, priceArray, 100000000000000000000000000n, 21n])
 
   // Sepolia has no SMPXNFT, so deploy a MockSMPXNFT for the testing-phase gate.
   // Token #0 goes straight to the cold owner so the deployer never holds an
