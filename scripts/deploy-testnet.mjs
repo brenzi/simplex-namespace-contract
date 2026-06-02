@@ -301,6 +301,16 @@ async function main() {
     proxyInitData: initData,
     coldOwner: ownerAddress,
     deployer: account.address,
+    // Oracle metadata — captured so we can verify the deployed oracle on
+    // Etherscan AND so the admin has the constructor args handy if they
+    // ever want to redeploy via scripts/deploy-oracle.mjs.
+    PriceOracle: priceOracle.address,
+    priceOracleConstructorArgs: {
+      usdOracle: chainlinkEthUsd,
+      rentPrices: priceArray.map(String),
+      startPremium: '100000000000000000000000000',
+      totalDays: '21',
+    },
   }, null, 2))
   console.log(`Verification metadata saved to ${verificationPath}`)
   console.log(`Run: ETHERSCAN_API_KEY=... node scripts/verify-sepolia.mjs`)

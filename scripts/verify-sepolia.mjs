@@ -64,6 +64,33 @@ const TARGETS = [
   },
 ]
 
+// Price oracle is optional in the metadata (only present from deploy-testnet
+// onward; earlier `verification.sepolia.json` files won't have it).
+if (meta.PriceOracle && meta.priceOracleConstructorArgs) {
+  const a = meta.priceOracleConstructorArgs
+  const oracleConstructorArgs = encodeAbiParameters(
+    [
+      { type: 'address' },
+      { type: 'uint256[]' },
+      { type: 'uint256' },
+      { type: 'uint256' },
+    ],
+    [
+      a.usdOracle,
+      a.rentPrices.map((s) => BigInt(s)),
+      BigInt(a.startPremium),
+      BigInt(a.totalDays),
+    ],
+  )
+  TARGETS.push({
+    label: 'ExponentialPremiumPriceOracle',
+    address: meta.PriceOracle,
+    artifact:
+      'contracts/ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
+    constructorArgs: oracleConstructorArgs,
+  })
+}
+
 function loadArtifactAndBuildInfo(artifactRelPath) {
   const art = JSON.parse(readFileSync(join(ARTIFACTS_ROOT, artifactRelPath), 'utf8'))
   const buildInfoPath = join(

@@ -183,9 +183,45 @@ node scripts/verify-sepolia.mjs
 
 The script reads `verification.sepolia.json`, finds the matching
 Hardhat build-info JSON (standard-json solc input), and submits both
-contracts to Etherscan. Polls verification status for up to 2 minutes
-per contract. To verify additional contracts (the verbatim ENS ones),
-add entries to the `TARGETS` array in `scripts/verify-sepolia.mjs`.
+contracts to Etherscan, plus the `ExponentialPremiumPriceOracle` if its
+metadata is recorded. Polls verification status for up to 2 minutes per
+contract. To verify additional contracts (the verbatim ENS ones), add
+entries to the `TARGETS` array in `scripts/verify-sepolia.mjs`.
+
+### Changing prices post-deploy
+
+`SimplexController` accepts a `setPriceOracle(IPriceOracle)` call from
+its owner. This lets the cold owner swap the active oracle without a
+controller redeploy. Two steps:
+
+```bash
+# 1. Deploy a fresh oracle. PRICES is the five USD/sec rates for label
+#    lengths 1/2/3/4/5+. Use the comma-separated form. Default = production
+#    curve ($1 / $8 / $32 / $128 per year). Use "0,0,0,0,0" for free.
+DEPLOYER_KEY=0x... SEPOLIA_RPC_URL=https://... \
+PRICES="0,0,0,0,0" \
+  node scripts/deploy-oracle.mjs
+# → prints the new oracle address + a setPriceOracle call to submit
+# → appends an entry to oracles.sepolia.json so rollback is one address away
+```
+
+```
+# 2. From a wallet controlling OWNER_ADDRESS, submit:
+SimplexController.setPriceOracle(<new oracle address>)
+```
+
+The change takes effect immediately. To verify the new oracle on
+Etherscan, copy the printed `priceOracleConstructorArgs` block into
+`verification.sepolia.json` and rerun `scripts/verify-sepolia.mjs`.
+
+When you're ready to lock pricing forever, the cold owner submits:
+
+```
+SimplexController.freezePriceOracle()
+```
+
+This is one-way — `setPriceOracle` will revert thereafter with
+`PriceOracleAlreadyFrozen`.
 
 ### Completing the ownership handover
 
