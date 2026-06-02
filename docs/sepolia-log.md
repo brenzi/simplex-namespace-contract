@@ -103,3 +103,72 @@ https://sepolia.etherscan.io/address/0x8b35dfd584b865b5F81A8455eDb6a25cAA56CfE2#
 [done tx](https://sepolia.etherscan.io/tx/0x7938dd08cd78150fda1b0718b94d9029766eb669c51e1c79d422796b3c3941b0)
 
 
+## upgrading SimplexController
+
+```
+(base) brenzi@caribe:~/claude-sandbox/simplex-namespace-contract$ cast call 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2 "owner()(address)" --rpc-url $SEPOLIA_RPC_URL
+0xC14ccEc78342e3DAf136E6C36025b397C377614e
+(base) brenzi@caribe:~/claude-sandbox/simplex-namespace-contract$ cast call 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2 "minCharLength()(uint8)" --rpc-url $SEPOLIA_RPC_URL
+  
+6
+(base) brenzi@caribe:~/claude-sandbox/simplex-namespace-contract$ cast call 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2 "nftGateEnabled()(bool)" --rpc-url $SEPOLIA_RPC_URL
+  
+true
+(base) brenzi@caribe:~/claude-sandbox/simplex-namespace-contract$ cast call 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2 "reservedNames(bytes32)(bool)" $(cast keccak "simplex") --rpc-url $SEPOLIA_RPC_URL
+true
+# compile new version
+cd ens-contracts && npx hardhat compile && cd ..
+# deploy new version
+node scripts/deploy-controller-impl.mjs
+Deploying SimplexController implementation to Sepolia
+  Deployer: 0x7b28Ab00D172647a85B16dAe26485FA0d570FD4f
+  Balance:  546587470776227560 wei
+
+Deployed: 0x61d0dc8199610a74676d30c5e20b24b4a859dc8b
+Tx:       0x5449d123d148c82f5ff1f61562f62366c7a9a7741eee7a191043a16e73b05585
+
+Recorded in /home/brenzi/claude-sandbox/simplex-namespace-contract/impls.sepolia.json
+
+To activate, the cold owner (0xC14ccEc78342e3DAf136E6C36025b397C377614e) submits:
+  SimplexController.upgradeTo(0x61d0dc8199610a74676d30c5e20b24b4a859dc8b)
+at the proxy 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2.
+
+After the tx lands, update verification.sepolia.json's
+SimplexControllerImpl field to the new impl address and re-run
+scripts/verify-sepolia.mjs to get the new bytecode verified.
+
+```
+
+now upgrade as owner:
+https://sepolia.etherscan.io/address/0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2#writeProxyContract
+ then verify with etherscan
+```
+node ./scripts/verify-sepolia.mjs 
+
+--- SimplexController (implementation) ---
+  address: 0x61d0dc8199610a74676d30c5e20b24b4a859dc8b
+  compiler: v0.8.26+commit.8a97fa7a
+  source:   project/contracts/simplex/SimplexController.sol:SimplexController
+  submitted, guid=img7kxka2ql9at9l3ljmvrsf4sysm1lxszdydxvvxdzswuwqpq
+..
+  OK: Pass - Verified
+
+--- SimplexControllerProxy (ERC1967) ---
+  address: 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2
+  compiler: v0.8.26+commit.8a97fa7a
+  source:   project/contracts/simplex/SimplexControllerProxy.sol:SimplexControllerProxy
+  FAILED: Contract source code already verified
+
+1 contract(s) failed verification.
+... that's fine.
+
+rerun queries
+(base) brenzi@caribe:~/claude-sandbox/simplex-namespace-contract$ cast call 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2 "owner()(address)" --rpc-url $SEPOLIA_RPC_URL
+0xC14ccEc78342e3DAf136E6C36025b397C377614e
+(base) brenzi@caribe:~/claude-sandbox/simplex-namespace-contract$   cast call 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2 "minCharLength()(uint8)" --rpc-url $SEPOLIA_RPC_URL
+6
+(base) brenzi@caribe:~/claude-sandbox/simplex-namespace-contract$   cast call 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2 "nftGateEnabled()(bool)" --rpc-url $SEPOLIA_RPC_URL
+true
+(base) brenzi@caribe:~/claude-sandbox/simplex-namespace-contract$   cast call 0x8b35dfd584b865b5f81a8455edb6a25caa56cfe2 "reservedNames(bytes32)(bool)" $(cast keccak "simplex") --rpc-url $SEPOLIA_RPC_URL
+true
+```
