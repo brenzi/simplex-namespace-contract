@@ -29,6 +29,9 @@ import { sepolia } from 'viem/chains'
 // Transferred on Sepolia; permanent state for the lifetime of the deployment.
 const OWNED_NAME = 'secondtest.testing'
 const OWNED_LABEL = 'secondtest'
+// Sentinel value the tester EOA wrote to PublicResolver.setText(node,
+// 'simplex.contact', ...) on Sepolia. Permanent state for the deployment.
+const OWNED_CONTACT_VALUE = 'https://smp16.simplex.im/a#dummy123'
 
 const SEPOLIA_TEST_KEY = (process.env.SEPOLIA_TEST_KEY || '') as `0x${string}`
 const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL || ''
@@ -195,17 +198,23 @@ test.describe('Sepolia SNRC — read-only smoke', () => {
     expect(page.url()).not.toMatch(/\/register\//)
     expect(page.url()).toContain(OWNED_NAME)
 
+    // The dApp distinguishes two roles for an unwrapped name:
+    //   - `name.owner`   → BaseRegistrar NFT registrant (the actual "owner")
+    //   - `name.manager` → ENSRegistry node owner (registry-level controller)
+    // After the transfer + reclaim, both point at the tester EOA. Assert
+    // both so a future transfer that only moves one of them surfaces here.
     const expectedAddress = privateKeyToAccount(SEPOLIA_TEST_KEY).address.toLowerCase()
-    const ownerButton = page.getByTestId('owner-profile-button-name.manager').or(
-      page.getByTestId('owner-profile-button-name.owner'),
-    ).first()
-    await expect(ownerButton).toBeVisible({ timeout: 20_000 })
-    const ownerText = (await ownerButton.textContent())?.toLowerCase() ?? ''
-    // Address renders truncated (e.g. 0x1234…abcd); assert first 6 + last 4 hex.
     const head = expectedAddress.slice(0, 6)
     const tail = expectedAddress.slice(-4)
-    expect(ownerText).toContain(head)
-    expect(ownerText).toContain(tail)
+
+    for (const testid of ['owner-profile-button-name.owner', 'owner-profile-button-name.manager']) {
+      const button = page.getByTestId(testid)
+      await expect(button).toBeVisible({ timeout: 20_000 })
+      // Address renders truncated (e.g. 0x1234…abcd); assert first 6 + last 4 hex.
+      const text = (await button.textContent())?.toLowerCase() ?? ''
+      expect(text, `${testid} should contain ${expectedAddress}`).toContain(head)
+      expect(text, `${testid} should contain ${expectedAddress}`).toContain(tail)
+    }
   })
 
   test(`/my/names lists ${OWNED_NAME} for the connected tester EOA`, async ({ page }) => {
@@ -230,5 +239,21 @@ test.describe('Sepolia SNRC — read-only smoke', () => {
     await dismissOverlay(page)
     const body = await page.textContent('body')
     expect(body).toContain(OWNED_LABEL)
+  })
+
+  test(`profile page for ${OWNED_NAME} surfaces the simplex.contact text record`, async ({ page }) => {
+    // Closes the attribute-flow loop: tester EOA wrote
+    // PublicResolver.setText(node, 'simplex.contact', OWNED_CONTACT_VALUE)
+    // — assert the dApp reads it back and renders it as a social link.
+    // ens-app-v3 maps `simplex.contact` to urlFormatter=value (raw record
+    // value becomes the href), so `dummy123` shows up as the href literal.
+    await page.goto(`/${OWNED_NAME}`)
+    await page.waitForTimeout(6000)
+    await dismissOverlay(page)
+
+    const contactLink = page.getByTestId('social-profile-button-simplex.contact')
+    await expect(contactLink).toBeVisible({ timeout: 20_000 })
+    await expect(contactLink).toContainText('SimpleX contact')
+    await expect(contactLink).toHaveAttribute('href', OWNED_CONTACT_VALUE)
   })
 })
