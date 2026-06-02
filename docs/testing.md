@@ -1,12 +1,13 @@
 # Testing
 
-Three layers, run from three different directories.
+Four layers.
 
-| Layer             | Where                | Runner          | Count today |
-|-------------------|----------------------|-----------------|------------:|
-| Solidity unit     | `ens-contracts/`     | `npx vitest run` | 21 SNRC + 1526 ENS upstream |
-| Frontend unit     | `ens-app-v3/`        | `pnpm test`     | varies (ENS upstream) |
-| End-to-end        | parent repo          | `npx playwright test` | 19 |
+| Layer                  | Where                | Runner                                | Count today |
+|------------------------|----------------------|---------------------------------------|------------:|
+| Solidity unit          | `ens-contracts/`     | `npx vitest run`                      | 21 SNRC + 1526 ENS upstream |
+| Frontend unit          | `ens-app-v3/`        | `pnpm test`                           | varies (ENS upstream) |
+| End-to-end (Hardhat)   | parent repo          | `npx playwright test --project=simplex` | 19 |
+| End-to-end (Sepolia)   | parent repo          | `npx playwright test --project=sepolia` | 7 (read-only) |
 
 ## Solidity unit tests
 
@@ -93,16 +94,45 @@ npx playwright test --grep "search shows name as available"
 | `admin disables NFT gate, then a non-NFT-holder can register`                        | Contract-level: `disableNftGate` then ACCOUNT1 commits + registers successfully                              |
 | `reserved name reverts; admin unreserves; same name can then be registered`          | Contract-level: reserved → revert; admin removes; succeeds                                                   |
 
+## End-to-end (Playwright, Sepolia)
+
+A second, smaller suite in `test/e2e/sepolia-readonly.spec.ts` runs against
+the live Sepolia deployment instead of a fresh Hardhat node. It is
+**strictly read-only** — no commits, no registrations, no admin tx — because
+Sepolia is shared state and every tx costs real Sepolia ETH.
+
+What it covers: the dApp can load homepage, find a name on chain, hit the
+on-chain `reservedNames` mapping, hit the on-chain `minCharLength`, hit the
+on-chain SMPXNFT, and surface each in the UI without crashing.
+
+What it cannot cover: anything that requires a tx — full register flow,
+admin functions, renewals. Those stay in the Hardhat suite.
+
+Run locally with a Sepolia-built dApp already serving on :3000:
+
+```bash
+export SEPOLIA_TEST_KEY=0x...      # throwaway EOA, gas not needed (read-only)
+export SEPOLIA_RPC_URL=https://... # sepolia RPC
+npx playwright test --project=sepolia
+```
+
+CI runs this suite nightly + on PRs that touch the suite or the deployment
+file — see `.github/workflows/sepolia-e2e.yml`. Required repo secrets:
+`SEPOLIA_TEST_KEY` and `SEPOLIA_RPC_URL`.
+
 ## Running everything
 
 ```bash
 # Solidity + ENS upstream
 cd ens-contracts && npx vitest run
 
-# Stack + Playwright e2e
+# Stack + Playwright e2e (Hardhat-backed)
 cd ..
 ./scripts/run-local.sh                                                # in one terminal
-npx playwright test --config playwright.config.ts                     # in another
+npx playwright test --project=simplex                                 # in another
+
+# Read-only e2e against live Sepolia (needs SEPOLIA_TEST_KEY + SEPOLIA_RPC_URL)
+npx playwright test --project=sepolia
 ```
 
 ## Gotchas

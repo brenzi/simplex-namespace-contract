@@ -1,0 +1,143 @@
+name: Sepolia e2e (read-only)
+
+# Runs the Playwright `sepolia` project against the live Sepolia deployment.
+# Read-only — never sends a tx (would cost real Sepolia ETH and mutate the
+# shared testnet state). Catches frontend regressions against the on-chain
+# state that the simplex-flow suite can't see (it runs against a fresh
+# Hardhat node).
+
+on:
+  schedule:
+    - cron: '17 3 * * *'  # daily 03:17 UTC, off the top of the hour
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'test/e2e/sepolia-readonly.spec.ts'
+      - 'playwright.config.ts'
+      - '.github/workflows/sepolia-e2e.yml'
+      - 'deployments.sepolia.json'
+
+concurrency:
+  group: sepolia-e2e
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            ens-app-v3/pnpm-lock.yaml
+            ens-contracts/pnpm-lock.yaml
+
+      - name: Install parent + submodule deps
+        run: |
+          pnpm install --frozen-lockfile
+          cd ens-contracts && pnpm install --frozen-lockfile && cd ..
+          cd ens-app-v3 && pnpm install --frozen-lockfile && cd ..
+
+      - name: Compile contracts (frontend reads ABIs from artifacts/)
+        working-directory: ens-contracts
+        run: npx hardhat compile
+
+      - name: Load Sepolia deployment addresses
+        id: addrs
+        run: |
+          if [ ! -f deployments.sepolia.json ]; then
+            echo "::error::deployments.sepolia.json not found — run scripts/deploy-testnet.mjs and commit the result first."
+            exit 1
+          fi
+          ADDRS=$(jq -c . deployments.sepolia.json)
+          echo "addrs<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$ADDRS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Verify required secrets are present
+        env:
+          SEPOLIA_TEST_KEY: ${{ secrets.SEPOLIA_TEST_KEY }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+        run: |
+          if [ -z "$SEPOLIA_TEST_KEY" ] || [ -z "$SEPOLIA_RPC_URL" ]; then
+            echo "::error::SEPOLIA_TEST_KEY and SEPOLIA_RPC_URL repository secrets must be set."
+            exit 1
+          fi
+
+      - name: Build dApp (Sepolia config baked in)
+        working-directory: ens-app-v3
+        env:
+          NEXT_PUBLIC_CHAIN_NAME: sepolia
+          NEXT_PUBLIC_SIMPLEX_TLD: testing
+          NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES: ${{ steps.addrs.outputs.addrs }}
+        run: pnpm build
+
+      - name: Install Playwright browsers (chromium only)
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Start dApp in background
+        working-directory: ens-app-v3
+        env:
+          NEXT_PUBLIC_CHAIN_NAME: sepolia
+          NEXT_PUBLIC_SIMPLEX_TLD: testing
+          NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES: ${{ steps.addrs.outputs.addrs }}
+        run: |
+          nohup pnpm start > "$GITHUB_WORKSPACE/dapp.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/dapp.pid"
+
+      - name: Wait for dApp to respond on :3000
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000 > /dev/null; then
+              echo "dApp up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::dApp never came up on :3000"
+          tail -100 "$GITHUB_WORKSPACE/dapp.log" || true
+          exit 1
+
+      - name: Run Playwright (sepolia project)
+        env:
+          SEPOLIA_TEST_KEY: ${{ secrets.SEPOLIA_TEST_KEY }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+        run: npx playwright test --project=sepolia
+
+      - name: Stop dApp
+        if: always()
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/dapp.pid" ]; then
+            kill "$(cat "$GITHUB_WORKSPACE/dapp.pid")" 2>/dev/null || true
+          fi
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-sepolia
+          path: playwright-report
+          retention-days: 14
+
+      - name: Upload dApp log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dapp-log
+          path: dapp.log
+          retention-days: 7
