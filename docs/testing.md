@@ -7,7 +7,7 @@ Four layers.
 | Solidity unit          | `ens-contracts/`     | `npx vitest run`                      | 21 SNRC + 1526 ENS upstream |
 | Frontend unit          | `ens-app-v3/`        | `pnpm test`                           | varies (ENS upstream) |
 | End-to-end (Hardhat)   | parent repo          | `npx playwright test --project=simplex` | 19 |
-| End-to-end (Sepolia)   | parent repo          | `npx playwright test --project=sepolia` | 7 (read-only) |
+| End-to-end (Sepolia)   | parent repo          | `npx playwright test --project=sepolia` | 9 (read-only) |
 
 ## Solidity unit tests
 

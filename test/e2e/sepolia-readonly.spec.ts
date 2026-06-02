@@ -21,7 +21,14 @@
  */
 import { test, expect } from '@playwright/test'
 import { injectHeadlessWeb3Provider, Web3RequestKind } from '@ensdomains/headless-web3-provider'
+import { keccak256, toBytes } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
 import { sepolia } from 'viem/chains'
+
+// Name owned by SEPOLIA_TEST_KEY — used by the ownership / my-names tests.
+// Transferred on Sepolia; permanent state for the lifetime of the deployment.
+const OWNED_NAME = 'secondtest.testing'
+const OWNED_LABEL = 'secondtest'
 
 const SEPOLIA_TEST_KEY = (process.env.SEPOLIA_TEST_KEY || '') as `0x${string}`
 const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL || ''
@@ -167,5 +174,61 @@ test.describe('Sepolia SNRC — read-only smoke', () => {
     const nextBtn = page.getByTestId('next-button')
     await expect(nextBtn).toBeDisabled({ timeout: 20_000 })
     await expect(nextBtn).toContainText(/SimpleX NFT required/i)
+  })
+
+  test(`profile page for ${OWNED_NAME} renders as registered and owned by the tester EOA`, async ({ page }) => {
+    // BaseRegistrar.available returns false for a registered name, so the
+    // profile page should NOT redirect to /register. Instead the ENS
+    // ProfileSnippet + owner buttons should render, and the owner address
+    // should match the connected tester wallet (case-insensitively).
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [SEPOLIA_TEST_KEY], chains: [sepoliaChain] })
+    await page.goto('/')
+    await page.waitForTimeout(2500)
+    await connectWallet(page, wallet)
+
+    await page.goto(`/${OWNED_NAME}`)
+    await page.waitForTimeout(6000)
+    await dismissOverlay(page)
+
+    // Page must NOT have redirected to /register (would mean BaseRegistrar
+    // reported the name as available — i.e. ownership was lost or expired).
+    expect(page.url()).not.toMatch(/\/register\//)
+    expect(page.url()).toContain(OWNED_NAME)
+
+    const expectedAddress = privateKeyToAccount(SEPOLIA_TEST_KEY).address.toLowerCase()
+    const ownerButton = page.getByTestId('owner-profile-button-name.manager').or(
+      page.getByTestId('owner-profile-button-name.owner'),
+    ).first()
+    await expect(ownerButton).toBeVisible({ timeout: 20_000 })
+    const ownerText = (await ownerButton.textContent())?.toLowerCase() ?? ''
+    // Address renders truncated (e.g. 0x1234…abcd); assert first 6 + last 4 hex.
+    const head = expectedAddress.slice(0, 6)
+    const tail = expectedAddress.slice(-4)
+    expect(ownerText).toContain(head)
+    expect(ownerText).toContain(tail)
+  })
+
+  test(`/my/names lists ${OWNED_NAME} for the connected tester EOA`, async ({ page }) => {
+    // The Sepolia my/names path uses the chain-scan fallback (no subgraph)
+    // — it gets back a labelhash and asks the ensjs label cache for the
+    // human label. We seed the cache so the label resolves without
+    // depending on a prior search interaction in the same browser session.
+    const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [SEPOLIA_TEST_KEY], chains: [sepoliaChain] })
+    await page.goto('/')
+    await page.waitForTimeout(2500)
+    await connectWallet(page, wallet)
+
+    const labelhash = keccak256(toBytes(OWNED_LABEL))
+    await page.evaluate(({ label, hash }) => {
+      const cache = JSON.parse(window.localStorage.getItem('ensjs:labels') || '{}')
+      cache[hash] = label
+      window.localStorage.setItem('ensjs:labels', JSON.stringify(cache))
+    }, { label: OWNED_LABEL, hash: labelhash })
+
+    await page.goto('/my/names')
+    await page.waitForTimeout(15_000)
+    await dismissOverlay(page)
+    const body = await page.textContent('body')
+    expect(body).toContain(OWNED_LABEL)
   })
 })
