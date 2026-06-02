@@ -610,7 +610,10 @@ test.describe('SimpleX Namespace', () => {
     expect(body).toContain(uniqueName)
   })
 
-  test('registration pricing page shows the SimpleX USD tiers', async ({ page }) => {
+  test('registration pricing page hides USD tiers and credit-card option on .testing', async ({ page }) => {
+    // .testing is free during the testing phase — the pricing tiers panel and
+    // the Moonpay credit-card payment-choice are both intentionally hidden so
+    // the user sees only the gas-only registration UI.
     const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [DEPLOYER_KEY], chains: [hardhatChain] })
     await page.goto('/')
     await page.waitForTimeout(2000)
@@ -622,14 +625,14 @@ test.describe('SimpleX Namespace', () => {
     await page.waitForTimeout(3000)
     await dismissOverlay(page)
     await page.locator('[data-testid="search-result-name"]').first().click()
-    await page.waitForTimeout(3000)
+    await page.waitForTimeout(5000)
     await dismissOverlay(page)
 
-    await expect(page.getByTestId('simplex-info-panel')).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByTestId('simplex-tier-3')).toContainText('$128')
-    await expect(page.getByTestId('simplex-tier-4')).toContainText('$32')
-    await expect(page.getByTestId('simplex-tier-5')).toContainText('$8')
-    await expect(page.getByTestId('simplex-tier-6')).toContainText('$1')
+    await expect(page.getByTestId('simplex-tier-3')).toHaveCount(0)
+    await expect(page.getByTestId('simplex-tier-4')).toHaveCount(0)
+    await expect(page.getByTestId('simplex-tier-5')).toHaveCount(0)
+    await expect(page.getByTestId('simplex-tier-6')).toHaveCount(0)
+    await expect(page.locator('text=/Credit card/i')).toHaveCount(0)
   })
 
   // Admin lowers the controller's minimum char length from 6 to 3, then registers a
@@ -687,9 +690,11 @@ test.describe('SimpleX Namespace', () => {
     expect((owner as string).toLowerCase()).toBe('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266')
   })
 
-  test('NFT-gate banner shows and Next is disabled for a wallet without SMPXNFT', async ({ page }) => {
-    // The gate is required on .testing; skip if a prior test in the same session
-    // disabled it (`disableNftGate` is a one-way switch).
+  test('NFT-gate banner shows and Next is disabled when an NFT-less wallet reaches /register directly', async ({ page }) => {
+    // Search-click now blocks navigation outright for NFT-less wallets (see
+    // the "clicking an available name without NFT" test). The Pricing-step
+    // banner + disabled Next button still fire via direct URL — which is
+    // the second line of defence the contract gate already enforces.
     const { createPublicClient, http, parseAbi } = await import('viem')
     const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
     const controller = loadDeployments().ETHRegistrarController
@@ -700,18 +705,13 @@ test.describe('SimpleX Namespace', () => {
     })) as boolean
     test.skip(gateOn === false, 'NFT gate was already disabled by a prior test')
 
-    // ACCOUNT1 has no SMPXNFT — the gate blocks them.
+    // ACCOUNT1 has no SMPXNFT — direct nav to a register page should still
+    // render the in-page banner + disabled next button.
     const wallet = await injectHeadlessWeb3Provider({ page, privateKeys: [ACCOUNT1_KEY], chains: [hardhatChain] })
-    await page.goto('/')
+    const uniqueName = `nft${Date.now().toString(36)}`
+    await page.goto(`/${uniqueName}.testing/register`)
     await page.waitForTimeout(2000)
     await connectWallet(page, wallet)
-
-    const uniqueName = `nft${Date.now().toString(36)}`
-    const searchInput = page.locator('input[placeholder]').first()
-    await searchInput.fill(uniqueName)
-    await page.waitForTimeout(3000)
-    await dismissOverlay(page)
-    await page.locator('[data-testid="search-result-name"]').first().click()
     await page.waitForTimeout(3000)
     await dismissOverlay(page)
 
@@ -725,11 +725,11 @@ test.describe('SimpleX Namespace', () => {
   })
 
   // UI test: drop a 4-char name on the registration page and verify that the
-  // SimpleX info panel highlights the $32 tier and the FullInvoice displays a
-  // yearly fee in the $32 ballpark. With the DummyOracle, $1 == 1 ETH, so the
-  // displayed yearly ETH cost should be ≈ 32 ETH.
-  test('pricing tier highlights the 4-char tier and the invoice agrees', async ({ page }) => {
-    // Ensure the on-chain min char length is ≤ 4 so a 4-char name is registrable.
+  // After admin lowers minCharLength to 4, the FullInvoice on .testing renders
+  // a 4-char name with the free-pricing oracle ([0,0,0,0,0]) — the yearly
+  // registration cost in the invoice is 0 ETH (gas only). On .simplex this
+  // would highlight the $32 tier; on .testing the tier panel is suppressed.
+  test('on .testing, a 4-char name shows zero registration cost (free pricing)', async ({ page }) => {
     const { createPublicClient, createWalletClient, http, parseAbi } = await import('viem')
     const { privateKeyToAccount } = await import('viem/accounts')
     const pub = createPublicClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545') })
@@ -756,7 +756,6 @@ test.describe('SimpleX Namespace', () => {
     await page.waitForTimeout(2000)
     await connectWallet(page, wallet)
 
-    // Pick a fresh 4-char name (lowercase a-z) so it has not been registered before.
     const rand = () => 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)]
     const fourChar = `${rand()}${rand()}${rand()}${rand()}`
 
@@ -765,18 +764,15 @@ test.describe('SimpleX Namespace', () => {
     await page.waitForTimeout(3000)
     await dismissOverlay(page)
     await page.locator('[data-testid="search-result-name"]').first().click()
-    await page.waitForTimeout(3000)
+    await page.waitForTimeout(5000)
     await dismissOverlay(page)
 
-    await expect(page.getByTestId('simplex-info-panel')).toBeVisible({ timeout: 15_000 })
-    // 4-char tier is highlighted; 6+ tier is not.
-    await expect(page.getByTestId('simplex-tier-4')).toHaveAttribute('data-active', 'true')
-    await expect(page.getByTestId('simplex-tier-6')).toHaveAttribute('data-active', 'false')
-
-    // FullInvoice yearly fee should show ~32 ETH for a 4-char name on the DummyOracle.
-    // Match "31." or "32." somewhere in the page; the exact number depends on the
-    // ExponentialPremiumPriceOracle integer math (~31.978 ETH).
-    await expect(page.locator('body')).toContainText(/3[12]\.\d{2,} ETH/, { timeout: 15_000 })
+    // Pricing tier panel is hidden on .testing.
+    await expect(page.getByTestId('simplex-tier-4')).toHaveCount(0)
+    await expect(page.getByTestId('simplex-tier-6')).toHaveCount(0)
+    // FullInvoice yearly registration fee is 0 ETH (free pricing oracle).
+    // Match either "0 ETH" or "0.0000 ETH" — viem/Thorin formatting may differ.
+    await expect(page.locator('body')).toContainText(/0(\.0+)? ETH/, { timeout: 15_000 })
   })
 
   // Reserved names should not silently land the user in a doomed registration flow.
@@ -813,18 +809,20 @@ test.describe('SimpleX Namespace', () => {
     await page.waitForTimeout(3000)
     await dismissOverlay(page)
 
-    // Search dropdown should mark the name as Reserved (not Available) — this is
-    // what tells the user the name is unclaimable before they navigate further.
+    // Search dropdown should mark the name as Reserved (not Available).
     await expect(page.locator('[data-testid="search-result-name"]').first()).toContainText(
       /Reserved/,
       { timeout: 10_000 },
     )
 
-    await page.locator('[data-testid="search-result-name"]').first().click()
+    // Direct nav to the register page (search-click now blocks navigation
+    // for reserved names — covered by a separate test). Verifies that the
+    // in-page banner + disabled Next button still render as the second
+    // line of defence.
+    await page.goto(`/${label}.testing/register`)
     await page.waitForTimeout(3000)
     await dismissOverlay(page)
 
-    // Registration page also surfaces the reserved status and disables Next.
     await expect(page.getByTestId('simplex-reserved-helper')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('simplex-reserved-helper')).toContainText(
       /reserved by the admin/i,
