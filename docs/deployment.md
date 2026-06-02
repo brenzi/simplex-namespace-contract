@@ -68,8 +68,8 @@ Sepolia is chain id **11155111**. The deploy is fully automated by
 
 ### Prerequisites
 
-- A deployer EOA on Sepolia with **≥ 0.3 SepoliaETH** (a full deploy spends
-  roughly 0.2–0.25 ETH). Sources: <https://sepoliafaucet.com>,
+- A deployer EOA on Sepolia with **≥ 0.5 SepoliaETH** (a full deploy spends
+  roughly 0.45 ETH). Sources: <https://sepoliafaucet.com>,
   <https://www.alchemy.com/faucets/ethereum-sepolia>.
 - A Sepolia RPC URL — Alchemy / Infura / Tenderly all work. Public RPCs
   rate-limit heavily and will choke on the back-to-back tx burst.
@@ -119,13 +119,21 @@ Concretely:
   controls admin actions + UUPS upgrades and the deployer is fully
   retired.
 
+### Generate Ephemeral Key
+
+```bash
+node -e "(async()=>{const a=await import('viem/accounts');const k=a.generatePrivateKey();console.log('execute these in your console: \nexport DEPLOYER_KEY='+k);console.log('export ADDRESS='+a.privateKeyToAccount(k).address);})()"
+```
+
+Copy-paste and execute
+
 ### Deploy
 
 ```bash
 export DEPLOYER_KEY=0xabc…
 export SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/<KEY>
 # optional — defaults to the simplexchat.eth cold key
-export OWNER_ADDRESS=0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340
+export OWNER_ADDRESS=0xC14ccEc78342e3DAf136E6C36025b397C377614e
 
 # .testing first
 node scripts/deploy-testnet.mjs
@@ -163,6 +171,22 @@ The script:
    metadata (impl address, initData, cold owner, deployer) to
    `verification.sepolia.json`.
 
+### Source verification on Etherscan
+
+After deploy, verify the SimplexController implementation + proxy with the
+companion script:
+
+```bash
+export ETHERSCAN_API_KEY=…   # v2 multi-chain key
+node scripts/verify-sepolia.mjs
+```
+
+The script reads `verification.sepolia.json`, finds the matching
+Hardhat build-info JSON (standard-json solc input), and submits both
+contracts to Etherscan. Polls verification status for up to 2 minutes
+per contract. To verify additional contracts (the verbatim ENS ones),
+add entries to the `TARGETS` array in `scripts/verify-sepolia.mjs`.
+
 ### Completing the ownership handover
 
 From a wallet controlling `OWNER_ADDRESS` (Ledger, SAFE, or whatever
@@ -185,21 +209,6 @@ cast call <PROXY> "pendingOwner()(address)" --rpc-url $SEPOLIA_RPC_URL
 Until the cold owner accepts, the ephemeral deployer EOA still has admin.
 Discard the deployer key only after `acceptOwnership` has landed.
 
-### Source verification on Etherscan
-
-After deploy, verify the SimplexController implementation + proxy with the
-companion script:
-
-```bash
-export ETHERSCAN_API_KEY=…   # v2 multi-chain key
-node scripts/verify-sepolia.mjs
-```
-
-The script reads `verification.sepolia.json`, finds the matching
-Hardhat build-info JSON (standard-json solc input), and submits both
-contracts to Etherscan. Polls verification status for up to 2 minutes
-per contract. To verify additional contracts (the verbatim ENS ones),
-add entries to the `TARGETS` array in `scripts/verify-sepolia.mjs`.
 
 ### Wire up the dApp
 
