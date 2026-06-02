@@ -204,13 +204,14 @@ test.describe('Sepolia SNRC — read-only smoke', () => {
     // After the transfer + reclaim, both point at the tester EOA. Assert
     // both so a future transfer that only moves one of them surfaces here.
     const expectedAddress = privateKeyToAccount(SEPOLIA_TEST_KEY).address.toLowerCase()
-    const head = expectedAddress.slice(0, 6)
-    const tail = expectedAddress.slice(-4)
+    // The dApp's `shortenAddress` (src/utils/utils.ts) renders addresses as
+    // `${slice(0,5)}...${slice(-5)}`, e.g. `0xea6...81572` — match that.
+    const head = expectedAddress.slice(0, 5)
+    const tail = expectedAddress.slice(-5)
 
     for (const testid of ['owner-profile-button-name.owner', 'owner-profile-button-name.manager']) {
       const button = page.getByTestId(testid)
       await expect(button).toBeVisible({ timeout: 20_000 })
-      // Address renders truncated (e.g. 0x1234…abcd); assert first 6 + last 4 hex.
       const text = (await button.textContent())?.toLowerCase() ?? ''
       expect(text, `${testid} should contain ${expectedAddress}`).toContain(head)
       expect(text, `${testid} should contain ${expectedAddress}`).toContain(tail)
