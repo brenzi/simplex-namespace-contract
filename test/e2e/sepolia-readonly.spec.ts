@@ -124,14 +124,18 @@ test.describe('Sepolia SNRC — read-only smoke', () => {
     expect(page.url()).not.toMatch(/\/register\//)
   })
 
-  test('direct nav to simplex.testing (reserved) renders the yellow reserved warning', async ({ page }) => {
+  test('direct nav to /simplex.testing/register (reserved) shows the reserved helper', async ({ page }) => {
     // `simplex` was reserved at deploy time and is permanent state on
-    // Sepolia, so this assertion is stable across runs.
-    await page.goto('/simplex.testing')
+    // Sepolia, so this assertion is stable across runs. BaseRegistrar
+    // reports it as `available` — reserved-status is a controller-side
+    // gate that surfaces on the /register page, so we navigate there
+    // directly (matches the Hardhat suite's reserved-name test).
+    await page.goto('/simplex.testing/register')
     await page.waitForTimeout(4000)
 
-    const warning = page.getByRole('alert').filter({ hasText: /is reserved/i }).first()
-    await expect(warning).toBeVisible({ timeout: 20_000 })
+    const helper = page.getByTestId('simplex-reserved-helper')
+    await expect(helper).toBeVisible({ timeout: 20_000 })
+    await expect(helper).toContainText(/reserved by the admin/i)
   })
 
   test('direct nav to a 4-char .testing name renders the yellow too-short warning', async ({ page }) => {
