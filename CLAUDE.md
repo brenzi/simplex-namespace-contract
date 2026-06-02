@@ -83,7 +83,7 @@ Set via `setText(node, "simplex.contact", value)`, read via `text(node, "simplex
 
 - `setNftGateEnabled(false)` — one-way (true→false)
 - `setMinCharLength(uint8)` — monotonic decrease only (6→5→4→3)
-- `addReservedName` / `removeReservedName` / `registerReserved`
+- `addReservedNames` / `removeReservedNames` / `registerReserved` (the two reserved-name setters take string arrays — bulk in a single tx, ~1000/call)
 - `setTreasury` (where ETH fees go)
 - UUPS upgrade authority (can be renounced)
 

@@ -30,7 +30,7 @@ gives the operational picture an integrator or auditor needs.
         ├─ minCharLength            ── enforced in register()
         ├─ reservedNames            ── enforced in register()
         ├─ smpxNft + nftGateEnabled ── enforced in register() (.testing only)
-        └─ admin functions          ── setMinCharLength, addReservedName,
+        └─ admin functions          ── setMinCharLength, addReservedNames,
                                        disableNftGate, registerReserved
 ```
 
@@ -127,8 +127,8 @@ and mainnet we point the oracle at the live Chainlink ETH/USD feed.
 |----------------------------------|---------------------------------------------|
 | `setMinCharLength(uint8)`        | monotonic decrease only (6 → 5 → 4 → 3)     |
 | `disableNftGate()`               | one-way (true → false)                      |
-| `addReservedName(string)`        |                                             |
-| `removeReservedName(string)`     |                                             |
+| `addReservedNames(string[])`     | bulk; ~1000 names per tx                    |
+| `removeReservedNames(string[])`  | bulk; ~1000 names per tx                    |
 | `registerReserved(string,address,uint256)` | bypasses gates                    |
 
 The owner can renounce admin authority once the TLD is stable.

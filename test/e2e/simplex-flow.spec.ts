@@ -792,14 +792,14 @@ test.describe('SimpleX Namespace', () => {
     const adminAccount = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`)
     const adminWallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account: adminAccount })
     const controller = loadDeployments().ETHRegistrarController
-    const reservedAbi = parseAbi(['function addReservedName(string) external'])
+    const reservedAbi = parseAbi(['function addReservedNames(string[]) external'])
     const label = `rsv${Date.now().toString(36)}`
     await pub.waitForTransactionReceipt({
       hash: await adminWallet.writeContract({
         address: controller,
         abi: reservedAbi,
-        functionName: 'addReservedName',
-        args: [label],
+        functionName: 'addReservedNames',
+        args: [[label]],
       }),
     })
 
@@ -894,8 +894,8 @@ test.describe('SimpleX Namespace', () => {
 
     const reservedAbi = parseAbi([
       'function reservedNames(bytes32) view returns (bool)',
-      'function addReservedName(string) external',
-      'function removeReservedName(string) external',
+      'function addReservedNames(string[]) external',
+      'function removeReservedNames(string[]) external',
     ])
     // Unique label so the test is idempotent across re-runs against the same chain.
     const label = `res${Date.now().toString(36)}`
@@ -906,8 +906,8 @@ test.describe('SimpleX Namespace', () => {
       hash: await adminWallet.writeContract({
         address: controller,
         abi: reservedAbi,
-        functionName: 'addReservedName',
-        args: [label],
+        functionName: 'addReservedNames',
+        args: [[label]],
       }),
     })
     expect(
@@ -935,8 +935,8 @@ test.describe('SimpleX Namespace', () => {
       hash: await adminWallet.writeContract({
         address: controller,
         abi: reservedAbi,
-        functionName: 'removeReservedName',
-        args: [label],
+        functionName: 'removeReservedNames',
+        args: [[label]],
       }),
     })
     expect(
@@ -1033,11 +1033,11 @@ test.describe('SimpleX Namespace', () => {
     const adminAccount = privateKeyToAccount(DEPLOYER_KEY as `0x${string}`)
     const adminWallet = createWalletClient({ chain: hardhatChain as any, transport: http('http://127.0.0.1:8545'), account: adminAccount })
     const controller = loadDeployments().ETHRegistrarController
-    const reservedAbi = parseAbi(['function addReservedName(string) external'])
+    const reservedAbi = parseAbi(['function addReservedNames(string[]) external'])
     const label = `resv${Date.now().toString(36)}`
     await pub.waitForTransactionReceipt({
       hash: await adminWallet.writeContract({
-        address: controller, abi: reservedAbi, functionName: 'addReservedName', args: [label],
+        address: controller, abi: reservedAbi, functionName: 'addReservedNames', args: [[label]],
       }),
     })
 

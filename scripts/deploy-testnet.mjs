@@ -174,8 +174,9 @@ async function main() {
   await write(defaultReverseRegistrar, 'setController', [controller.address, true])
   console.log('Controller wired up')
 
-  for (const label of ['simplex', 'simplex-chat']) {
-    await write(controller, 'addReservedName', [label])
+  const reservedAtDeploy = ['simplex', 'simplex-chat']
+  await write(controller, 'addReservedNames', [reservedAtDeploy])
+  for (const label of reservedAtDeploy) {
     console.log(`Reserved: ${label}.${tld}`)
   }
 

@@ -151,9 +151,10 @@ async function main() {
   console.log(`Controller wired up`)
 
   // Genesis reserved-names list — these labels cannot be registered by the public.
-  // Extend as needed before deploying to testnet / mainnet.
-  for (const label of ['simplex', 'simplex-chat']) {
-    await write(controller, 'addReservedName', [label])
+  // Extend as needed before deploying to testnet / mainnet. Bulk in one tx.
+  const reservedAtDeploy = ['simplex', 'simplex-chat']
+  await write(controller, 'addReservedNames', [reservedAtDeploy])
+  for (const label of reservedAtDeploy) {
     console.log(`Reserved: ${label}.${tld}`)
   }
 

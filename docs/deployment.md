@@ -303,7 +303,7 @@ Ethereum mainnet.
      `useEthPrice` hook resolves to the Chainlink feed.
 3. Push the deployment addresses to the dApp's mainnet env vars and
    redeploy the SPA.
-4. Pre-load the reserved-names list via `addReservedName` before opening
+4. Pre-load the reserved-names list via `addReservedNames` (bulk; ~1000 names per tx) before opening
    registration.
 5. Confirm `minCommitmentAge = 60` and `maxCommitmentAge = 86400`.
 

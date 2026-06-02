@@ -177,12 +177,15 @@ for testnet / mainnet) and add the calls below at the end of `main()`, after
 
 1. **Pre-reserve names** — prevents them from being publicly registered. Use
    for trademarks, official SimpleX names, abuse-prone words, or anything you
-   want to hand-assign later.
+   want to hand-assign later. `addReservedNames` takes a string array and
+   reserves all entries in a single transaction; pass a one-element array to
+   reserve a single name. The block gas limit comfortably holds ~1000 names
+   per call.
 
    ```js
-   for (const label of ['simplex', 'admin', 'support', 'help']) {
-     await write(controller, 'addReservedName', [label])
-   }
+   await write(controller, 'addReservedNames', [
+     ['simplex', 'admin', 'support', 'help'],
+   ])
    ```
 
 2. **Pre-register a reserved name to a known address** — calls
@@ -197,7 +200,7 @@ for testnet / mainnet) and add the calls below at the end of `main()`, after
    ```
 
 After running the modified deploy script the controller starts in the desired
-state — `addReservedName` calls produce an entry in `reservedNames`,
+state — `addReservedNames` produces one entry per label in `reservedNames`,
 `registerReserved` mints the BaseRegistrar ERC-721 to the chosen owner.
 
 ### Post-launch (admin operations)
@@ -207,20 +210,21 @@ controller owner. The admin panel exposes them as separate cards:
 
 | What you want                                | Admin-panel card             | Underlying call                              |
 |---------------------------------------------|------------------------------|----------------------------------------------|
-| Block a name from public registration       | **Reserve a name**           | `addReservedName(label)`                     |
-| Restore a name to public registration       | **Unreserve a name**         | `removeReservedName(label)`                  |
+| Block names from public registration        | **Reserve name(s)**          | `addReservedNames([label, …])`               |
+| Restore names to public registration        | **Unreserve name(s)**        | `removeReservedNames([label, …])`            |
 | Check whether a name is currently reserved  | **Check Reserved**           | `reservedNames(keccak256(label))` (read-only)|
 | Assign a reserved name to a specific address | **Register Reserved Name**  | `registerReserved(label, owner, duration)`   |
 
 Step-by-step (from the UI):
 
 1. Connect the deployer/owner wallet and open `/admin`.
-2. **To reserve**: type the bare label (e.g. `simplex`, not `simplex.testing`)
-   in the **Reserve a name** input → **Reserve** → confirm tx. Any
-   subsequent public `register()` for that label reverts with
-   `NameReserved`.
-3. **To unreserve**: type the same label in the **Unreserve a name** input →
-   **Unreserve** → confirm tx. The name is back in the public pool.
+2. **To reserve** (one or many at once): type bare labels (e.g. `simplex`,
+   not `simplex.testing`) in the **Reserve name(s)** input — newline- or
+   comma-separated for batches — → **Reserve** → confirm tx. Any subsequent
+   public `register()` for any of those labels reverts with `NameReserved`.
+   The block gas limit comfortably holds ~1000 names per call.
+3. **To unreserve**: type the same labels in the **Unreserve name(s)**
+   input → **Unreserve** → confirm tx. They go back in the public pool.
 4. **To assign**: fill **Register Reserved Name** with the label, the
    recipient address, and a duration in days. Click **Register**, confirm
    the tx, and the recipient becomes the owner of the BaseRegistrar NFT for

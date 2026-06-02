@@ -53,7 +53,7 @@ one Hardhat instance and one Next.js dev server (`./scripts/run-local.sh`).
 
 Tests are written so each can run individually against a fresh chain; a few
 mutate controller state (admin lowering `minCharLength`, `disableNftGate`,
-`addReservedName`/`removeReservedName`) and are placed late in the file so
+`addReservedNames`/`removeReservedNames`) and are placed late in the file so
 earlier tests see a clean state. Three of the state-mutating tests
 **adapt to whatever the current chain state is** (read `minCharLength` first,
 lower by 1; `test.skip` when the gate has been disabled by a previous run)
