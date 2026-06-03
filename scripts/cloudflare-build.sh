@@ -16,6 +16,12 @@ set -euo pipefail
 # submodule-checkout step is disabled.
 git submodule update --init --recursive
 
+# A pnpm-installed git dep (`clones-with-immutable-args`) runs its `prepare`
+# step via yarn. Corepack picks yarn 4.x; yarn 4 enables immutable mode by
+# default when `CI=true` (which Cloudflare Pages sets), then refuses because
+# migrating the lockfile would mutate it. Override that just for this build.
+export YARN_ENABLE_IMMUTABLE_INSTALLS=false
+
 corepack enable
 
 pnpm install --frozen-lockfile
