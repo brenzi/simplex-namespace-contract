@@ -42,10 +42,9 @@ pnpm install --frozen-lockfile
   pnpm install --no-frozen-lockfile --prefer-frozen-lockfile
   # Bake the Sepolia deployment addresses into the static export.
   # Read from the committed JSON so we don't have to paste it into the
-  # Cloudflare env-var UI every time addresses change.
-  export NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES="$(jq -c . ../deployments.sepolia.json)"
-  echo "DEBUG: NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES length=${#NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES}"
-  echo "DEBUG: first 120 chars: ${NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES:0:120}"
+  # Cloudflare env-var UI every time addresses change. `jq` isn't
+  # preinstalled on Cloudflare's build image; use a node one-liner instead.
+  export NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES="$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('../deployments.sepolia.json','utf8'))))")"
   pnpm build
   pnpm export
 )
