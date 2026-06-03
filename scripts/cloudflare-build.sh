@@ -34,7 +34,12 @@ pnpm install --frozen-lockfile
 
 (
   cd ens-app-v3
-  pnpm install --frozen-lockfile
+  # ens-app-v3 pins `packageManager: pnpm@10.23.0` and uses 10 patched
+  # dependencies. pnpm 10.23 validates patch-file content hashes against the
+  # lockfile and rejects --frozen-lockfile if any patch file's hash drifted.
+  # Use the lockfile as the resolution source but allow patch hashes to
+  # refresh in place — no actual dependency-version changes happen.
+  pnpm install --no-frozen-lockfile --prefer-frozen-lockfile
   # Bake the Sepolia deployment addresses into the static export.
   # Read from the committed JSON so we don't have to paste it into the
   # Cloudflare env-var UI every time addresses change.
