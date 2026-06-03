@@ -4,6 +4,18 @@ Three deployment targets — local Hardhat, **Sepolia testnet**, Ethereum
 mainnet. Each TLD (`.testing`, `.simplex`) is an independent deployment; run
 the playbook once per TLD per network.
 
+## Contents
+
+- [Quick reference](#quick-reference)
+- [Local Hardhat](#local-hardhat)
+- [Sepolia testnet](#sepolia-testnet)
+- [Mainnet](#mainnet)
+- [dApp on Cloudflare Pages](#dapp-on-cloudflare-pages)
+- [Frontend env vars](#frontend-env-vars)
+- [Deploy-time env vars](#deploy-time-env-vars)
+- [Verification](#verification)
+- [Gotchas](#gotchas)
+
 ## Quick reference
 
 | What                          | Command / Variable                                  |
@@ -12,15 +24,17 @@ the playbook once per TLD per network.
 | Local one-shot                | `./scripts/run-local.sh`                             |
 | Local for `.simplex`          | `SIMPLEX_TLD=simplex ./scripts/run-local.sh`         |
 | Deploy to Sepolia             | `DEPLOYER_KEY=… SEPOLIA_RPC_URL=… node scripts/deploy-testnet.mjs` |
-| Sepolia cold owner            | `OWNER_ADDRESS` env (defaults to the simplexchat.eth cold key) |
+| Deploy to mainnet             | `DEPLOYER_KEY=… MAINNET_RPC_URL=… SIMPLEX_TLD=… node scripts/deploy-mainnet.mjs` |
+| Sepolia / mainnet cold owner  | `OWNER_ADDRESS` env (defaults to the simplexchat.eth cold key) |
 | Verify on Etherscan           | `ETHERSCAN_API_KEY=… node scripts/verify-sepolia.mjs`     |
 | Addresses output (local)      | stdout + `deployments.local.json`                    |
 | Addresses output (Sepolia)    | stdout + `deployments.sepolia.json` + `verification.sepolia.json` |
+| Addresses output (mainnet)    | stdout + `deployments.mainnet.${tld}.json` (**deployer must commit**) |
 | Frontend env var (local)      | `NEXT_PUBLIC_DEPLOYMENT_ADDRESSES` (JSON)            |
 | Frontend env var (Sepolia)    | `NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES` (JSON)    |
 | TLD env var                   | `NEXT_PUBLIC_SIMPLEX_TLD` (`testing` or `simplex`)   |
 | Chain selection               | `NEXT_PUBLIC_CHAIN_NAME` (`localhost`/`sepolia`/`mainnet`) |
-| Static build flag             | `NEXT_PUBLIC_IPFS=1` (used by the Pages workflow)    |
+| Static build flag             | `NEXT_PUBLIC_IPFS=1` (used by the Cloudflare Pages build) |
 
 ---
 
@@ -258,8 +272,9 @@ NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES="$(cat ../deployments.sepolia.json | tr
 pnpm dev
 ```
 
-If you're deploying the dApp via the GitHub Pages workflow, commit
-`deployments.sepolia.json` (it's read at build time by the workflow). See the
+If you're deploying the dApp via Cloudflare Pages, commit
+`deployments.sepolia.json` to the repo root — the build script reads it at
+build time and bakes the addresses into the static export. See the
 section below.
 
 ### MetaMask setup
@@ -273,88 +288,261 @@ section below.
 ## Mainnet
 
 Two separate deployments — `.testing` first, `.simplex` later. Both go to
-Ethereum mainnet.
+Ethereum mainnet. Driven by `scripts/deploy-mainnet.mjs`, which reuses
+the same ephemeral-deployer / cold-owner model as Sepolia but adds gas
+analysis and tx acceleration up front.
 
 ### Pre-flight
 
-- ETH/USD Chainlink feed: `0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419`
-- SMPXNFT contract: `0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291`
-- `OWNER_ADDRESS` — the SNCC multisig (mainnet SAFE). Same ephemeral-
-  deployer / cold-owner / two-step `acceptOwnership` model as Sepolia;
-  the cold owner here is a multisig rather than an EOA. The full set of
-  end-of-deploy ownership transfers (BaseRegistrar, NameWrapper,
-  MockSMPXNFT, ReverseRegistrar, DefaultReverseRegistrar, all
+- **Chainlink ETH/USD feed**: `0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419`
+  (override with `ETHUSD_FEED`).
+- **SMPXNFT contract**: `0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291`
+  (override with `SMPXNFT_ADDR`). Unlike Sepolia, there is no
+  MockSMPXNFT — the real contract is used directly.
+- **Cold owner** (`OWNER_ADDRESS`): the SNCC multisig (mainnet SAFE). The
+  end-of-deploy ownership handoff matches Sepolia: BaseRegistrar,
+  NameWrapper, ReverseRegistrar, DefaultReverseRegistrar, all
   deployer-owned ENS subnodes, ENS root, and SimplexController via
-  Ownable2Step) is identical to the Sepolia script.
-- Audited `simplex` branch on both ENS forks (the `main...simplex` GitHub
-  diff is the audit surface).
+  Ownable2Step. After the script finishes, the cold owner must call
+  `controller.acceptOwnership()` to complete the SimplexController
+  handover.
+- **Ephemeral deployer**: a fresh EOA. Top it up with enough ETH for the
+  full sequence — the script tells you exactly how much before sending
+  any tx (see below).
+- The `simplex` branch must be audit-finalised on both ens-contracts and
+  ens-app-v3 forks (the `main...simplex` GitHub diff is the audit
+  surface).
 
-### Steps
+### Step 0 — gas analysis and cost preview
 
-1. Add a mainnet network to `ens-contracts/hardhat.config.ts` and a
-   mainnet variant of `scripts/deploy-testnet.mjs` parameterised by the
-   real Chainlink + SMPXNFT addresses.
-2. For each TLD:
-   - Deploy `ENSRegistry`, `BaseRegistrarImplementation`,
-     `ReverseRegistrar`, `NameWrapper`, `PublicResolver`,
-     `ExponentialPremiumPriceOracle`, `SimplexController`.
-   - `base.addController(SimplexController)`.
-   - Set the resolver record for `eth-usd.data.eth` so the frontend's
-     `useEthPrice` hook resolves to the Chainlink feed.
-3. Push the deployment addresses to the dApp's mainnet env vars and
-   redeploy the SPA.
-4. Pre-load the reserved-names list via `addReservedNames` (bulk; ~1000 names per tx) before opening
-   registration.
-5. Confirm `minCommitmentAge = 60` and `maxCommitmentAge = 86400`.
+`deploy-mainnet.mjs` starts by reading `eth_feeHistory` for the last 50
+blocks, picking the 25th-percentile priority fee (i.e. "sub-normal"),
+estimating total deploy cost, and printing the recommended deployer
+balance. It then **pauses for a Y/N confirmation** before sending any
+tx. Pass `CONFIRM=yes` to skip the prompt in CI / scripted runs.
 
-Status: pre-launch checklist. The deploy must be reviewed line-by-line on a
-real fork before the first transaction.
+Sample output:
+
+```
+=== Gas analysis: .simplex mainnet deploy ===
+  Recent 50-block stats:
+    base fee (current):    0.500 gwei
+    base fee (median):     0.507 gwei
+    p25 priority (median): 0.001 gwei
+
+  Chosen gas params (sub-normal — p25):
+    maxPriorityFeePerGas:  0.100 gwei
+    maxFeePerGas:          1.099 gwei
+    expected wait per tx:  ~1–5 blocks at normal load
+    acceleration:          +30% gas after 5min, up to 5 attempts per tx
+
+  Cost estimate:
+    expected total gas:    120,000,000 units
+    estimated cost:        0.1319 ETH
+    recommended balance:   0.1979 ETH  (×1.5 safety buffer)
+
+  Deployer:
+    address:               0x…
+    current balance:       0.0000 ETH
+
+  ⚠  Balance is BELOW recommended. Top up at least 0.1979 ETH
+     before proceeding.
+
+Proceed with deploy? [y/N]
+```
+
+If the deployer is underfunded, fund it and re-run. The script is safe
+to re-invoke before any tx has been sent (gas analysis is read-only).
+
+### Step 1 — deploy
+
+```sh
+DEPLOYER_KEY=0x…                          # fresh ephemeral EOA
+MAINNET_RPC_URL=https://…                 # your RPC
+SIMPLEX_TLD=testing                       # or 'simplex' for the second TLD
+OWNER_ADDRESS=0x…                         # SNCC mainnet SAFE
+node scripts/deploy-mainnet.mjs
+```
+
+The script:
+
+1. Deploys the full ENS-shape stack (ENSRegistry, BaseRegistrar,
+   ReverseRegistrar, DefaultReverseRegistrar, NameWrapper,
+   PublicResolver, UniversalResolver,
+   ExponentialPremiumPriceOracle, SimplexController + UUPS proxy).
+2. Wires the controller into the BaseRegistrar and ReverseRegistrar,
+   pre-loads the default reserved labels (`simplex`, `simplex-chat`),
+   and registers `eth-usd.data.eth` → Chainlink feed in the deployed
+   registry so the frontend's `useEthPrice` hook resolves on chain.
+3. Hands ownership of every persistent role off to `OWNER_ADDRESS`. The
+   ENS-root transfer is the last write; afterwards the deployer can't
+   reassign any TLD or contract role.
+
+Every tx goes through an accelerating wrapper: it submits with the
+chosen gas, waits up to 5 minutes for inclusion, then resubmits at the
+**same nonce** with +30% gas if it hasn't mined yet. Up to 5 attempts
+per tx. If a replaced hash actually mined first, the wrapper returns
+that receipt instead of erroring.
+
+Overrides worth knowing:
+
+- `EXPECTED_GAS=120000000` — total gas estimate for the cost preview.
+  Default ≈ Sepolia's actual usage + buffer. Set lower if you've
+  re-measured against a fresh Sepolia run; the only effect is the cost
+  preview, not the actual tx flow.
+- `CONFIRM=yes` — skip the interactive prompt (CI / scripted).
+
+### Step 2 — **commit the addresses file**
+
+When the script finishes it writes `deployments.mainnet.${tld}.json`
+to the repo root (e.g. `deployments.mainnet.testing.json`). **The
+deployer is responsible for committing this file to the repo
+immediately after the deploy succeeds.** It is the authoritative record
+of which contracts went out at which addresses; without it in the repo
+later runs of the dApp build (Cloudflare Pages), Etherscan verification,
+upgrade ceremonies, and operational tooling have no way to reference
+the deployment.
+
+```sh
+git add deployments.mainnet.testing.json   # or .simplex.json
+git commit -m "deploy: SNRC .testing mainnet addresses"
+git push
+```
+
+If you also re-ran the deploy after a failed attempt and the file
+already exists on `main`, double-check the diff before pushing — the
+new addresses must replace, not append to, the previous run's values.
+
+### Step 3 — post-deploy
+
+1. The cold owner calls `controller.acceptOwnership()` from the
+   multisig to complete the SimplexController handover.
+2. Add the mainnet addresses + RPC to the dApp's env (Cloudflare Pages
+   build env vars) and trigger a rebuild.
+3. Source-verify the contracts on Etherscan. The current
+   `scripts/verify-sepolia.mjs` is Sepolia-shaped; either parameterise
+   it for mainnet (separate change) or verify each contract by hand
+   with the same constructor-arg JSON the script emits.
+4. Run the read-only Playwright suite against the mainnet build (or a
+   mainnet-aware variant of `test/e2e/sepolia-readonly.spec.ts`) to
+   confirm the dApp resolves a known mainnet name.
+
+Status: ready for review on a forked mainnet rehearsal before the first
+real transaction. Walk the deploy on a Hardhat mainnet fork first.
 
 ---
 
-## dApp on GitHub Pages
+## dApp on Cloudflare Pages
 
-The workflow at `.github/workflows/deploy-pages.yml` builds the dApp as a
-static SPA and deploys it to GitHub Pages on every push to `main`.
+The dApp is built as a static SPA and served from
+[`simplex-namespace-contract.pages.dev`](https://simplex-namespace-contract.pages.dev/).
+Cloudflare watches the GitHub repo and rebuilds on every push.
 
 ### One-time setup
 
-1. In the repo settings → **Pages**, set **Source** to **GitHub Actions**.
-2. Commit `deployments.sepolia.json` (output of `scripts/deploy-testnet.mjs`)
-   to the repo root. The workflow reads it via `jq` and injects it into
-   `NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES` at build time.
-3. (Optional) If you want a custom domain, configure it in repo settings
-   and add a `CNAME` file with the apex name into the workflow's `out/`
-   directory before the upload step.
+1. In the Cloudflare dashboard → **Workers & Pages** → **Create** →
+   **Pages** → **Connect to Git**, pick the `simplex-namespace-contract`
+   repo. Important: pick **Pages**, not Workers — the newer unified UI
+   defaults to Workers, which uses `wrangler deploy` instead of
+   `wrangler pages deploy` and fails with a permissions error against a
+   Pages project name.
+2. Build configuration:
+   - **Build command**: `bash scripts/cloudflare-build.sh`
+   - **Build output directory**: read from `wrangler.toml`
+     (`pages_build_output_dir = "./ens-app-v3/out"`) — the newer
+     dashboard no longer surfaces this field, but `wrangler.toml`
+     supersedes it.
+   - **Root directory**: empty.
+3. Environment variables (Settings → Environment variables, Production):
+   - `NODE_VERSION=22`
+   - `NEXT_PUBLIC_CHAIN_NAME=sepolia` (or `mainnet` once that deploy lands)
+   - `NEXT_PUBLIC_SIMPLEX_TLD=testing` (or `simplex`)
+   - `NEXT_PUBLIC_IPFS=1`
+4. Commit `deployments.sepolia.json` (and later
+   `deployments.mainnet.${tld}.json`) to the repo root. The build script
+   reads the file at build time with a node one-liner and injects its
+   contents into `NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES` — there's
+   nothing to paste into the dashboard for the address bundle.
+5. `.gitmodules` must use **HTTPS** URLs for the two ENS forks, not SSH.
+   Cloudflare's build runner has no SSH key; `git@github.com:…` clones
+   fail at submodule init.
+6. (Optional) Custom domain: Settings → Custom domains → add yours; add
+   the corresponding DNS record at your registrar. The Cloudflare-pinned
+   `og:image` URL in `src/pages/index.tsx` hardcodes the `pages.dev`
+   host — swap to the custom domain at the same time to keep social
+   previews resolving.
 
-### What the workflow does
+### What the build does
 
-1. Checks out the repo with `submodules: recursive`.
-2. Installs deps in the parent and both submodules.
-3. Compiles ENS contracts (the frontend pulls ABIs from these artefacts).
-4. Loads `deployments.sepolia.json` into a workflow output via `jq -c`.
-5. Builds the SPA with:
-   - `NEXT_PUBLIC_IPFS=1` — flips the ENS app to its existing
-     query-string-based routing (path-based URLs like `/<name>.testing`
-     work only with a runtime rewrite layer that doesn't exist on static
-     hosts; the IPFS variant routes through `/profile?name=…` instead).
-   - `NEXT_PUBLIC_CHAIN_NAME=sepolia`, `NEXT_PUBLIC_SIMPLEX_TLD=testing`,
-     `NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES=<JSON>`.
-6. Runs `pnpm build && pnpm export` and emits a `.nojekyll` marker so
-   Pages serves the `_next/` directory without Jekyll filtering.
-7. Uploads `ens-app-v3/out/` as a Pages artefact and deploys it.
+The Cloudflare-side build runs `scripts/cloudflare-build.sh`, which is
+the canonical entry point — edit it (not the dashboard build command) to
+change build steps. In order:
+
+1. `git submodule update --init --recursive` — defensive, in case
+   Cloudflare's submodule-init step is disabled. `.gitmodules` must
+   resolve over HTTPS.
+2. `export YARN_ENABLE_IMMUTABLE_INSTALLS=false` — a pnpm-installed git
+   dep (`clones-with-immutable-args`) runs `yarn install` as its
+   `prepare` step. Corepack upgrades yarn to 4.x, which defaults to
+   immutable mode when `CI=true` (Cloudflare sets this) and refuses to
+   migrate the embedded lockfile.
+3. `corepack enable`.
+4. `pnpm install --frozen-lockfile` in the parent.
+5. `pnpm install --frozen-lockfile && npx hardhat compile` in
+   `ens-contracts/` — the frontend reads ABIs from
+   `ens-contracts/artifacts/`.
+6. `pnpm install --no-frozen-lockfile --prefer-frozen-lockfile` in
+   `ens-app-v3/` — `pnpm@10.x` validates patch-file content hashes
+   against the lockfile and rejects `--frozen-lockfile` if any of the
+   ~10 patched-dependency hashes drift. `--prefer-frozen-lockfile` keeps
+   the lockfile authoritative for versions while allowing the patch
+   hashes to refresh in place.
+7. Inline the addresses + run the static export:
+   ```sh
+   export NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES="$(node -e ...read deployments.sepolia.json...)"
+   pnpm build && pnpm export
+   ```
+   `jq` is not preinstalled on the Cloudflare build image — the script
+   uses a node one-liner to minify the JSON, which is guaranteed available.
+8. Cloudflare deploys `ens-app-v3/out/` to the Pages project. The
+   `wrangler.toml`'s `pages_build_output_dir` tells the deploy step
+   where to look.
+
+### Routing on a static host
+
+Next.js `rewrites()` in `next.config.mjs` are server-side only and
+don't survive `next export`. To make path-based URLs like
+`/foobar.testing` and `/foobar.testing/register` work on Cloudflare
+Pages, the rewrites are mirrored in `ens-app-v3/public/_redirects`
+using Netlify-compatible syntax (which Cloudflare also supports). The
+file is copied into `ens-app-v3/out/` by `next export` and Cloudflare
+honours it for edge rewrites.
+
+Two caveats:
+
+- **No regex constraints on path placeholders.** Next.js's
+  `/:address(0x[a-fA-F0-9]{40}$)` → `/address?address=:address` rule
+  can't be expressed in `_redirects`, so the implicit `0x…` profile
+  shortcut is dropped. If you need it, route through `/address/0x…`
+  explicitly.
+- **Order matters.** First match wins. Multi-segment rules
+  (`/:name/register`, `/tld/:tld`, etc.) come before the catch-all
+  `/:name`. Real static pages (`/admin`, `/import`, `/register`, etc.)
+  resolve to their `.html` files because Cloudflare checks static files
+  before `_redirects`.
 
 ### Limitations
 
-- **No server-side rewrites.** The IPFS routing layer is route-equivalent
-  but URLs look like `/profile?name=alice.testing` rather than
-  `/alice.testing`.
-- **No SSG/SSR data fetching.** Anything that relied on
-  `getServerSideProps` would fail the export step — there is no such code
-  in our diff today; revisit if upstream ENS adds one.
-- **Deployment freshness.** The Sepolia addresses are baked in at build
-  time. Re-running `scripts/deploy-testnet.mjs` only takes effect after
-  you commit + push the updated `deployments.sepolia.json`.
+- **No server-side data fetching.** Anything that relied on
+  `getServerSideProps` would fail the export step — there is no such
+  code in our diff today; revisit if upstream ENS adds one.
+- **Deployment freshness.** The address bundle is baked in at build
+  time. Re-running `scripts/deploy-testnet.mjs` (or
+  `scripts/deploy-mainnet.mjs`) only takes effect after the new
+  `deployments.${network}.json` is committed and pushed.
+- **Custom-domain icon swap.** If you add a custom domain, update the
+  hardcoded `og:image` URL in `src/pages/index.tsx` so social previews
+  resolve against the new host.
 
 ---
 
