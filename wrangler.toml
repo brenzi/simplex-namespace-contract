@@ -1,4 +1,7 @@
 # Cloudflare Pages config. Declares where the static-export output lives
 # so we don't depend on the dashboard "Build output directory" field
 # (which the newer Workers Builds UI no longer surfaces).
+# `name` must match the project slug shown in the Cloudflare dashboard
+# (Workers & Pages → project list) — wrangler refuses to deploy without it.
+name = "simplex-namespace-contract"
 pages_build_output_dir = "./ens-app-v3/out"
