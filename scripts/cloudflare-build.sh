@@ -7,9 +7,13 @@
 #
 # Required env vars (set in Cloudflare → Settings → Environment variables):
 #   NODE_VERSION=22
-#   NEXT_PUBLIC_CHAIN_NAME=sepolia
-#   NEXT_PUBLIC_SIMPLEX_TLD=testing
+#   NEXT_PUBLIC_CHAIN_NAME=sepolia    # or 'mainnet'
+#   NEXT_PUBLIC_SIMPLEX_TLD=testing   # or 'simplex' (mainnet only, once deployed)
 #   NEXT_PUBLIC_IPFS=1
+#
+# Optional:
+#   NEXT_PUBLIC_MAINNET_RPC_URL=https://… — point the dApp at a private
+#       mainnet RPC (e.g. Reth behind Caddy). Default uses DRPC + Tenderly.
 set -euo pipefail
 
 # Belt + braces: make sure submodules are populated even if Cloudflare's
@@ -40,11 +44,36 @@ pnpm install --frozen-lockfile
   # Use the lockfile as the resolution source but allow patch hashes to
   # refresh in place — no actual dependency-version changes happen.
   pnpm install --no-frozen-lockfile --prefer-frozen-lockfile
-  # Bake the Sepolia deployment addresses into the static export.
-  # Read from the committed JSON so we don't have to paste it into the
-  # Cloudflare env-var UI every time addresses change. `jq` isn't
-  # preinstalled on Cloudflare's build image; use a node one-liner instead.
-  export NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES="$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('../deployments.sepolia.json','utf8'))))")"
+
+  # Bake the deployment addresses into the static export. Read the file
+  # that matches NEXT_PUBLIC_CHAIN_NAME, then export the corresponding
+  # NEXT_PUBLIC_*_DEPLOYMENT_ADDRESSES variable that `src/constants/chains.ts`
+  # reads at build time. `jq` isn't preinstalled on Cloudflare's build
+  # image; use node to minify the JSON.
+  CHAIN="${NEXT_PUBLIC_CHAIN_NAME:-sepolia}"
+  TLD="${NEXT_PUBLIC_SIMPLEX_TLD:-testing}"
+  case "$CHAIN" in
+    mainnet)
+      ADDR_FILE="../deployments.mainnet.${TLD}.json"
+      ADDR_VAR=NEXT_PUBLIC_MAINNET_DEPLOYMENT_ADDRESSES
+      ;;
+    sepolia)
+      # Sepolia's deployment file isn't TLD-suffixed (one TLD per Sepolia run).
+      ADDR_FILE="../deployments.sepolia.json"
+      ADDR_VAR=NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES
+      ;;
+    *)
+      echo "ERROR: NEXT_PUBLIC_CHAIN_NAME=$CHAIN is not supported (use 'mainnet' or 'sepolia')." >&2
+      exit 1
+      ;;
+  esac
+  if [ ! -f "$ADDR_FILE" ]; then
+    echo "ERROR: address file $ADDR_FILE not found. Commit the deploy script's output first." >&2
+    exit 1
+  fi
+  export "$ADDR_VAR=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('$ADDR_FILE','utf8'))))")"
+  echo "Baking $ADDR_VAR from $ADDR_FILE (chain=$CHAIN, tld=$TLD)"
+
   pnpm build
   pnpm export
 )
