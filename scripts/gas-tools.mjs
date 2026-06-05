@@ -91,21 +91,61 @@ async function promptYesNo(question) {
 
 // ---------------- hardhat fork helpers ----------------
 
-async function waitForPort(host, port, timeoutMs) {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    const open = await new Promise((resolve) => {
-      const sock = createServer().listen(port, host)
-      sock.once('error', () => resolve(true))   // EADDRINUSE → port is taken → ready
-      sock.once('listening', () => sock.close(() => resolve(false)))
+async function isPortFree(host, port) {
+  return new Promise((resolve) => {
+    const sock = createServer()
+    sock.once('error', () => resolve(false))
+    sock.once('listening', () => sock.close(() => resolve(true)))
+    sock.listen(port, host)
+  })
+}
+
+async function rpcCall(url, method, params = []) {
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(), 4000)
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method, params, id: 1 }),
+      signal: controller.signal,
     })
-    if (open) return
+    const text = await r.text()
+    if (!r.ok) return { ok: false, status: r.status, body: text.slice(0, 200) }
+    if (!text) return { ok: false, status: r.status, body: '(empty)' }
+    let parsed
+    try { parsed = JSON.parse(text) } catch { return { ok: false, body: text.slice(0, 200) } }
+    if (parsed.error) return { ok: false, error: parsed.error.message || JSON.stringify(parsed.error) }
+    return { ok: true, result: parsed.result }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+async function waitForRpc(url, timeoutMs) {
+  const start = Date.now()
+  let last
+  while (Date.now() - start < timeoutMs) {
+    const r = await rpcCall(url, 'eth_chainId')
+    if (r.ok) return BigInt(r.result)
+    last = r
     await sleep(500)
   }
-  throw new Error(`hardhat fork on ${host}:${port} did not come up within ${timeoutMs}ms`)
+  throw new Error(
+    `${url} did not respond to eth_chainId within ${timeoutMs}ms. ` +
+      `Last response: ${JSON.stringify(last)}`,
+  )
 }
 
 export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContractsDir }) {
+  if (!(await isPortFree('127.0.0.1', port))) {
+    throw new Error(
+      `Port ${port} is already in use on 127.0.0.1. Something else is bound there ` +
+        `(stale hardhat node, reverse proxy, etc.). Stop it or set FORK_PORT to a free port.`,
+    )
+  }
   console.log(`Spawning forked hardhat node at :${port} (fork of mainnet) …`)
   const proc = spawn(
     'npx',
@@ -114,18 +154,23 @@ export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContract
   )
   proc.on('error', (e) => console.error('hardhat node spawn error:', e))
   let stderr = ''
-  proc.stderr.on('data', (chunk) => { stderr += chunk.toString() })
-  await waitForPort('127.0.0.1', port, FORK_BOOT_TIMEOUT_MS).catch((e) => {
-    proc.kill()
-    throw new Error(`${e.message}\n--- hardhat stderr ---\n${stderr}`)
-  })
-  // small extra wait — port-open isn't quite "RPC-ready"
-  await sleep(2000)
-  console.log(`  fork ready at http://127.0.0.1:${port}`)
-  return {
-    url: `http://127.0.0.1:${port}`,
-    stop: () => { proc.kill('SIGTERM') },
+  let stdout = ''
+  proc.stdout.on('data', (c) => { stdout += c.toString() })
+  proc.stderr.on('data', (c) => { stderr += c.toString() })
+
+  const url = `http://127.0.0.1:${port}`
+  try {
+    const chainId = await waitForRpc(url, FORK_BOOT_TIMEOUT_MS)
+    console.log(`  fork ready at ${url} (chainId=${chainId})`)
+  } catch (e) {
+    proc.kill('SIGTERM')
+    throw new Error(
+      `${e.message}\n` +
+        `--- hardhat stdout ---\n${stdout || '(empty)'}\n` +
+        `--- hardhat stderr ---\n${stderr || '(empty)'}`,
+    )
   }
+  return { url, stop: () => { proc.kill('SIGTERM') } }
 }
 
 export async function fundOnFork({ forkUrl, address, weiHex }) {
