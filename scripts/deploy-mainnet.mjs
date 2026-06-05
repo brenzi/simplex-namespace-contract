@@ -31,7 +31,8 @@
  *   OWNER_ADDRESS      cold owner (default: simplexchat.eth)
  *   BUMP_AFTER_HOURS   stall threshold before cap bump (default: 24)
  *   BUMP_PCT           cap multiplier on stall (default: 20)
- *   FORK_PORT          local port for the dry-run fork (default: 8546)
+ *   FORK_PORT          local port for the dry-run fork (default: 18545 — picked
+ *                      to avoid Reth/Geth's stock 8545/8546 ports)
  *   CONFIRM=yes        skip the interactive confirmation prompt
  *
  * Files written next to the addresses file:
@@ -70,7 +71,10 @@ const ownerAddress = process.env.OWNER_ADDRESS || '0xDa064C4567fAD2c9Da7b6DD08b5
 
 const bumpAfterMs = (parseFloat(process.env.BUMP_AFTER_HOURS) || (DEFAULTS.BUMP_AFTER_MS / 3600000)) * 3600 * 1000
 const bumpPct = BigInt(process.env.BUMP_PCT || DEFAULTS.BUMP_PCT)
-const forkPort = parseInt(process.env.FORK_PORT || '8546', 10)
+// Default 18545 (not 8546): Reth/Geth use 8546 for the WebSocket JSON-RPC
+// and 8545 for HTTP, so a stock node setup conflicts with the standard
+// 8546 default. Pick a port that's unlikely to overlap with anything.
+const forkPort = parseInt(process.env.FORK_PORT || '18545', 10)
 
 if (!deployerKey) { console.error('ERROR: DEPLOYER_KEY env var is required.'); process.exit(1) }
 if (!rpcUrl) { console.error('ERROR: MAINNET_RPC_URL env var is required.'); process.exit(1) }
