@@ -267,7 +267,7 @@ async function main() {
       address: account.address,
       weiHex: '0x56bc75e2d63100000',  // 100 ETH
     })
-    const dry = createDryRunRunner({ forkUrl: fork.url, account })
+    const dry = createDryRunRunner({ forkUrl: fork.url, forkChainId: fork.chainId, account })
     console.log(`\n--- Dry-run on fork ---`)
     await runDeploySequence({
       deploy: dry.deploy,

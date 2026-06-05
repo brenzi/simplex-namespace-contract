@@ -159,8 +159,9 @@ export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContract
   proc.stderr.on('data', (c) => { stderr += c.toString() })
 
   const url = `http://127.0.0.1:${port}`
+  let chainId
   try {
-    const chainId = await waitForRpc(url, FORK_BOOT_TIMEOUT_MS)
+    chainId = Number(await waitForRpc(url, FORK_BOOT_TIMEOUT_MS))
     console.log(`  fork ready at ${url} (chainId=${chainId})`)
   } catch (e) {
     proc.kill('SIGTERM')
@@ -170,7 +171,7 @@ export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContract
         `--- hardhat stderr ---\n${stderr || '(empty)'}`,
     )
   }
-  return { url, stop: () => { proc.kill('SIGTERM') } }
+  return { url, chainId, stop: () => { proc.kill('SIGTERM') } }
 }
 
 export async function fundOnFork({ forkUrl, address, weiHex }) {
@@ -216,11 +217,14 @@ export async function fundOnFork({ forkUrl, address, weiHex }) {
 
 // ---------------- dry-run runner (forked node) ----------------
 
-export function createDryRunRunner({ forkUrl, account, alreadyDone = new Set() }) {
+export function createDryRunRunner({ forkUrl, forkChainId, account, alreadyDone = new Set() }) {
   const transport = http(forkUrl)
-  // Hardhat fork inherits mainnet chainId (=1) and state.
-  const publicClient = createPublicClient({ chain: mainnet, transport })
-  const walletClient = createWalletClient({ chain: mainnet, transport, account })
+  // The fork keeps mainnet *state* but uses its own chainId (Hardhat
+  // defaults to 31337 even with `--fork`). Sign with the fork's id, not
+  // mainnet's, or the node rejects every raw tx.
+  const chain = { ...mainnet, id: forkChainId }
+  const publicClient = createPublicClient({ chain, transport })
+  const walletClient = createWalletClient({ chain, transport, account })
   let stepCounter = 0
   let totalGas = 0n
   const perStep = []
