@@ -16,6 +16,42 @@
 #       mainnet RPC (e.g. Reth behind Caddy). Default uses DRPC + Tenderly.
 set -euo pipefail
 
+# ====== load committed defaults ======
+# Cloudflare's "Variables and Secrets" panel does not reliably propagate
+# into the build shell on Build System version 3 — when that path fails,
+# fall back to the values committed in `ens-app-v3/.env.production`. Next
+# auto-loads that file too, so the inlined client-side values stay in
+# sync with what the bash case statement below reads.
+ENV_FILE="ens-app-v3/.env.production"
+if [ -f "$ENV_FILE" ]; then
+  # `set -a` exports every assignment from the sourced file. Skip comments
+  # and blanks so the read is robust against the file's commentary.
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+  echo "Loaded defaults from $ENV_FILE"
+fi
+
+# ====== build-shell env probe ======
+# Print the env vars this script ACTUALLY sees. Compare against what the
+# Cloudflare dashboard claims is configured — if a variable shows here as
+# "(unset)" but appears in the dashboard, the var was set at the wrong
+# scope (Runtime instead of Build, or wrong Production/Preview filter, or
+# encrypted-only). This block is intentionally noisy so it survives any
+# Cloudflare log filtering.
+echo "===== Build-shell env probe ====="
+echo "NEXT_PUBLIC_CHAIN_NAME           = '${NEXT_PUBLIC_CHAIN_NAME:-(unset)}'"
+echo "NEXT_PUBLIC_SIMPLEX_TLD          = '${NEXT_PUBLIC_SIMPLEX_TLD:-(unset)}'"
+echo "NEXT_PUBLIC_MAINNET_RPC_URL      = '${NEXT_PUBLIC_MAINNET_RPC_URL:-(unset)}'"
+echo "NODE_VERSION                     = '${NODE_VERSION:-(unset)}'"
+echo "CF_PAGES                         = '${CF_PAGES:-(unset)}'"
+echo "CF_PAGES_BRANCH                  = '${CF_PAGES_BRANCH:-(unset)}'"
+echo "CI                               = '${CI:-(unset)}'"
+echo "All NEXT_PUBLIC_* + NODE_* in shell:"
+env | grep -E '^(NEXT_PUBLIC_|NODE_)' || echo "  (none — env vars are NOT reaching this shell)"
+echo "================================="
+
 # Belt + braces: make sure submodules are populated even if Cloudflare's
 # submodule-checkout step is disabled.
 git submodule update --init --recursive
@@ -52,6 +88,7 @@ pnpm install --frozen-lockfile
   # image; use node to minify the JSON.
   CHAIN="${NEXT_PUBLIC_CHAIN_NAME:-sepolia}"
   TLD="${NEXT_PUBLIC_SIMPLEX_TLD:-testing}"
+  echo "Cloudflare build env: NEXT_PUBLIC_CHAIN_NAME='${NEXT_PUBLIC_CHAIN_NAME:-(unset → defaulting to sepolia)}', NEXT_PUBLIC_SIMPLEX_TLD='${NEXT_PUBLIC_SIMPLEX_TLD:-(unset → defaulting to testing)}'"
   case "$CHAIN" in
     mainnet)
       ADDR_FILE="../deployments.mainnet.${TLD}.json"
