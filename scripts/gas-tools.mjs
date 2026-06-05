@@ -1,87 +1,70 @@
 /**
- * Frugal gas helpers for live-network deploys.
+ * Live-network deploy helpers — "wait for cheap base fee" strategy.
  *
  * Strategy:
- *   - Submit every tx with `maxPriorityFeePerGas = 0`.
- *   - First attempt: `maxFeePerGas = 10% × currentBaseFee` (probes for a
- *     base-fee crash).
- *   - Watch the tx for 15 min. If still pending, dropped, or otherwise
- *     unmined, bump by √2 (=14142/10000) and resubmit at the same nonce.
- *     Each attempt also re-floors to 10% of the freshly-fetched current
- *     base fee, so a rising base fee can't strand us.
- *   - Up to MAX_ATTEMPTS bumps per tx (~30 → covers ~3000× base headroom).
- *   - Total deploy spend capped by `GAS_BUDGET_ETH`; before each attempt
- *     the runner does a real `estimateGas` for the tx (once per step,
- *     cached across attempts) and refuses to submit if
- *     `gasEstimate × maxFeePerGas` would push spend past the cap. An
- *     estimateGas revert fails the step immediately rather than burning
- *     attempts on a tx that would revert on chain.
+ *   - Submit every tx with `maxPriorityFeePerGas = 0` and
+ *     `maxFeePerGas = MAX_BASE_FEE_GWEI`.
+ *   - Before each submission, poll `eth_getBlockByNumber('latest')` every
+ *     ~12s until `baseFeePerGas <= maxFeePerGas`. Then send.
+ *   - Wait for inclusion. If the tx stalls (base climbed back above cap
+ *     right after submit, mempool drop, etc.) for `BUMP_AFTER_HOURS`,
+ *     bump `maxFeePerGas` by `BUMP_PCT%` and resubmit at the same nonce.
  *
- * Resume:
- *   - Every successful tx appends a line to a JSONL journal
- *     (`deployments.${network}.${tld}.journal.jsonl`).
- *   - On startup, the runner loads the journal and skips any step whose
- *     label is already present. Step labels are monotonic (`step:001…N`),
- *     so the deploy script's operation order must be stable across runs.
- *     If you edit the script and insert/reorder steps, delete the journal
- *     and re-deploy.
+ * Total cost is bounded by `sum(gasUsed) * maxFeePerGas` (modulo any
+ * bumps), and `sum(gasUsed)` is measured upfront by a forked dry-run.
  *
- * Logging:
- *   - Every attempt (success, drop, timeout, submit-error, budget-block)
- *     gets a JSONL entry in `deployments.${network}.${tld}.attempts.log`.
- *     One-line summaries also print to stderr for live monitoring.
+ * Resume + log files: same shape as before — JSONL journal indexed by
+ * monotonic step labels, JSONL attempts log.
  *
  * Exports:
- *   analyzeAndConfirm({publicClient, account, budgetWei, journalPath, label})
- *     → prints stats + resume state, prompts Y/N (or CONFIRM=yes), returns
- *       { spent, remaining, journal }.
+ *   spawnHardhatFork({mainnetRpcUrl, port, ensContractsDir})
+ *     → { url, stop() } — spawns `npx hardhat node --fork`, waits for
+ *       the port, returns the local URL and a stop function.
  *
- *   createFrugalDeployer({publicClient, walletClient, account, budgetWei,
- *                         journalPath, attemptsLogPath})
- *     → returns { deploy(name, abi, bytecode, args), write(contract, fn, args),
- *                 spent(), completedSteps() }.
+ *   fundOnFork({forkUrl, address, weiHex})
+ *     → uses `hardhat_setBalance` so the deployer EOA can pay gas on the fork.
+ *
+ *   createDryRunRunner({forkUrl, account, journalSkip})
+ *     → returns {deploy, write, totals()} that execute against the fork
+ *       and record per-step gasUsed. The dry runner ignores the journal
+ *       (we always re-run the full sequence on the fork) but accepts a
+ *       `journalSkip` callback to no-op for steps already mined on real
+ *       chain — see `runDeploySequence` for how it's used on resume.
+ *
+ *   createWaitForBaseRunner({publicClient, walletClient, account,
+ *                            maxBaseFeeWei, bumpAfterMs, bumpPct,
+ *                            journalPath, attemptsLogPath})
+ *     → returns {deploy, write, spent(), completedSteps()} that wait for
+ *       base ≤ cap, submit, watch for inclusion, bump on long stall.
+ *
+ *   analyzeAndConfirm({publicClient, account, maxBaseFeeWei, dryRunTotals,
+ *                      journalPath, label})
+ *     → prints stats + dry-run total + resume state + projected ceiling,
+ *       prompts Y/N (or CONFIRM=yes).
  */
-import { encodeDeployData, encodeFunctionData, formatEther } from 'viem'
+import { encodeDeployData, encodeFunctionData, formatEther, formatGwei, http, createPublicClient, createWalletClient, parseGwei } from 'viem'
+import { mainnet } from 'viem/chains'
 import { appendFileSync, existsSync, readFileSync } from 'fs'
+import { spawn } from 'child_process'
+import { createServer } from 'net'
 import readline from 'readline'
 
-const PROBE_BASE_PCT = 10n            // first attempt: 10% of current baseFee
-const SQRT2_NUM = 14142n              // √2 ≈ 14142/10000 — bump factor per attempt
-const SQRT2_DEN = 10000n
-const ATTEMPT_TIMEOUT_MS = 15 * 60 * 1000
-const POLL_INTERVAL_MS = 10_000
-const POLL_GRACE_MS = 60_000          // grace before null = dropped
-const MAX_ATTEMPTS = 30               // safety stop (30 × √2 ≈ 3000× base)
-const FEE_HISTORY_BLOCKS = 50         // sample window for upfront stats
+const POLL_BASE_INTERVAL_MS = 12_000     // ~one mainnet block
+const POLL_RECEIPT_INTERVAL_MS = 10_000  // poll inclusion every 10s
+const FORK_BOOT_TIMEOUT_MS = 90_000      // hardhat node has slow first boot
+const DEFAULT_BUMP_PCT = 20n
+const DEFAULT_BUMP_AFTER_HOURS = 24
 
-const fmtGwei = (wei) => (Number(wei) / 1e9).toFixed(4)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const fmtGwei = (wei) => Number(formatGwei(wei)).toFixed(4)
 const fmtEth = (wei) => formatEther(wei)
 const nowIso = () => new Date().toISOString()
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-function bigMedian(values) {
-  const sorted = [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  return sorted[Math.floor(sorted.length / 2)]
-}
-
-async function fetchBaseStats(publicClient) {
-  const history = await publicClient.request({
-    method: 'eth_feeHistory',
-    params: [`0x${FEE_HISTORY_BLOCKS.toString(16)}`, 'latest', []],
-  })
-  const baseFees = history.baseFeePerGas.map(BigInt)
-  return {
-    current: baseFees[baseFees.length - 1],
-    median: bigMedian(baseFees),
-  }
-}
+// ---------------- journal ----------------
 
 export function loadJournal(path) {
   if (!existsSync(path)) return []
-  return readFileSync(path, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map(JSON.parse)
+  return readFileSync(path, 'utf8').split('\n').filter(Boolean).map(JSON.parse)
 }
 
 function sumSpent(journal) {
@@ -106,65 +89,128 @@ async function promptYesNo(question) {
   })
 }
 
-export async function analyzeAndConfirm({ publicClient, account, budgetWei, journalPath, label }) {
-  console.log(`\n=== Frugal deploy analysis: ${label} ===`)
-  const { current, median } = await fetchBaseStats(publicClient)
+// ---------------- hardhat fork helpers ----------------
 
-  console.log(`  Recent base fee (last ${FEE_HISTORY_BLOCKS} blocks):`)
-  console.log(`    current: ${fmtGwei(current)} gwei`)
-  console.log(`    median:  ${fmtGwei(median)} gwei`)
-
-  const journal = loadJournal(journalPath)
-  const spent = sumSpent(journal)
-  const remaining = budgetWei - spent
-  const balance = await publicClient.getBalance({ address: account.address })
-
-  console.log(`\n  Strategy:`)
-  console.log(`    priority fee:        0 throughout`)
-  console.log(`    first attempt:       10% of current base fee`)
-  console.log(`    bump factor:         ×√2 per attempt (floor = 10% of fresh base)`)
-  console.log(`    attempt timeout:     ${ATTEMPT_TIMEOUT_MS / 60000} min (poll mempool every ${POLL_INTERVAL_MS / 1000}s)`)
-  console.log(`    drop detection:      tx visible then null → bumped; never visible after ${POLL_GRACE_MS / 1000}s grace → bumped`)
-  console.log(`    safety stop:         ${MAX_ATTEMPTS} attempts/tx`)
-  console.log(`    abort if next tx would push spend past the budget cap`)
-
-  console.log(`\n  Budget:`)
-  console.log(`    cap:               ${fmtEth(budgetWei)} ETH`)
-  console.log(`    already spent:     ${fmtEth(spent)} ETH  (${journal.length} step${journal.length === 1 ? '' : 's'} in journal)`)
-  console.log(`    remaining:         ${fmtEth(remaining)} ETH`)
-
-  console.log(`\n  Deployer:`)
-  console.log(`    address:           ${account.address}`)
-  console.log(`    balance:           ${fmtEth(balance)} ETH`)
-
-  if (journal.length > 0) {
-    console.log(`\n  Resuming from journal:`)
-    const tail = journal.slice(-5)
-    for (const e of tail) {
-      const addrFrag = e.address ? `  → ${e.address}` : ''
-      console.log(`    ${e.step.padEnd(10)} ${e.txHash}${addrFrag}`)
-    }
-    if (journal.length > 5) console.log(`    ... and ${journal.length - 5} earlier step(s)`)
+async function waitForPort(host, port, timeoutMs) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const open = await new Promise((resolve) => {
+      const sock = createServer().listen(port, host)
+      sock.once('error', () => resolve(true))   // EADDRINUSE → port is taken → ready
+      sock.once('listening', () => sock.close(() => resolve(false)))
+    })
+    if (open) return
+    await sleep(500)
   }
-
-  if (balance < remaining) {
-    const shortfall = remaining - balance
-    console.log(`\n  ⚠  Balance is BELOW remaining budget by ${fmtEth(shortfall)} ETH.`)
-    console.log(`     The budget is the *cap*; the actual spend may be lower, but you`)
-    console.log(`     should fund enough to cover the worst case before proceeding.`)
-  }
-
-  const ok = await promptYesNo('\nProceed? [y/N] ')
-  if (!ok) {
-    console.log('Aborted.')
-    process.exit(1)
-  }
-  return { budgetWei, spentWei: spent, journal }
+  throw new Error(`hardhat fork on ${host}:${port} did not come up within ${timeoutMs}ms`)
 }
 
-export function createFrugalDeployer({
+export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContractsDir }) {
+  console.log(`Spawning forked hardhat node at :${port} (fork of mainnet) …`)
+  const proc = spawn(
+    'npx',
+    ['hardhat', 'node', '--fork', mainnetRpcUrl, '--port', String(port), '--hostname', '127.0.0.1'],
+    { cwd: ensContractsDir, stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  proc.on('error', (e) => console.error('hardhat node spawn error:', e))
+  let stderr = ''
+  proc.stderr.on('data', (chunk) => { stderr += chunk.toString() })
+  await waitForPort('127.0.0.1', port, FORK_BOOT_TIMEOUT_MS).catch((e) => {
+    proc.kill()
+    throw new Error(`${e.message}\n--- hardhat stderr ---\n${stderr}`)
+  })
+  // small extra wait — port-open isn't quite "RPC-ready"
+  await sleep(2000)
+  console.log(`  fork ready at http://127.0.0.1:${port}`)
+  return {
+    url: `http://127.0.0.1:${port}`,
+    stop: () => { proc.kill('SIGTERM') },
+  }
+}
+
+export async function fundOnFork({ forkUrl, address, weiHex }) {
+  const body = JSON.stringify({
+    jsonrpc: '2.0', method: 'hardhat_setBalance',
+    params: [address, weiHex], id: 1,
+  })
+  const r = await fetch(forkUrl, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+  })
+  const j = await r.json()
+  if (j.error) throw new Error(`hardhat_setBalance failed: ${JSON.stringify(j.error)}`)
+}
+
+// ---------------- dry-run runner (forked node) ----------------
+
+export function createDryRunRunner({ forkUrl, account, alreadyDone = new Set() }) {
+  const transport = http(forkUrl)
+  // Hardhat fork inherits mainnet chainId (=1) and state.
+  const publicClient = createPublicClient({ chain: mainnet, transport })
+  const walletClient = createWalletClient({ chain: mainnet, transport, account })
+  let stepCounter = 0
+  let totalGas = 0n
+  const perStep = []
+
+  async function send(label, name, { to, data, value = 0n }) {
+    if (alreadyDone.has(label)) {
+      // Already mined on real chain — the journal will tell us its
+      // gasUsed; the dry run can skip it here since we already counted
+      // it in `accountedJournalGas`.
+      perStep.push({ step: label, name, gasUsed: 0n, skipped: true })
+      return null
+    }
+    const hash = await walletClient.sendTransaction({
+      to, data, value,
+      // Generous fees — hardhat node accepts anything; we only care about gasUsed.
+      maxFeePerGas: parseGwei('100'),
+      maxPriorityFeePerGas: parseGwei('1'),
+    })
+    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+    if (receipt.status !== 'success') {
+      throw new Error(`[dry-run ${label}] tx ${hash} reverted on fork`)
+    }
+    totalGas += BigInt(receipt.gasUsed)
+    perStep.push({ step: label, name, gasUsed: BigInt(receipt.gasUsed), address: receipt.contractAddress })
+    return receipt
+  }
+
+  function nextLabel() {
+    stepCounter += 1
+    return `step:${String(stepCounter).padStart(3, '0')}`
+  }
+
+  return {
+    totals: () => ({ totalGas, perStep }),
+    deploy: async (name, abi, bytecode, args = []) => {
+      const step = nextLabel()
+      const data = encodeDeployData({ abi, bytecode, args })
+      const receipt = await send(step, name, { to: null, data })
+      // For skipped (alreadyDone) steps, the address comes from elsewhere
+      // — runDeploySequence resolves it. We just return a sentinel.
+      if (!receipt) return { address: null, abi, _skipped: true }
+      return { address: receipt.contractAddress, abi }
+    },
+    write: async (contract, fn, args) => {
+      const step = nextLabel()
+      const data = encodeFunctionData({ abi: contract.abi, functionName: fn, args })
+      if (contract.address === null) {
+        // Step is skipped on the fork because the prior deploy was skipped
+        // (already on real chain). Don't try to send writeContract against
+        // a null address.
+        perStep.push({ step, name: fn, gasUsed: 0n, skipped: true })
+        return
+      }
+      await send(step, fn, { to: contract.address, data })
+    },
+  }
+}
+
+// ---------------- real runner (wait-for-base-fee) ----------------
+
+export function createWaitForBaseRunner({
   publicClient, walletClient, account,
-  budgetWei, journalPath, attemptsLogPath,
+  maxBaseFeeWei, bumpAfterMs, bumpPct,
+  journalPath, attemptsLogPath,
 }) {
   const journal = loadJournal(journalPath)
   const completed = new Map(journal.map((e) => [e.step, e]))
@@ -180,52 +226,51 @@ export function createFrugalDeployer({
     appendFileSync(attemptsLogPath, JSON.stringify(entry) + '\n')
   }
 
-  function recordSuccess(step, attempt, receipt) {
+  function recordSuccess(step, receipt) {
     const cost = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice)
     spent += cost
     const entry = {
-      ts: nowIso(),
-      step,
+      ts: nowIso(), step,
       txHash: receipt.transactionHash,
       address: receipt.contractAddress || undefined,
       gasUsed: receipt.gasUsed.toString(),
       effectiveGasPrice: receipt.effectiveGasPrice.toString(),
       costWei: cost.toString(),
-      attempts: attempt,
     }
     appendFileSync(journalPath, JSON.stringify(entry) + '\n')
     completed.set(step, entry)
-    logAttempt({
-      ts: nowIso(), step, attempt, txHash: receipt.transactionHash,
-      outcome: 'mined',
-      effectiveGasPrice: receipt.effectiveGasPrice.toString(),
-      gasUsed: receipt.gasUsed.toString(),
-      costWei: cost.toString(),
-    })
+    logAttempt({ ts: nowIso(), step, txHash: receipt.transactionHash,
+      outcome: 'mined', gasUsed: receipt.gasUsed.toString(),
+      effectiveGasPrice: receipt.effectiveGasPrice.toString(), costWei: cost.toString() })
     const what = receipt.contractAddress || receipt.transactionHash.slice(0, 10) + '…'
-    console.log(`  ✓ ${step}: ${what}  (${attempt} attempt${attempt === 1 ? '' : 's'}, ${fmtEth(cost)} ETH, spent total ${fmtEth(spent)} ETH)`)
+    console.log(`  ✓ ${step}: ${what}  (${fmtEth(cost)} ETH @ ${fmtGwei(BigInt(receipt.effectiveGasPrice))} gwei, total ${fmtEth(spent)} ETH)`)
     return entry
   }
 
-  async function watchTx(hash) {
-    const start = Date.now()
-    let seenInMempool = false
-    while (Date.now() - start < ATTEMPT_TIMEOUT_MS) {
-      await sleep(POLL_INTERVAL_MS)
-      const tx = await publicClient.getTransaction({ hash }).catch(() => null)
-      if (tx) {
-        seenInMempool = true
-        if (tx.blockNumber !== null && tx.blockNumber !== undefined) {
-          const receipt = await publicClient.getTransactionReceipt({ hash })
-          return { status: 'mined', receipt }
-        }
-      } else if (seenInMempool) {
-        return { status: 'dropped', reason: 'tx no longer in mempool (evicted or replaced)' }
-      } else if (Date.now() - start > POLL_GRACE_MS) {
-        return { status: 'dropped', reason: `tx never visible after ${POLL_GRACE_MS / 1000}s grace` }
+  async function waitForCheapBase(step, currentCap) {
+    let waited = 0
+    while (true) {
+      const block = await publicClient.getBlock({ blockTag: 'latest' })
+      const base = block.baseFeePerGas
+      if (base <= currentCap) return base
+      if (waited % (60_000 / POLL_BASE_INTERVAL_MS) === 0) {
+        // log roughly every minute
+        console.log(`  [${step}] base ${fmtGwei(base)} gwei > cap ${fmtGwei(currentCap)} gwei — waiting…`)
+        logAttempt({ ts: nowIso(), step, outcome: 'waiting-for-base',
+          baseFee: base.toString(), cap: currentCap.toString() })
       }
+      await sleep(POLL_BASE_INTERVAL_MS)
+      waited += 1
     }
-    return { status: 'timeout', reason: `${ATTEMPT_TIMEOUT_MS / 60000}min watch elapsed` }
+  }
+
+  async function waitForInclusion(step, hash, deadline) {
+    while (Date.now() < deadline) {
+      await sleep(POLL_RECEIPT_INTERVAL_MS)
+      const receipt = await publicClient.getTransactionReceipt({ hash }).catch(() => null)
+      if (receipt) return { status: 'mined', receipt }
+    }
+    return { status: 'stall', reason: `tx ${hash} not included within ${bumpAfterMs / 3600000}h` }
   }
 
   async function runStep(step, { to, data, value = 0n }) {
@@ -235,127 +280,84 @@ export function createFrugalDeployer({
       return e
     }
 
-    // Real gas estimate for this exact tx. A revert here means the tx
-    // would fail on submission — fail fast instead of burning attempts.
-    // Cached for the whole step's attempt loop (gas use is independent
-    // of maxFee, only the price varies).
+    // Real estimateGas once per step. A revert here = the tx would fail.
     let gasEstimate
     try {
       const raw = await publicClient.estimateGas({
         account: account.address, to, data, value,
       })
-      // 10% safety margin: block state shifts can move actual usage
-      // slightly. Cost is paid at effectiveGasPrice × actualGasUsed,
-      // so the margin only widens the budget guard, not the bill.
       gasEstimate = (raw * 110n) / 100n
-      logAttempt({
-        ts: nowIso(), step, attempt: 0,
-        outcome: 'estimated', gasEstimate: gasEstimate.toString(),
-        gasEstimateRaw: raw.toString(),
-      })
+      logAttempt({ ts: nowIso(), step, outcome: 'estimated',
+        gasEstimate: gasEstimate.toString(), gasEstimateRaw: raw.toString() })
       console.log(`  [${step}] estimated gas: ${gasEstimate.toLocaleString()} (raw ${raw.toLocaleString()} + 10%)`)
     } catch (e) {
       const msg = e.shortMessage || e.message || String(e)
-      logAttempt({
-        ts: nowIso(), step, attempt: 0,
-        outcome: 'estimate-error', reason: msg,
-      })
+      logAttempt({ ts: nowIso(), step, outcome: 'estimate-error', reason: msg })
       throw new Error(`[${step}] estimateGas reverted — would fail on chain: ${msg}`)
     }
 
+    let cap = maxBaseFeeWei
+    let nonce = await publicClient.getTransactionCount({
+      address: account.address, blockTag: 'pending',
+    })
     const hashes = []
-    let maxFee = 0n
+    let bumps = 0
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const block = await publicClient.getBlock({ blockTag: 'latest' })
-      const base = block.baseFeePerGas
-      const probeFloor = (base * PROBE_BASE_PCT) / 100n
-
-      if (attempt === 1) {
-        maxFee = probeFloor
-      } else {
-        const bumped = (maxFee * SQRT2_NUM) / SQRT2_DEN
-        maxFee = bumped > probeFloor ? bumped : probeFloor
-      }
-
-      // Budget guard using the step's real gas estimate.
-      const projected = maxFee * gasEstimate
-      if (spent + projected > budgetWei) {
-        logAttempt({
-          ts: nowIso(), step, attempt,
-          maxFee: maxFee.toString(), baseFeeAtSubmit: base.toString(),
-          gasEstimate: gasEstimate.toString(),
-          outcome: 'budget-block',
-          reason: `projected ${fmtEth(projected)} ETH (${gasEstimate.toLocaleString()} gas × ${fmtGwei(maxFee)} gwei) would push spend past the ${fmtEth(budgetWei)} ETH cap`,
-        })
-        throw new Error(
-          `[${step}] would exceed budget cap (${fmtEth(spent)} spent, ` +
-            `${fmtEth(projected)} projected for next attempt, ${fmtEth(budgetWei)} cap)`,
-        )
-      }
-
-      const nonce = await publicClient.getTransactionCount({
-        address: account.address, blockTag: 'pending',
-      })
-
+    while (true) {
+      await waitForCheapBase(step, cap)
       let hash
       try {
         hash = await walletClient.sendTransaction({
           to, data, value, nonce,
-          maxFeePerGas: maxFee, maxPriorityFeePerGas: 0n,
+          maxFeePerGas: cap, maxPriorityFeePerGas: 0n,
         })
       } catch (e) {
         const msg = e.shortMessage || e.message || String(e)
-        logAttempt({
-          ts: nowIso(), step, attempt,
-          maxFee: maxFee.toString(), baseFeeAtSubmit: base.toString(),
-          outcome: 'submit-error', reason: msg,
-        })
-        console.warn(`  [${step}] attempt ${attempt}: submit failed — ${msg}`)
-        // A previous-attempt hash might have mined while we were stalled.
+        // If the tx was already mined under an earlier hash, collect it.
         for (const h of hashes) {
           const r = await publicClient.getTransactionReceipt({ hash: h }).catch(() => null)
-          if (r) return recordSuccess(step, attempt, r)
+          if (r) return recordSuccess(step, r)
         }
-        // Persistent errors should not retry forever.
-        if (/insufficient funds|nonce too low/i.test(msg)) throw e
-        // Bumpable errors (e.g. "tx underpriced", "fee too low"): continue.
-        continue
+        // "Nonce too low" means a prior tx (probably from a prior partial
+        // run) already used this nonce — refresh and retry the same step.
+        if (/nonce too low/i.test(msg)) {
+          nonce = await publicClient.getTransactionCount({
+            address: account.address, blockTag: 'pending',
+          })
+          logAttempt({ ts: nowIso(), step, outcome: 'nonce-refresh', reason: msg })
+          continue
+        }
+        if (/insufficient funds/i.test(msg)) throw e
+        logAttempt({ ts: nowIso(), step, outcome: 'submit-error', reason: msg })
+        throw e
       }
       hashes.push(hash)
-      logAttempt({
-        ts: nowIso(), step, attempt, txHash: hash,
-        maxFee: maxFee.toString(), baseFeeAtSubmit: base.toString(),
-        outcome: 'submitted',
-      })
-      console.log(
-        `  [${step}] attempt ${attempt}/${MAX_ATTEMPTS}: ${hash}` +
-          `  (maxFee=${fmtGwei(maxFee)} gwei, base=${fmtGwei(base)} gwei = ${fmtGwei(maxFee * 100n / base)}%)`,
-      )
+      logAttempt({ ts: nowIso(), step, txHash: hash,
+        maxFeePerGas: cap.toString(), bumps,
+        outcome: 'submitted' })
+      console.log(`  [${step}] submitted ${hash}  (cap=${fmtGwei(cap)} gwei, bumps=${bumps})`)
 
-      const outcome = await watchTx(hash)
-      if (outcome.status === 'mined') {
-        return recordSuccess(step, attempt, outcome.receipt)
-      }
-      // Check whether an earlier replaced hash actually mined while we were watching.
+      const deadline = Date.now() + bumpAfterMs
+      const result = await waitForInclusion(step, hash, deadline)
+      if (result.status === 'mined') return recordSuccess(step, result.receipt)
+
+      // Stall handling — bump cap and resubmit at the same nonce.
+      // First check whether a prior hash mined while we were waiting.
       for (const h of hashes) {
         const r = await publicClient.getTransactionReceipt({ hash: h }).catch(() => null)
-        if (r) return recordSuccess(step, attempt, r)
+        if (r) return recordSuccess(step, r)
       }
-      logAttempt({
-        ts: nowIso(), step, attempt, txHash: hash,
-        maxFee: maxFee.toString(), baseFeeAtSubmit: base.toString(),
-        outcome: outcome.status, reason: outcome.reason,
-      })
-      console.log(`  [${step}] ${outcome.status} — ${outcome.reason}`)
+      bumps += 1
+      cap = (cap * (100n + bumpPct)) / 100n
+      logAttempt({ ts: nowIso(), step, txHash: hash, outcome: 'stalled',
+        reason: result.reason, bumps, newCap: cap.toString() })
+      console.warn(`  [${step}] stalled — bumping cap to ${fmtGwei(cap)} gwei (bump ${bumps})`)
     }
-    throw new Error(`[${step}] exhausted ${MAX_ATTEMPTS} attempts`)
   }
 
   return {
     completedSteps: () => completed,
     spent: () => spent,
-
     deploy: async (name, abi, bytecode, args = []) => {
       const step = nextLabel()
       if (completed.has(step)) {
@@ -367,7 +369,6 @@ export function createFrugalDeployer({
       const e = await runStep(step, { to: null, data })
       return { address: e.address, abi }
     },
-
     write: async (contract, fn, args) => {
       const step = nextLabel()
       if (completed.has(step)) {
@@ -379,4 +380,75 @@ export function createFrugalDeployer({
       await runStep(step, { to: contract.address, data })
     },
   }
+}
+
+// ---------------- preflight summary + confirm ----------------
+
+export async function analyzeAndConfirm({
+  publicClient, account,
+  maxBaseFeeWei, dryRunTotals,
+  journalPath, label,
+  bumpAfterMs, bumpPct,
+}) {
+  console.log(`\n=== ${label} ===`)
+  const block = await publicClient.getBlock({ blockTag: 'latest' })
+  const baseNow = block.baseFeePerGas
+
+  console.log(`  Strategy:`)
+  console.log(`    priority fee:         0 always`)
+  console.log(`    maxFeePerGas:         ${fmtGwei(maxBaseFeeWei)} gwei  (your MAX_BASE_FEE_GWEI)`)
+  console.log(`    submit policy:        wait for baseFee ≤ cap, then send (no escalation by default)`)
+  console.log(`    bump rule:            after ${bumpAfterMs / 3600000}h of stall, cap × ${Number(100n + bumpPct) / 100} and resubmit at same nonce`)
+  console.log(`\n  Current chain:`)
+  console.log(`    base fee:             ${fmtGwei(baseNow)} gwei  (${baseNow <= maxBaseFeeWei ? 'BELOW' : 'ABOVE'} cap)`)
+
+  const { totalGas, perStep } = dryRunTotals
+  const ceilingCost = totalGas * maxBaseFeeWei
+  console.log(`\n  Forked dry-run captured ${perStep.length} step${perStep.length === 1 ? '' : 's'}:`)
+  console.log(`    total gas used:       ${totalGas.toLocaleString()} units`)
+  console.log(`    ceiling cost @ cap:   ${fmtEth(ceilingCost)} ETH  (= total gas × ${fmtGwei(maxBaseFeeWei)} gwei)`)
+  console.log(`    actual cost may be lower (paid at the chain's baseFee at inclusion, ≤ cap)`)
+
+  const journal = loadJournal(journalPath)
+  const spent = sumSpent(journal)
+  console.log(`\n  Journal state:`)
+  if (journal.length === 0) {
+    console.log(`    fresh deploy (no prior steps recorded)`)
+  } else {
+    console.log(`    ${journal.length} prior step${journal.length === 1 ? '' : 's'} already mined`)
+    console.log(`    spent so far:         ${fmtEth(spent)} ETH`)
+    const tail = journal.slice(-3)
+    for (const e of tail) {
+      const addrFrag = e.address ? `  → ${e.address}` : ''
+      console.log(`      ${e.step.padEnd(10)} ${e.txHash.slice(0, 14)}…${addrFrag}`)
+    }
+    if (journal.length > 3) console.log(`      ... and ${journal.length - 3} earlier`)
+  }
+
+  const balance = await publicClient.getBalance({ address: account.address })
+  console.log(`\n  Deployer:`)
+  console.log(`    address:              ${account.address}`)
+  console.log(`    balance:              ${fmtEth(balance)} ETH`)
+  // Required = ceiling cost across REMAINING steps (sum of dry steps not in journal).
+  const remainingGas = perStep
+    .filter((s) => !journal.find((j) => j.step === s.step))
+    .reduce((acc, s) => acc + (s.gasUsed || 0n), 0n)
+  const remainingCeiling = remainingGas * maxBaseFeeWei
+  console.log(`    remaining ceiling:    ${fmtEth(remainingCeiling)} ETH  (${remainingGas.toLocaleString()} gas left × cap)`)
+  if (balance < remainingCeiling) {
+    console.log(`\n  ⚠  Balance is below the remaining ceiling. Top up at least`)
+    console.log(`     ${fmtEth(remainingCeiling - balance)} ETH before proceeding.`)
+  }
+
+  const ok = await promptYesNo('\nProceed? [y/N] ')
+  if (!ok) { console.log('Aborted.'); process.exit(1) }
+}
+
+// ---------------- shared default knobs ----------------
+
+export const DEFAULTS = {
+  BUMP_AFTER_MS: DEFAULT_BUMP_AFTER_HOURS * 60 * 60 * 1000,
+  BUMP_PCT: DEFAULT_BUMP_PCT,
+  POLL_BASE_INTERVAL_MS,
+  POLL_RECEIPT_INTERVAL_MS,
 }

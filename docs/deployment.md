@@ -24,7 +24,7 @@ the playbook once per TLD per network.
 | Local one-shot                | `./scripts/run-local.sh`                             |
 | Local for `.simplex`          | `SIMPLEX_TLD=simplex ./scripts/run-local.sh`         |
 | Deploy to Sepolia             | `DEPLOYER_KEY=… SEPOLIA_RPC_URL=… node scripts/deploy-testnet.mjs` |
-| Deploy to mainnet             | `DEPLOYER_KEY=… MAINNET_RPC_URL=… GAS_BUDGET_ETH=… SIMPLEX_TLD=… node scripts/deploy-mainnet.mjs` |
+| Deploy to mainnet             | `DEPLOYER_KEY=… MAINNET_RPC_URL=… MAX_BASE_FEE_GWEI=… SIMPLEX_TLD=… node scripts/deploy-mainnet.mjs` |
 | Sepolia / mainnet cold owner  | `OWNER_ADDRESS` env (defaults to the simplexchat.eth cold key) |
 | Verify on Etherscan           | `ETHERSCAN_API_KEY=… node scripts/verify-sepolia.mjs`     |
 | Addresses output (local)      | stdout + `deployments.local.json`                    |
@@ -316,74 +316,83 @@ resume mechanism for partial failures.
 
 ### Gas strategy at a glance
 
-The script optimises for cost, not speed — it will happily take several
-days to finish if mainnet stays expensive. For each tx:
+The script optimises for cost, not speed — it will happily take days
+when mainnet stays expensive. For each tx:
 
 1. **Priority fee is always 0.** The deployer never pays validators a tip.
-2. **First attempt** submits at `maxFeePerGas = 10% × current base fee`.
-   The tx is invalid until base falls to that level — a bet that demand
-   eases.
-3. **Watch** the mempool for 15 min, polling every 10 s:
-   - mined → success, record in journal, move on
-   - `getTransactionByHash` returns null after a ≥60 s grace → treat as
-     dropped, bump
-   - 15 min elapses → bump
-4. **Bump**: multiply the previous `maxFeePerGas` by √2 (≈ 1.414) and
-   re-floor to 10 % of the *fresh* current base. Same nonce, same data,
-   resubmit. Up to 30 attempts per tx.
-5. **Budget cap**: `GAS_BUDGET_ETH` is hard. Once per step the runner
-   does a real `estimateGas` for the actual tx (cached across all
-   acceleration attempts since gas use is independent of price), adds
-   a 10 % margin, and projects `maxFee × estimate` before each
-   submission. If projected spend + spent-so-far > cap, it aborts
-   cleanly so you can resume from the journal once you raise the cap
-   (or the chain calms down). An `estimateGas` revert fails the step
-   immediately rather than burning attempts on a tx that would revert
-   on chain — the failure shows up in the attempts log as
-   `outcome: "estimate-error"` with the revert reason.
+2. **Cap**: `maxFeePerGas = MAX_BASE_FEE_GWEI` (e.g. `0.078`, picked from
+   Dune as a low percentile of recent base fees).
+3. **Submit policy**: before each tx, poll `latest.baseFeePerGas` every
+   ~12 s. When `base ≤ cap`, submit. Don't try to push txs through
+   above the cap.
+4. **Inclusion**: once submitted, the tx is valid for any block where
+   `baseFee ≤ maxFee`. Normally it mines within a block or two.
+5. **Stall handling**: if the tx hasn't mined within `BUMP_AFTER_HOURS`
+   (default 24h, configurable), the cap multiplies by `BUMP_PCT%`
+   (default +20%) and the tx is resubmitted at the same nonce. Repeats
+   indefinitely; every bump goes to the attempts log so you can see
+   exactly how the cap drifted.
+6. **Upfront cost ceiling**: at startup the script spawns
+   `npx hardhat node --fork $MAINNET_RPC_URL` in the background and
+   runs the full deploy sequence against the fork as a dry run. Total
+   gas captured this way, times the cap, gives the worst-case spend.
+   Real cost is usually lower (you pay the actual base fee at
+   inclusion, not the cap).
 
-### Step 0 — set the budget and run
+### Step 0 — pick a cap and run
+
+Choose `MAX_BASE_FEE_GWEI` from a Dune (or equivalent) base-fee
+distribution — the 5th percentile of recent blocks is a reasonable
+starting point. Then:
 
 ```sh
-DEPLOYER_KEY=0x…              # fresh ephemeral EOA
-MAINNET_RPC_URL=https://…     # your RPC
-GAS_BUDGET_ETH=0.3            # hard cap for the WHOLE deploy
-SIMPLEX_TLD=testing           # or 'simplex' for the second TLD
-OWNER_ADDRESS=0x…             # SNCC mainnet SAFE (optional override)
+DEPLOYER_KEY=0x…                    # fresh ephemeral EOA
+MAINNET_RPC_URL=https://…           # your RPC (used for fork + real)
+MAX_BASE_FEE_GWEI=0.078              # the cap; tx will only land when base ≤ this
+SIMPLEX_TLD=testing                  # or 'simplex' for the second TLD
+OWNER_ADDRESS=0x…                    # SNCC mainnet SAFE (optional override)
+BUMP_AFTER_HOURS=24                  # stall threshold, optional (default 24)
+BUMP_PCT=20                          # bump on stall, optional (default 20)
 node scripts/deploy-mainnet.mjs
 ```
 
-Before sending any tx the script prints a summary and waits for Y/N:
+The script first spawns a Hardhat fork of mainnet and runs the full
+deploy sequence against it to gather per-step gas usage (~30–60s). It
+then prints a preflight summary and waits for Y/N:
 
 ```
-=== Frugal deploy analysis: .testing mainnet deploy ===
-  Recent base fee (last 50 blocks):
-    current: 0.4376 gwei
-    median:  0.5096 gwei
-
+=== .testing mainnet deploy preflight ===
   Strategy:
-    priority fee:        0 throughout
-    first attempt:       10% of current base fee
-    bump factor:         ×√2 per attempt (floor = 10% of fresh base)
-    attempt timeout:     15 min (poll mempool every 10s)
-    drop detection:      tx visible then null → bumped; never visible after 60s grace → bumped
-    safety stop:         30 attempts/tx
-    abort if next tx would push spend past the budget cap
+    priority fee:         0 always
+    maxFeePerGas:         0.0780 gwei  (your MAX_BASE_FEE_GWEI)
+    submit policy:        wait for baseFee ≤ cap, then send (no escalation by default)
+    bump rule:            after 24h of stall, cap × 1.2 and resubmit at same nonce
 
-  Budget:
-    cap:               0.3 ETH
-    already spent:     0 ETH  (0 steps in journal)
-    remaining:         0.3 ETH
+  Current chain:
+    base fee:             0.4376 gwei  (ABOVE cap)
+
+  Forked dry-run captured 25 steps:
+    total gas used:       112,000,000 units
+    ceiling cost @ cap:   0.008736 ETH  (= total gas × 0.0780 gwei)
+    actual cost may be lower (paid at the chain's baseFee at inclusion, ≤ cap)
+
+  Journal state:
+    fresh deploy (no prior steps recorded)
 
   Deployer:
-    address:           0x…
-    balance:           0 ETH
+    address:              0x…
+    balance:              0 ETH
+    remaining ceiling:    0.008736 ETH  (112,000,000 gas left × cap)
+
+  ⚠  Balance is below the remaining ceiling. Top up at least
+     0.008736 ETH before proceeding.
 
 Proceed? [y/N]
 ```
 
-Pass `CONFIRM=yes` to skip the prompt in CI / scripted runs. The
-analysis itself is read-only — safe to re-invoke at any time.
+Pass `CONFIRM=yes` to skip the prompt in scripted runs. The dry run is
+read-only against mainnet — it executes on a local fork and is torn
+down before the prompt fires.
 
 ### Step 1 — what the deploy does
 
@@ -403,12 +412,21 @@ Per-tx output looks like:
 
 ```
   [step:001] estimated gas: 2,025,000 (raw 1,840,909 + 10%)
-  [step:001] attempt 1/30: 0xabc…  (maxFee=0.0438 gwei, base=0.4376 gwei = 10%)
-  [step:001] timeout — 15min watch elapsed
-  [step:001] attempt 2/30: 0xdef…  (maxFee=0.0619 gwei, base=0.4112 gwei = 15%)
-  [step:001] dropped — tx no longer in mempool (evicted or replaced)
-  [step:001] attempt 3/30: 0x123…  (maxFee=0.0875 gwei, base=0.4098 gwei = 21%)
-  ✓ step:001: 0xENSREGISTRY…  (3 attempts, 0.001245 ETH, spent total 0.001245 ETH)
+  [step:001] base 0.4376 gwei > cap 0.0780 gwei — waiting…
+  [step:001] base 0.5012 gwei > cap 0.0780 gwei — waiting…
+  …
+  [step:001] submitted 0xabc…  (cap=0.0780 gwei, bumps=0)
+  ✓ step:001: 0xENSREGISTRY…  (0.000147 ETH @ 0.0726 gwei, total 0.000147 ETH)
+```
+
+Each step prints the actual effective price it paid at inclusion (the
+chain's base fee at that block; the cap was the ceiling). If the chain
+sat above the cap for 24h after a submission, you'd see:
+
+```
+  [step:001] stalled — tx 0xabc… not included within 24h
+  [step:001] stalled — bumping cap to 0.0936 gwei (bump 1)
+  [step:001] submitted 0xdef…  (cap=0.0936 gwei, bumps=1)
 ```
 
 ### Step 2 — resume on interruption
