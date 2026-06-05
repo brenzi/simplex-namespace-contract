@@ -53,6 +53,7 @@ import {
   analyzeAndConfirm, createDryRunRunner, createWaitForBaseRunner,
   fundOnFork, loadJournal, spawnHardhatFork, DEFAULTS,
 } from './gas-tools.mjs'
+import { assembleVerification } from './build-verification.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(__dirname, '..')
@@ -224,7 +225,14 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
     NameWrapper: nameWrapper.address,
     PublicResolver: publicResolver.address,
     ETHRegistrarController: controller.address,
+    // Implementation address for the SimplexController behind the
+    // ETHRegistrarController proxy. Surfaced so Etherscan source
+    // verification can target both impl + proxy.
+    SimplexControllerImpl: controllerImpl.address,
     ExponentialPremiumPriceOracle: priceOracle.address,
+    // 3rd constructor arg of UniversalResolver — kept so verification
+    // can reconstruct that contract's calldata.
+    DummyGatewayProvider: dummyGateway.address,
     DummyOracle: chainlinkEthUsd,
     SMPXNFT: smpxNftAddr,
     NameWrapperPublicResolver: publicResolver.address,
@@ -322,7 +330,18 @@ async function main() {
 
   writeFileSync(addressesPath, JSON.stringify(addresses, null, 2))
   console.log(`Wrote ${addressesPath}`)
-  console.log(`\nCommit ${addressesPath} AND ${journalPath} to the repo.`)
+
+  // Emit verification metadata so `verify-etherscan.mjs` (with NETWORK=mainnet)
+  // can pick this deploy up without a separate reconstruction pass.
+  const verificationPath = join(REPO_ROOT, `verification.mainnet.${tld}.json`)
+  const verificationMeta = assembleVerification({
+    network: 'mainnet', tld, addresses,
+    deployer: account.address, chainlinkEthUsd, smpxNftAddr,
+  })
+  writeFileSync(verificationPath, JSON.stringify(verificationMeta, null, 2))
+  console.log(`Wrote ${verificationPath}`)
+
+  console.log(`\nCommit ${addressesPath} AND ${journalPath} AND ${verificationPath} to the repo.`)
   console.log(`See docs/deployment.md → Mainnet → Step 3.`)
 }
 

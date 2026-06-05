@@ -116,7 +116,7 @@ async function main() {
   console.log(`\nTo activate, the cold owner submits:`)
   console.log(`  SimplexController.setPriceOracle(${oracleAddress})`)
   console.log(`\nTo verify on Etherscan, copy these constructor args into`)
-  console.log(`verification.sepolia.json and re-run scripts/verify-sepolia.mjs:`)
+  console.log(`verification.sepolia.json and re-run scripts/verify-etherscan.mjs:`)
   console.log(JSON.stringify({
     PriceOracle: oracleAddress,
     priceOracleConstructorArgs: {

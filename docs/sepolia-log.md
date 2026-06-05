@@ -1,3 +1,7 @@
+<!-- Historical transcript of the Sepolia deploy sessions. The commands
+below reference `scripts/verify-sepolia.mjs` — that script was later
+renamed to `scripts/verify-etherscan.mjs` as it gained mainnet support.
+The behavior is unchanged for Sepolia. -->
 
 `node scripts/deploy-testnet.mjs`
 

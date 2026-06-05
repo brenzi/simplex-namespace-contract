@@ -291,7 +291,7 @@ async function main() {
   console.log(`\n=== DEPLOYMENT ADDRESSES (saved to ${outPath}) ===`)
   console.log(JSON.stringify(addresses, null, 2))
 
-  // Verification metadata — consumed by scripts/verify-sepolia.mjs.
+  // Verification metadata — consumed by scripts/verify-etherscan.mjs.
   // The proxy needs (impl, initData) to verify constructor args; the impl
   // takes no args. Kept in a sibling file so deployments.sepolia.json
   // stays clean for the frontend.
@@ -314,7 +314,7 @@ async function main() {
     },
   }, null, 2))
   console.log(`Verification metadata saved to ${verificationPath}`)
-  console.log(`Run: ETHERSCAN_API_KEY=... node scripts/verify-sepolia.mjs`)
+  console.log(`Run: ETHERSCAN_API_KEY=... node scripts/verify-etherscan.mjs`)
   console.log(`\nNEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES=${JSON.stringify(addresses)}`)
 }
 

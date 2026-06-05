@@ -101,7 +101,7 @@ async function main() {
   console.log(`at the proxy ${proxy}.`)
   console.log(`\nAfter the tx lands, update verification.sepolia.json's`)
   console.log(`SimplexControllerImpl field to the new impl address and re-run`)
-  console.log(`scripts/verify-sepolia.mjs to get the new bytecode verified.`)
+  console.log(`scripts/verify-etherscan.mjs to get the new bytecode verified.`)
 }
 
 main().catch((err) => { console.error(err); process.exit(1) })

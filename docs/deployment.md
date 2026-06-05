@@ -26,7 +26,7 @@ the playbook once per TLD per network.
 | Deploy to Sepolia             | `DEPLOYER_KEY=… SEPOLIA_RPC_URL=… node scripts/deploy-testnet.mjs` |
 | Deploy to mainnet             | `DEPLOYER_KEY=… MAINNET_RPC_URL=… MAX_BASE_FEE_GWEI=… SIMPLEX_TLD=… node scripts/deploy-mainnet.mjs` |
 | Sepolia / mainnet cold owner  | `OWNER_ADDRESS` env (defaults to the simplexchat.eth cold key) |
-| Verify on Etherscan           | `ETHERSCAN_API_KEY=… node scripts/verify-sepolia.mjs`     |
+| Verify on Etherscan           | `ETHERSCAN_API_KEY=… node scripts/verify-etherscan.mjs`     |
 | Addresses output (local)      | stdout + `deployments.local.json`                    |
 | Addresses output (Sepolia)    | stdout + `deployments.sepolia.json` + `verification.sepolia.json` |
 | Addresses output (mainnet)    | stdout + `deployments.mainnet.${tld}.json` + `.journal.jsonl` + `.attempts.log` (**deployer must commit JSON + journal**) |
@@ -192,15 +192,31 @@ companion script:
 
 ```bash
 export ETHERSCAN_API_KEY=…   # v2 multi-chain key
-node scripts/verify-sepolia.mjs
+node scripts/verify-etherscan.mjs                   # Sepolia (default)
+NETWORK=mainnet SIMPLEX_TLD=testing \
+  node scripts/verify-etherscan.mjs                 # mainnet .testing
 ```
 
-The script reads `verification.sepolia.json`, finds the matching
-Hardhat build-info JSON (standard-json solc input), and submits both
-contracts to Etherscan, plus the `ExponentialPremiumPriceOracle` if its
-metadata is recorded. Polls verification status for up to 2 minutes per
-contract. To verify additional contracts (the verbatim ENS ones), add
-entries to the `TARGETS` array in `scripts/verify-sepolia.mjs`.
+The script reads the matching `verification.${network}.${tld}.json` (or
+the legacy flat `verification.sepolia.json` on Sepolia), finds the
+matching Hardhat build-info JSON (standard-json solc input), and
+submits each contract to Etherscan via the v2 multichain endpoint
+(`ETHERSCAN_CHAIN_ID` is derived from `NETWORK` automatically). Polls
+verification status for up to 2 minutes per contract.
+
+On mainnet the verification metadata is **written automatically** by
+`deploy-mainnet.mjs` at the end of every fresh deploy, so no extra
+build step is needed. For a deploy that pre-dates the auto-write, run
+`scripts/build-verification.mjs` once to reconstruct the file:
+
+```bash
+NETWORK=mainnet SIMPLEX_TLD=testing DEPLOYER=0x… \
+  node scripts/build-verification.mjs
+```
+
+To verify additional verbatim ENS contracts, extend
+`assembleVerification()` in `scripts/build-verification.mjs` and
+re-emit the file.
 
 ### Changing prices post-deploy
 
@@ -226,7 +242,7 @@ SimplexController.setPriceOracle(<new oracle address>)
 
 The change takes effect immediately. To verify the new oracle on
 Etherscan, copy the printed `priceOracleConstructorArgs` block into
-`verification.sepolia.json` and rerun `scripts/verify-sepolia.mjs`.
+`verification.sepolia.json` and rerun `scripts/verify-etherscan.mjs`.
 
 When you're ready to lock pricing forever, the cold owner submits:
 
@@ -481,10 +497,15 @@ replaced rather than appended.
    multisig to complete the SimplexController handover.
 2. Add the mainnet addresses + RPC to the dApp's env (Cloudflare Pages
    build env vars) and trigger a rebuild.
-3. Source-verify the contracts on Etherscan. The current
-   `scripts/verify-sepolia.mjs` is Sepolia-shaped; either parameterise
-   it for mainnet (separate change) or verify each contract by hand
-   with the same constructor-arg JSON the script emits.
+3. Source-verify the contracts on Etherscan:
+   ```sh
+   ETHERSCAN_API_KEY=… NETWORK=mainnet SIMPLEX_TLD=testing \
+     node scripts/verify-etherscan.mjs
+   ```
+   `verification.mainnet.${tld}.json` is already on disk (written by
+   `deploy-mainnet.mjs` at the end of the deploy). If you deployed
+   before that auto-write existed, run `scripts/build-verification.mjs`
+   first to reconstruct it.
 4. Run the read-only Playwright suite against the mainnet build (or a
    mainnet-aware variant of `test/e2e/sepolia-readonly.spec.ts`) to
    confirm the dApp resolves a known mainnet name.
