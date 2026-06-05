@@ -1,40 +1,50 @@
 #!/usr/bin/env node
 /**
- * Deploy SNRC contracts to Ethereum mainnet.
+ * Deploy SNRC contracts to Ethereum mainnet — frugal, resumable.
  *
  * Each TLD (.testing, .simplex) is an independent deployment — run this
  * script once per TLD. Same shape as scripts/deploy-testnet.mjs but:
  *   - chain = mainnet
  *   - uses the real SMPXNFT contract (no MockSMPXNFT)
  *   - uses the mainnet Chainlink ETH/USD feed
- *   - starts with a gas-price analysis + interactive cost confirmation
- *   - every tx is sent through an accelerating wrapper that bumps gas if
- *     the tx hasn't mined within 5 min
+ *   - gas strategy: zero priority + probe at 10% of base + ×√2 bump every
+ *     15 min (see scripts/gas-tools.mjs for the full state machine)
+ *   - total spend capped by GAS_BUDGET_ETH; aborts cleanly if the next
+ *     attempt would push past it
+ *   - every successful tx appended to a JSONL journal; re-running the
+ *     script after a partial failure picks up exactly where it left off
  *
  * Required env vars:
  *   DEPLOYER_KEY     hex private key (0x...) of the ephemeral deployer EOA
  *   MAINNET_RPC_URL  JSON-RPC URL for Ethereum mainnet
+ *   GAS_BUDGET_ETH   total spend cap for the whole deploy (e.g. "0.3")
  *
  * Optional env vars:
  *   SIMPLEX_TLD      'testing' (default) | 'simplex'
  *   ETHUSD_FEED      Chainlink AggregatorV3 (default: mainnet feed)
  *   SMPXNFT_ADDR     SMPXNFT contract  (default: mainnet 0x3AF6D9Ee…7291)
  *   OWNER_ADDRESS    cold owner to hand off to (default: simplexchat.eth)
- *   EXPECTED_GAS     override total gas estimate used for the cost preview
- *                    (default: 120000000 — derived from Sepolia ~112M)
  *   CONFIRM=yes      skip the interactive confirmation prompt
  *
+ * Files written next to the addresses file:
+ *   deployments.mainnet.${tld}.json            ← final addresses (on success)
+ *   deployments.mainnet.${tld}.journal.jsonl   ← per-tx journal (resume source)
+ *   deployments.mainnet.${tld}.attempts.log    ← every attempt + reason
+ *
+ * The deployer is responsible for committing the addresses file AND the
+ * journal to the repo. See docs/deployment.md.
+ *
  * Run from the parent repo:
- *   DEPLOYER_KEY=0x... MAINNET_RPC_URL=https://... \
+ *   DEPLOYER_KEY=0x... MAINNET_RPC_URL=https://... GAS_BUDGET_ETH=0.3 \
  *     SIMPLEX_TLD=simplex node scripts/deploy-mainnet.mjs
  */
-import { createPublicClient, createWalletClient, encodeFunctionData, http, labelhash, namehash, zeroHash, zeroAddress } from 'viem'
+import { createPublicClient, createWalletClient, encodeFunctionData, http, labelhash, namehash, parseEther, zeroHash, zeroAddress } from 'viem'
 import { mainnet } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
 import { readFileSync, writeFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { analyzeAndConfirm, createAcceleratingDeployer } from './gas-tools.mjs'
+import { analyzeAndConfirm, createFrugalDeployer } from './gas-tools.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ARTIFACTS = join(__dirname, '..', 'ens-contracts', 'artifacts', 'contracts')
@@ -43,12 +53,12 @@ const rpcUrl = process.env.MAINNET_RPC_URL
 const deployerKey = process.env.DEPLOYER_KEY
 const tld = process.env.SIMPLEX_TLD || 'testing'
 const nftGateEnabled = tld === 'testing'
+const budgetEthRaw = process.env.GAS_BUDGET_ETH
 
 // Mainnet defaults — overridable via env.
 const chainlinkEthUsd = process.env.ETHUSD_FEED || '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
 const smpxNftAddr = process.env.SMPXNFT_ADDR || '0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291'
 const ownerAddress = process.env.OWNER_ADDRESS || '0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340'
-const expectedGas = BigInt(process.env.EXPECTED_GAS || 120_000_000)
 
 if (!deployerKey) {
   console.error('ERROR: DEPLOYER_KEY env var is required (0x-prefixed private key).')
@@ -58,6 +68,17 @@ if (!rpcUrl) {
   console.error('ERROR: MAINNET_RPC_URL env var is required.')
   process.exit(1)
 }
+if (!budgetEthRaw) {
+  console.error('ERROR: GAS_BUDGET_ETH env var is required (e.g. "0.3").')
+  console.error('       The script will not send any tx that would push spend past this cap.')
+  process.exit(1)
+}
+const budgetWei = parseEther(budgetEthRaw)
+
+const REPO_ROOT = join(__dirname, '..')
+const addressesPath = join(REPO_ROOT, `deployments.mainnet.${tld}.json`)
+const journalPath = join(REPO_ROOT, `deployments.mainnet.${tld}.journal.jsonl`)
+const attemptsLogPath = join(REPO_ROOT, `deployments.mainnet.${tld}.attempts.log`)
 
 const account = privateKeyToAccount(deployerKey)
 const transport = http(rpcUrl)
@@ -77,19 +98,20 @@ async function main() {
   console.log(`  Cold owner:        ${ownerAddress}`)
   console.log(`  Chainlink ETH/USD: ${chainlinkEthUsd}`)
   console.log(`  SMPXNFT:           ${smpxNftAddr}`)
+  console.log(`  Journal:           ${journalPath}`)
+  console.log(`  Attempts log:      ${attemptsLogPath}`)
 
-  // Gas + cost analysis + interactive confirm. Returns the gas params that
-  // every tx in the deploy will use (sub-normal price, capped to leave room
-  // for one acceleration bump).
-  const gasParams = await analyzeAndConfirm({
-    publicClient, account, expectedGas,
+  // Stats, budget, resume preview, interactive confirm.
+  await analyzeAndConfirm({
+    publicClient, account, budgetWei, journalPath,
     label: `.${tld} mainnet deploy`,
   })
 
-  // Wrap deploy/write so every tx is watched for inclusion and accelerated
-  // (same nonce, +30% gas) if it hasn't mined within 5 minutes.
-  const { deploy: deployRaw, write } = createAcceleratingDeployer({
-    publicClient, walletClient, account, gasParams,
+  // Frugal runner: probe at 10% × baseFee, ×√2 escalation per attempt,
+  // 15min mempool watch, journal-backed resume, hard-capped at budgetWei.
+  const { deploy: deployRaw, write } = createFrugalDeployer({
+    publicClient, walletClient, account,
+    budgetWei, journalPath, attemptsLogPath,
   })
   const deploy = async (name, artifactPath, args = []) => {
     const { abi, bytecode } = loadArtifact(artifactPath)
@@ -255,9 +277,10 @@ async function main() {
     OutdatedResolver: '0x0000000000000000000000000000000000000000',
   }
 
-  const outFile = join(__dirname, '..', `deployments.mainnet.${tld}.json`)
-  writeFileSync(outFile, JSON.stringify(addresses, null, 2))
-  console.log(`Wrote ${outFile}`)
+  writeFileSync(addressesPath, JSON.stringify(addresses, null, 2))
+  console.log(`Wrote ${addressesPath}`)
+  console.log(`\nCommit ${addressesPath} AND ${journalPath} to the repo.`)
+  console.log(`See docs/deployment.md → Mainnet → Step 2.`)
 }
 
 main().catch((err) => {

@@ -24,12 +24,12 @@ the playbook once per TLD per network.
 | Local one-shot                | `./scripts/run-local.sh`                             |
 | Local for `.simplex`          | `SIMPLEX_TLD=simplex ./scripts/run-local.sh`         |
 | Deploy to Sepolia             | `DEPLOYER_KEY=… SEPOLIA_RPC_URL=… node scripts/deploy-testnet.mjs` |
-| Deploy to mainnet             | `DEPLOYER_KEY=… MAINNET_RPC_URL=… SIMPLEX_TLD=… node scripts/deploy-mainnet.mjs` |
+| Deploy to mainnet             | `DEPLOYER_KEY=… MAINNET_RPC_URL=… GAS_BUDGET_ETH=… SIMPLEX_TLD=… node scripts/deploy-mainnet.mjs` |
 | Sepolia / mainnet cold owner  | `OWNER_ADDRESS` env (defaults to the simplexchat.eth cold key) |
 | Verify on Etherscan           | `ETHERSCAN_API_KEY=… node scripts/verify-sepolia.mjs`     |
 | Addresses output (local)      | stdout + `deployments.local.json`                    |
 | Addresses output (Sepolia)    | stdout + `deployments.sepolia.json` + `verification.sepolia.json` |
-| Addresses output (mainnet)    | stdout + `deployments.mainnet.${tld}.json` (**deployer must commit**) |
+| Addresses output (mainnet)    | stdout + `deployments.mainnet.${tld}.json` + `.journal.jsonl` + `.attempts.log` (**deployer must commit JSON + journal**) |
 | Frontend env var (local)      | `NEXT_PUBLIC_DEPLOYMENT_ADDRESSES` (JSON)            |
 | Frontend env var (Sepolia)    | `NEXT_PUBLIC_SEPOLIA_DEPLOYMENT_ADDRESSES` (JSON)    |
 | TLD env var                   | `NEXT_PUBLIC_SIMPLEX_TLD` (`testing` or `simplex`)   |
@@ -289,8 +289,9 @@ section below.
 
 Two separate deployments — `.testing` first, `.simplex` later. Both go to
 Ethereum mainnet. Driven by `scripts/deploy-mainnet.mjs`, which reuses
-the same ephemeral-deployer / cold-owner model as Sepolia but adds gas
-analysis and tx acceleration up front.
+the same ephemeral-deployer / cold-owner model as Sepolia but adds a
+frugal gas strategy, a hard total-spend cap, and a journal-backed
+resume mechanism for partial failures.
 
 ### Pre-flight
 
@@ -313,58 +314,78 @@ analysis and tx acceleration up front.
   ens-app-v3 forks (the `main...simplex` GitHub diff is the audit
   surface).
 
-### Step 0 — gas analysis and cost preview
+### Gas strategy at a glance
 
-`deploy-mainnet.mjs` starts by reading `eth_feeHistory` for the last 50
-blocks, picking the 25th-percentile priority fee (i.e. "sub-normal"),
-estimating total deploy cost, and printing the recommended deployer
-balance. It then **pauses for a Y/N confirmation** before sending any
-tx. Pass `CONFIRM=yes` to skip the prompt in CI / scripted runs.
+The script optimises for cost, not speed — it will happily take several
+days to finish if mainnet stays expensive. For each tx:
 
-Sample output:
+1. **Priority fee is always 0.** The deployer never pays validators a tip.
+2. **First attempt** submits at `maxFeePerGas = 10% × current base fee`.
+   The tx is invalid until base falls to that level — a bet that demand
+   eases.
+3. **Watch** the mempool for 15 min, polling every 10 s:
+   - mined → success, record in journal, move on
+   - `getTransactionByHash` returns null after a ≥60 s grace → treat as
+     dropped, bump
+   - 15 min elapses → bump
+4. **Bump**: multiply the previous `maxFeePerGas` by √2 (≈ 1.414) and
+   re-floor to 10 % of the *fresh* current base. Same nonce, same data,
+   resubmit. Up to 30 attempts per tx.
+5. **Budget cap**: `GAS_BUDGET_ETH` is hard. Once per step the runner
+   does a real `estimateGas` for the actual tx (cached across all
+   acceleration attempts since gas use is independent of price), adds
+   a 10 % margin, and projects `maxFee × estimate` before each
+   submission. If projected spend + spent-so-far > cap, it aborts
+   cleanly so you can resume from the journal once you raise the cap
+   (or the chain calms down). An `estimateGas` revert fails the step
+   immediately rather than burning attempts on a tx that would revert
+   on chain — the failure shows up in the attempts log as
+   `outcome: "estimate-error"` with the revert reason.
 
-```
-=== Gas analysis: .simplex mainnet deploy ===
-  Recent 50-block stats:
-    base fee (current):    0.500 gwei
-    base fee (median):     0.507 gwei
-    p25 priority (median): 0.001 gwei
-
-  Chosen gas params (sub-normal — p25):
-    maxPriorityFeePerGas:  0.100 gwei
-    maxFeePerGas:          1.099 gwei
-    expected wait per tx:  ~1–5 blocks at normal load
-    acceleration:          +30% gas after 5min, up to 5 attempts per tx
-
-  Cost estimate:
-    expected total gas:    120,000,000 units
-    estimated cost:        0.1319 ETH
-    recommended balance:   0.1979 ETH  (×1.5 safety buffer)
-
-  Deployer:
-    address:               0x…
-    current balance:       0.0000 ETH
-
-  ⚠  Balance is BELOW recommended. Top up at least 0.1979 ETH
-     before proceeding.
-
-Proceed with deploy? [y/N]
-```
-
-If the deployer is underfunded, fund it and re-run. The script is safe
-to re-invoke before any tx has been sent (gas analysis is read-only).
-
-### Step 1 — deploy
+### Step 0 — set the budget and run
 
 ```sh
-DEPLOYER_KEY=0x…                          # fresh ephemeral EOA
-MAINNET_RPC_URL=https://…                 # your RPC
-SIMPLEX_TLD=testing                       # or 'simplex' for the second TLD
-OWNER_ADDRESS=0x…                         # SNCC mainnet SAFE
+DEPLOYER_KEY=0x…              # fresh ephemeral EOA
+MAINNET_RPC_URL=https://…     # your RPC
+GAS_BUDGET_ETH=0.3            # hard cap for the WHOLE deploy
+SIMPLEX_TLD=testing           # or 'simplex' for the second TLD
+OWNER_ADDRESS=0x…             # SNCC mainnet SAFE (optional override)
 node scripts/deploy-mainnet.mjs
 ```
 
-The script:
+Before sending any tx the script prints a summary and waits for Y/N:
+
+```
+=== Frugal deploy analysis: .testing mainnet deploy ===
+  Recent base fee (last 50 blocks):
+    current: 0.4376 gwei
+    median:  0.5096 gwei
+
+  Strategy:
+    priority fee:        0 throughout
+    first attempt:       10% of current base fee
+    bump factor:         ×√2 per attempt (floor = 10% of fresh base)
+    attempt timeout:     15 min (poll mempool every 10s)
+    drop detection:      tx visible then null → bumped; never visible after 60s grace → bumped
+    safety stop:         30 attempts/tx
+    abort if next tx would push spend past the budget cap
+
+  Budget:
+    cap:               0.3 ETH
+    already spent:     0 ETH  (0 steps in journal)
+    remaining:         0.3 ETH
+
+  Deployer:
+    address:           0x…
+    balance:           0 ETH
+
+Proceed? [y/N]
+```
+
+Pass `CONFIRM=yes` to skip the prompt in CI / scripted runs. The
+analysis itself is read-only — safe to re-invoke at any time.
+
+### Step 1 — what the deploy does
 
 1. Deploys the full ENS-shape stack (ENSRegistry, BaseRegistrar,
    ReverseRegistrar, DefaultReverseRegistrar, NameWrapper,
@@ -378,42 +399,65 @@ The script:
    ENS-root transfer is the last write; afterwards the deployer can't
    reassign any TLD or contract role.
 
-Every tx goes through an accelerating wrapper: it submits with the
-chosen gas, waits up to 5 minutes for inclusion, then resubmits at the
-**same nonce** with +30% gas if it hasn't mined yet. Up to 5 attempts
-per tx. If a replaced hash actually mined first, the wrapper returns
-that receipt instead of erroring.
+Per-tx output looks like:
 
-Overrides worth knowing:
+```
+  [step:001] estimated gas: 2,025,000 (raw 1,840,909 + 10%)
+  [step:001] attempt 1/30: 0xabc…  (maxFee=0.0438 gwei, base=0.4376 gwei = 10%)
+  [step:001] timeout — 15min watch elapsed
+  [step:001] attempt 2/30: 0xdef…  (maxFee=0.0619 gwei, base=0.4112 gwei = 15%)
+  [step:001] dropped — tx no longer in mempool (evicted or replaced)
+  [step:001] attempt 3/30: 0x123…  (maxFee=0.0875 gwei, base=0.4098 gwei = 21%)
+  ✓ step:001: 0xENSREGISTRY…  (3 attempts, 0.001245 ETH, spent total 0.001245 ETH)
+```
 
-- `EXPECTED_GAS=120000000` — total gas estimate for the cost preview.
-  Default ≈ Sepolia's actual usage + buffer. Set lower if you've
-  re-measured against a fresh Sepolia run; the only effect is the cost
-  preview, not the actual tx flow.
-- `CONFIRM=yes` — skip the interactive prompt (CI / scripted).
+### Step 2 — resume on interruption
 
-### Step 2 — **commit the addresses file**
+If anything goes wrong — network drop, RPC outage, hitting the budget
+cap, deployer running out of gas, Ctrl-C — just re-run with the same
+env vars. The runner reads
+`deployments.mainnet.${tld}.journal.jsonl`, skips every step already
+recorded as mined, and picks up at the next one. Counter labels
+(`step:001…NNN`) are deterministic from the script's operation order;
+the journal stays valid as long as you don't reorder or insert
+operations in `scripts/deploy-mainnet.mjs`. If you do edit the script
+mid-flight, delete the journal and re-deploy.
 
-When the script finishes it writes `deployments.mainnet.${tld}.json`
-to the repo root (e.g. `deployments.mainnet.testing.json`). **The
-deployer is responsible for committing this file to the repo
-immediately after the deploy succeeds.** It is the authoritative record
-of which contracts went out at which addresses; without it in the repo
-later runs of the dApp build (Cloudflare Pages), Etherscan verification,
-upgrade ceremonies, and operational tooling have no way to reference
-the deployment.
+Spend across all journaled steps is summed and subtracted from the
+budget before the run — there's no double-counting.
+
+### Step 3 — **commit the addresses file AND the journal**
+
+When the script finishes it writes
+`deployments.mainnet.${tld}.json` (final addresses) to the repo root.
+Two file-state outputs travel with it:
+
+- `deployments.mainnet.${tld}.journal.jsonl` — one line per successful
+  tx, with hash, address, gas, effective price, and cost. **Commit
+  this** — it is the paper trail for which tx produced which address
+  and exactly how much was paid. Re-deploys read it for resume.
+- `deployments.mainnet.${tld}.attempts.log` — every attempt (submitted,
+  dropped, timeout, budget-block, submit-error) with the price tested
+  and the reason it didn't land. Useful for post-mortems but verbose
+  and often large; gitignore unless you want it in the audit trail.
 
 ```sh
-git add deployments.mainnet.testing.json   # or .simplex.json
-git commit -m "deploy: SNRC .testing mainnet addresses"
+git add deployments.mainnet.testing.json deployments.mainnet.testing.journal.jsonl
+git commit -m "deploy: SNRC .testing mainnet addresses + journal"
 git push
 ```
 
-If you also re-ran the deploy after a failed attempt and the file
-already exists on `main`, double-check the diff before pushing — the
-new addresses must replace, not append to, the previous run's values.
+Without the addresses file in the repo, later runs of the dApp build
+(Cloudflare Pages), Etherscan verification, upgrade ceremonies, and
+operational tooling have no way to reference the deployment.
 
-### Step 3 — post-deploy
+If a previous deploy attempt left a partial journal that the new run
+rolled forward, the diff against `main` will show the journal growing
+by exactly the steps that mined since the last commit — the addresses
+file is recreated from scratch so any prior partial values are
+replaced rather than appended.
+
+### Step 4 — post-deploy
 
 1. The cold owner calls `controller.acceptOwnership()` from the
    multisig to complete the SimplexController handover.
