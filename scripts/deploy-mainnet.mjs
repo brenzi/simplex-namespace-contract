@@ -243,6 +243,18 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   }
 }
 
+// Track the spawned fork at module scope so cleanup handlers can reach it.
+let activeFork = null
+function cleanupFork() {
+  if (activeFork) {
+    try { activeFork.stop() } catch {}
+    activeFork = null
+  }
+}
+process.on('SIGINT',  () => { cleanupFork(); process.exit(130) })
+process.on('SIGTERM', () => { cleanupFork(); process.exit(143) })
+process.on('exit',    () => { cleanupFork() })
+
 async function main() {
   console.log(`SNRC mainnet deploy for .${tld} (chainId ${mainnet.id})`)
   console.log(`  Deployer:          ${account.address}`)
@@ -255,7 +267,7 @@ async function main() {
   console.log(`  Attempts log:      ${attemptsLogPath}`)
 
   // ----- 1. Dry run against a forked mainnet -----
-  const fork = await spawnHardhatFork({
+  activeFork = await spawnHardhatFork({
     mainnetRpcUrl: rpcUrl,
     port: forkPort,
     ensContractsDir: ENS_CONTRACTS_DIR,
@@ -263,11 +275,11 @@ async function main() {
   let dryTotals
   try {
     await fundOnFork({
-      forkUrl: fork.url,
+      forkUrl: activeFork.url,
       address: account.address,
       weiHex: '0x56bc75e2d63100000',  // 100 ETH
     })
-    const dry = createDryRunRunner({ forkUrl: fork.url, forkChainId: fork.chainId, account })
+    const dry = createDryRunRunner({ forkUrl: activeFork.url, forkChainId: activeFork.chainId, account })
     console.log(`\n--- Dry-run on fork ---`)
     await runDeploySequence({
       deploy: dry.deploy,
@@ -276,7 +288,7 @@ async function main() {
     dryTotals = dry.totals()
     console.log(`Dry-run captured ${dryTotals.perStep.length} steps, ${dryTotals.totalGas.toLocaleString()} gas total`)
   } finally {
-    fork.stop()
+    cleanupFork()
   }
 
   // ----- 2. Preflight + confirm -----
@@ -315,6 +327,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  cleanupFork()
   console.error(err)
   process.exit(1)
 })

@@ -147,10 +147,13 @@ export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContract
     )
   }
   console.log(`Spawning forked hardhat node at :${port} (fork of mainnet) …`)
+  // `detached: true` puts the child in its own process group so we can
+  // signal the whole tree (npx + node + hardhat) at once. Without it,
+  // `proc.kill()` only signals npx, leaving hardhat running.
   const proc = spawn(
     'npx',
     ['hardhat', 'node', '--fork', mainnetRpcUrl, '--port', String(port), '--hostname', '127.0.0.1'],
-    { cwd: ensContractsDir, stdio: ['ignore', 'pipe', 'pipe'] },
+    { cwd: ensContractsDir, stdio: ['ignore', 'pipe', 'pipe'], detached: true },
   )
   proc.on('error', (e) => console.error('hardhat node spawn error:', e))
   let stderr = ''
@@ -158,20 +161,29 @@ export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContract
   proc.stdout.on('data', (c) => { stdout += c.toString() })
   proc.stderr.on('data', (c) => { stderr += c.toString() })
 
+  const stop = () => {
+    // Kill the whole process group (note the negative pid). If SIGTERM
+    // doesn't take after a grace period, escalate to SIGKILL.
+    try { process.kill(-proc.pid, 'SIGTERM') } catch { /* already gone */ }
+    setTimeout(() => {
+      try { process.kill(-proc.pid, 'SIGKILL') } catch {}
+    }, 3000).unref()
+  }
+
   const url = `http://127.0.0.1:${port}`
   let chainId
   try {
     chainId = Number(await waitForRpc(url, FORK_BOOT_TIMEOUT_MS))
     console.log(`  fork ready at ${url} (chainId=${chainId})`)
   } catch (e) {
-    proc.kill('SIGTERM')
+    stop()
     throw new Error(
       `${e.message}\n` +
         `--- hardhat stdout ---\n${stdout || '(empty)'}\n` +
         `--- hardhat stderr ---\n${stderr || '(empty)'}`,
     )
   }
-  return { url, chainId, stop: () => { proc.kill('SIGTERM') } }
+  return { url, chainId, stop }
 }
 
 export async function fundOnFork({ forkUrl, address, weiHex }) {
