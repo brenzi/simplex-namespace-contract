@@ -129,15 +129,44 @@ export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContract
 }
 
 export async function fundOnFork({ forkUrl, address, weiHex }) {
-  const body = JSON.stringify({
-    jsonrpc: '2.0', method: 'hardhat_setBalance',
-    params: [address, weiHex], id: 1,
-  })
-  const r = await fetch(forkUrl, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-  })
-  const j = await r.json()
-  if (j.error) throw new Error(`hardhat_setBalance failed: ${JSON.stringify(j.error)}`)
+  // Different node implementations expose set-balance under different
+  // RPC names — try the common ones. Hardhat 2 had `hardhat_setBalance`;
+  // Hardhat 3's EDR-based runtime sometimes returns empty bodies on it,
+  // anvil ships `anvil_setBalance`, and a few support `evm_setAccountBalance`.
+  // First one that responds with no error wins.
+  const methods = ['hardhat_setBalance', 'anvil_setBalance', 'evm_setAccountBalance']
+  const tried = []
+  for (const method of methods) {
+    const body = JSON.stringify({
+      jsonrpc: '2.0', method, params: [address, weiHex], id: 1,
+    })
+    const r = await fetch(forkUrl, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+    })
+    const text = await r.text()
+    if (!text) {
+      tried.push(`${method}: empty body (status ${r.status})`)
+      continue
+    }
+    let parsed
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      tried.push(`${method}: unparseable response (${text.slice(0, 80)})`)
+      continue
+    }
+    if (parsed.error) {
+      tried.push(`${method}: ${parsed.error.message || JSON.stringify(parsed.error)}`)
+      continue
+    }
+    return  // success
+  }
+  throw new Error(
+    `fundOnFork: no working balance-setting RPC method on ${forkUrl}.\n` +
+      `Tried:\n  - ${tried.join('\n  - ')}\n` +
+      `If your local node exposes a different method name, set the deployer's\n` +
+      `balance manually before re-running.`,
+  )
 }
 
 // ---------------- dry-run runner (forked node) ----------------
