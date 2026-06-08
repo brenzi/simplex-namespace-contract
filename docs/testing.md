@@ -135,6 +135,16 @@ npx playwright test --project=simplex                                 # in anoth
 npx playwright test --project=sepolia
 ```
 
+## Manual UI testing
+
+form `ens-app-v3`
+
+### against mainnet
+
+```bash
+EXT_PUBLIC_CHAIN_NAME=mainnet NEXT_PUBLIC_SIMPLEX_TLD=testing NEXT_PUBLIC_IPFS= NEXT_PUBLIC_MAINNET_DEPLOYMENT_ADDRESSES="$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('deployments.mainnet.testing.json','utf8'))))")" pnpm dev
+```
+
 ## Gotchas
 
 - **Port hygiene** — Next.js falls back to 3001 / 3002 / 3003 when 3000 is
