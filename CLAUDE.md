@@ -77,7 +77,7 @@ ENS PublicResolver used verbatim. SimpleX links stored as text records:
 - `simplex.contact` — contact short link (1:1 messaging)
 - `simplex.channel` — channel short link (group/channel)
 
-Set via `setText(node, "simplex.contact", value)`, read via `text(node, "simplex.contact")`. Standard ENS text-record pattern.
+Both records store a **comma-separated list** of URLs (primary first, fallbacks after) so a name can advertise multiple SMP servers for redundancy. Clients SHOULD try them in order. The on-chain layer is unchanged — it's still a plain `setText` / `text` against the ENSIP-5 key. The SNRC REST resolver (`scripts/resolver/snrc-resolve.py`) parses the CSV and returns each as `string[]` (`simplexContact`, `simplexChannel`). The dApp's editor caps the list at 5 entries.
 
 ## Admin capabilities
 

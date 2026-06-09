@@ -89,8 +89,18 @@ records:
 | `simplex.contact`  | SimpleX 1:1 contact short link            |
 | `simplex.channel`  | SimpleX channel short link                |
 
+Each of these stores a comma-separated list of URLs (primary first,
+fallbacks after) so a name can advertise multiple SMP servers for
+redundancy. Clients SHOULD try the URLs in order. The on-chain layer
+remains a single text-record string; the SNRC REST resolver
+(`scripts/resolver/snrc-resolve.py`) and the dApp share an identical
+parse rule (split on `,`, trim, drop empties) so the two sides
+round-trip cleanly. The dApp's editor caps the list at 5 entries; the
+on-chain record itself is unconstrained.
+
 The frontend renders both as first-class social profile entries with the
-SimpleX logo; see `supportedSocialRecordKeys.ts` and `getSocialData.ts`.
+SimpleX logo; see `supportedSocialRecordKeys.ts`, `getSocialData.ts`,
+`parseSimplexUrls.ts`, and the click-to-expand `MultiUrlField`.
 
 ## Upgrade story
 
