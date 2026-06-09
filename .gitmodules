@@ -6,3 +6,7 @@
 	path = ens-app-v3
 	url = https://github.com/simplex-network/ens-app-v3.git
 	branch = simplex
+[submodule "ens-subgraph"]
+	path = ens-subgraph
+	url = https://github.com/simplex-chat/ens-subgraph.git
+	branch = master

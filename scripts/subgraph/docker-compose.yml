@@ -1,0 +1,82 @@
+# Local Graph Node stack for indexing the SNRC subgraph against Ethereum
+# mainnet (the .testing TLD's contracts in particular). Spin it up alongside
+# `pnpm dev` in ens-app-v3 to verify "My Names" / activity feeds without
+# relying on the hosted Graph Network.
+#
+# Usage:
+#   cp scripts/subgraph/.env.example scripts/subgraph/.env
+#   # edit scripts/subgraph/.env: set SUBGRAPH_RPC_URL=<your mainnet RPC>
+#   docker compose -f scripts/subgraph/docker-compose.yml --env-file scripts/subgraph/.env up -d
+#
+#   # then from ens-subgraph/:
+#   yarn install
+#   yarn codegen
+#   yarn create-local           # registers the subgraph name on the local node
+#   yarn deploy-local           # uploads + indexes
+#
+# Endpoints (once running):
+#   Admin (graph deploy):    http://127.0.0.1:8020
+#   GraphQL (queries):       http://127.0.0.1:8000/subgraphs/name/graphprotocol/ens
+#   IPFS:                    http://127.0.0.1:5001
+#
+# Point the dApp at this node with NEXT_PUBLIC_SUBGRAPH_URL in ens-app-v3/.env.development.local.
+
+services:
+  graph-node:
+    image: graphprotocol/graph-node:v0.36.0
+    ports:
+      - '127.0.0.1:8000:8000'  # GraphQL HTTP
+      - '127.0.0.1:8001:8001'  # GraphQL WS
+      - '127.0.0.1:8020:8020'  # JSON-RPC admin
+      - '127.0.0.1:8030:8030'  # Subgraph indexing-status
+      - '127.0.0.1:8040:8040'  # Prometheus metrics
+    depends_on:
+      ipfs:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      # Lets `host.docker.internal` resolve to the host's loopback on
+      # Linux, so SUBGRAPH_RPC_URL=http://host.docker.internal:8545
+      # reaches a Reth running on the host.
+      - "host.docker.internal:host-gateway"
+    environment:
+      postgres_host: postgres
+      postgres_user: graph-node
+      postgres_pass: ${POSTGRES_PASSWORD:-let-me-in}
+      postgres_db: graph-node
+      ipfs: 'ipfs:5001'
+      # Network name MUST be `mainnet` to match the `network: mainnet`
+      # entries in subgraph.yaml. Graph Node accepts any provider behind it.
+      ethereum: 'mainnet:${SUBGRAPH_RPC_URL?need SUBGRAPH_RPC_URL in scripts/subgraph/.env}'
+      GRAPH_LOG: info
+      ETHEREUM_REORG_THRESHOLD: 50
+
+  ipfs:
+    image: ipfs/kubo:v0.30.0
+    ports:
+      - '127.0.0.1:5001:5001'
+    volumes:
+      - ipfs-data:/data/ipfs
+
+  postgres:
+    image: postgres:16-alpine
+    command: ["postgres", "-cshared_preload_libraries=pg_stat_statements"]
+    environment:
+      POSTGRES_USER: graph-node
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-let-me-in}
+      POSTGRES_DB: graph-node
+      # The Graph requires the C locale + collation for deterministic index
+      # ordering; mismatched locales produce wrong query results.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graph-node -d graph-node"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  ipfs-data:
+  postgres-data:
