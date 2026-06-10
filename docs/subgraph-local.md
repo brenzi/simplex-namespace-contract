@@ -9,13 +9,53 @@ hosted service.
 Tested on Linux + macOS with Docker 24+. Windows works via Docker
 Desktop but is untested here.
 
+## Why a subgraph at all?
+
+An Ethereum node answers *point* lookups well — "who owns namehash `0x…`?",
+"what's the `simplex.contact` text record on this resolver?" — because those
+are direct reads keyed by a hash you already have. It cannot answer the two
+question shapes a name-manager dApp lives on:
+
+1. **Reverse / enumeration queries.** "Which names does address `0x…` own?"
+   has no on-chain index — the registry only maps `namehash → owner`, never
+   the inverse. Without a subgraph the dApp falls back to scanning
+   `BaseRegistrar` `Transfer` logs over a bounded recent window (`eth_getLogs`,
+   chunked, rate-limited, and blind to registrations older than the scan
+   depth). A subgraph indexes every registration once and serves the list
+   instantly, with server-side **search, sort (e.g. by expiry), and
+   pagination**.
+
+2. **Hash → human label.** ENS — and SNRC — store only `keccak256(label)`
+   on-chain; the plaintext label is *not* recoverable from the hash. The
+   subgraph captures the label from the event payloads that do carry it
+   (`NameRegistered(string label)`, `ReservedNameAdded(string)`) at index time
+   and persists the `hash → label` preimage. That's the difference between the
+   dApp rendering **`foobar.testing`** and rendering **`[38d18acb…].testing`**.
+
+Concretely, in this dApp the subgraph powers:
+
+- **My Names** — the full list of a connected (or impersonated) address's
+  names, by real label, sorted/filtered/paginated, with no localStorage
+  priming and no "Error syncing data" chain-scan fallback.
+- **Human-readable labels everywhere** a name is shown — including
+  reserved-then-directly-registered names, which never emit
+  `NameRegistered(string)` and are otherwise stuck as `[labelhash].testing`
+  (see [step 3](#3-build--deploy-the-subgraph)).
+- **Subname listings, registration dates, and expiry data** surfaced from the
+  indexed `Domain` / `Registration` entities rather than reconstructed from
+  raw logs.
+
+The chain-scan fallback exists for deployments with no indexer (local Hardhat,
+a bare Sepolia stack), but it can't recover labels and can't do rich queries —
+which is exactly the gap this subgraph closes.
+
 ## Prerequisites
 
 - Docker + Docker Compose v2.
-- A mainnet RPC URL — your local Reth, Alchemy, DRPC, Infura, … any
-  archive-capable provider. Initial backfill from block 25,250,870
-  (the SNRC mainnet `.testing` deploy block) reads ~tens of thousands
-  of logs; a rate-limited free-tier RPC will work, just slowly.
+- A mainnet RPC URL (see [RPC node requirements](#rpc-node-requirements) below).
+  Initial backfill from block 25,250,870 (the SNRC mainnet `.testing` deploy
+  block) reads ~tens of thousands of logs; a rate-limited free-tier RPC will
+  work, just slowly.
 - Node 18+ and Yarn (the subgraph repo uses Yarn classic).
 - A clone of the parent repo with the `ens-subgraph` submodule
   populated:
@@ -25,6 +65,32 @@ Desktop but is untested here.
   # or, if you already cloned:
   git submodule update --init ens-subgraph
   ```
+
+### RPC node requirements
+
+The subgraph is **purely event-driven**: every data source uses only
+`eventHandlers` (no `callHandlers`/`blockHandlers`), and no mapping makes an
+`eth_call` (no `Contract.bind`). So Graph Node only ever asks the RPC for:
+
+- `eth_chainId` / `eth_getBlockByNumber` / `eth_getBlockByHash` — block ingestion;
+- `eth_getLogs` — the actual work, scanning event logs from the start block to head;
+- block receipts — `eth_getBlockReceipts` (fast path, auto-detected) or a
+  per-tx `eth_getTransactionReceipt` fallback.
+
+What that means for node choice:
+
+| Node type | Works? | Notes |
+|---|---|---|
+| Archive node | ✅ | Works, but **overkill** — historical state is never read. |
+| Pruned full node (e.g. `reth --full`) | ✅ **recommended minimum** | Verified against `reth v2.0.0 --full`: historical *state* is pruned (`eth_call` at the start block returns *"state … is pruned"*) and `trace_*` is absent, yet the subgraph indexes to head with `health: healthy`. |
+| Hosted RPC (Alchemy/DRPC/Infura/…) | ✅ | Any tier; free tiers just backfill slower. `eth_getLogs` + receipts is all that's used. |
+| Light client | ❌ | Cannot answer historical `eth_getLogs` / receipt queries over the indexing range. |
+
+The one thing the node **must** retain is **logs + receipts back to the start
+block (25,250,870)** — i.e. don't enable receipt/log pruning before that
+height. `reth --full` keeps receipts (it only prunes historical state), so it's
+fine; it's also the cheapest sufficient option. Neither historical state
+(archive) nor a trace API (`trace_filter`/`debug_trace*`) is required.
 
 ## 1. Configure the RPC
 
@@ -186,6 +252,83 @@ docker compose -f scripts/subgraph/docker-compose.yml down -v
 
 `-v` wipes Postgres + IPFS volumes; drop it to keep the indexed state
 across restarts.
+
+## Production deployment
+
+The compose stack above is a **dev** setup — loopback-only ports, a
+`let-me-in` Postgres password, no TLS, an open GraphQL endpoint. The notes
+below cover what changes for a real deployment. None of it requires touching
+the subgraph code; it's all topology, sizing, and hardening.
+
+### How heavy is it, really?
+
+Barely. After a full sync this subgraph's database is **~194 MB**, and **~176
+MB of that is graph-node's own block cache** (`chain1.blocks`) — the SNRC
+entity tables (`domain`, `registration`, `reserved_name`, …) total under a
+megabyte. The dataset grows slowly: the block cache tracks chain head (order
+of a few GB/year), the entity tables track `.testing` registrations. So the
+indexer stack (Graph Node + Postgres + IPFS) is light. **The only potentially
+heavy component is the Ethereum RPC, and only if you self-host it.**
+
+### Topology
+
+Two independently-sizable pieces:
+
+1. **Indexer stack** — Graph Node + Postgres + IPFS (the compose file).
+2. **Ethereum RPC** — see [RPC node requirements](#rpc-node-requirements).
+   Either a hosted provider or your own `reth --full`. Keep it on its own
+   host (or co-locate; see sizing).
+
+Only the **GraphQL query port (8000)** should ever be public. The admin
+JSON-RPC (8020), index-status (8030), Prometheus metrics (8040), IPFS (5001),
+and Postgres (5432) must stay private (firewall / private network / bound to
+loopback). Put 8000 behind a reverse proxy (Caddy/nginx/Traefik) terminating
+TLS, with rate-limiting and ideally an HTTP cache or CDN — dApp queries are
+read-heavy and repetitive.
+
+### VM sizing
+
+| Scenario | vCPU | RAM | Disk | Notes |
+|---|---|---|---|---|
+| Indexer stack only, **hosted RPC** (Alchemy/DRPC/…) | 2 | 4–8 GB | 50–100 GB SSD | The cheap, recommended path. RAM mostly for Postgres cache; disk is headroom over the ~GB-scale DB. |
+| Indexer stack + **self-hosted `reth --full`** on one box | 4–8 (high clock) | 32 GB | ~1.5 TB **TLC NVMe** | reth dominates: ≥1.2 TB NVMe + 8 GB just for reth, plus the stack. NVMe is non-negotiable for reth; QLC drives stall during sync. |
+| Self-hosted **reth archive** (not needed here) | 4–8 | 32–64 GB | ~3 TB NVMe | Only if another consumer needs historical state — this subgraph doesn't. |
+
+reth figures are from its [system requirements](https://reth.rs/run/system-requirements/)
+(full ≥1.2 TB / 8 GB; archive ≥2.8 TB / 16 GB; favour clock speed over core
+count — EL execution is single-threaded). The indexer stack adds little on top.
+
+### Hardening checklist
+
+- **Postgres password** — replace the `let-me-in` default
+  (`POSTGRES_PASSWORD` in `.env`). Keep `--locale=C --encoding=UTF8`; The
+  Graph requires the C collation for deterministic ordering.
+- **`GRAPH_POI_ACCESS_TOKEN`** — set it on graph-node. Unset, the startup log
+  warns *"GRAPH_POI_ACCESS_TOKEN not set; might leak POIs to the public via
+  GraphQL"*; a token gates the proof-of-indexing query field.
+- **CORS** — allow the dApp origin on the proxy in front of 8000 (the browser
+  queries it cross-origin).
+- **Restart policy** — add `restart: unless-stopped` to all three services so
+  the stack survives reboots/crashes.
+- **Backups** — snapshot the `postgres-data` volume (or `pg_dump`). It holds
+  both the indexed state *and* the `ens_names` rainbow seed, so a restore is
+  self-contained; only a from-scratch DB needs re-seeding (see step 2).
+- **RPC reliability** — a flaky endpoint stalls indexing. Use a dependable
+  provider, or list several behind graph-node's `ethereum:` connection (it
+  fails over across multiple URLs).
+- **Monitoring** — scrape graph-node's Prometheus metrics (8040) and alert on
+  indexing lag (`chainHeadBlock − latestBlock`) and subgraph `health` flipping
+  to `failed`. The status endpoint (8030) exposes the same as JSON-RPC.
+- **Version pinning** — graph-node is pinned to `v0.36.0` in the compose file;
+  test before bumping (the rainbow-table behaviour in step 2 is version-specific).
+
+### Wiring the production dApp
+
+Point the deployed dApp at the public endpoint by setting
+`NEXT_PUBLIC_SUBGRAPH_URL=https://<your-graphql-host>/subgraphs/name/graphprotocol/ens`
+in the production build env (Cloudflare Pages / GitHub Actions). As covered in
+step 4, that env var also flips `My Names` from the chain-scan fallback to the
+subgraph, so it must be set in prod for labels (incl. reserved names) to render.
 
 ## What's adapted vs. what's still upstream
 
