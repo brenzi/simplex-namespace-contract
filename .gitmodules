@@ -10,3 +10,7 @@
 	path = ens-subgraph
 	url = https://github.com/simplex-chat/ens-subgraph.git
 	branch = master
+[submodule "ens-metadata-service"]
+	path = ens-metadata-service
+	url = https://github.com/simplex-chat/ens-metadata-service.git
+	branch = simplex
