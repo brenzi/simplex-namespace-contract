@@ -67,6 +67,37 @@ followed by `Block ingestor: …`. If you see `ProviderError: failed to
 get latest block`, your RPC URL is unreachable from inside the
 container — recheck `SUBGRAPH_RPC_URL` and any firewall rules.
 
+### Seed the ENS rainbow table (required on graph-node ≥ 0.30)
+
+The pinned image (`graph-node:v0.36.0`) makes the `ens.nameByHash` host
+function — called by the upstream `handleNewOwner` / `handleNameRegistered`
+mappings — **throw** `Missing ENS data: see github.com/graphprotocol/ens-rainbow`
+whenever its rainbow table (`public.ens_names`) is empty. The subgraph then
+fatal-errors on the first registry event (block ~25,250,885) and never
+indexes. Older graph-node returned null here, which is why this isn't in the
+original walkthrough.
+
+We don't need the full 5.9 GB rainbow dump — SNRC labels come from the
+controller's `NameRegistered(string)` and `ReservedNameAdded(string)` events
+(see step 3). We just need the table to be non-empty so `nameByHash` returns
+null (→ `[labelhash]` fallback) instead of throwing. Seed the genuine TLD /
+reverse-registrar labels once the table exists:
+
+```sh
+# Wait until graph-node has created public.ens_names, then seed real labels.
+docker compose -f scripts/subgraph/docker-compose.yml exec -T postgres \
+  psql -U graph-node -d graph-node -c "
+INSERT INTO public.ens_names (hash, name) VALUES
+ ('0x5f16f4c7f149ac4f9510d9cf8cf384038ad348b3bcdc01915f95de12df9d1b02','testing'),
+ ('0xe5e14487b78f85faa6e1808e89246cf57dd34831548ff2e6097380d98db2504a','addr'),
+ ('0xdec08c9dbbdd0890e300eb5062089b2d4b1c40e3673bbccb5423f7b37dcf9a9c','reverse'),
+ ('0x329539a1d23af1810c48a07fe7fc66a3b34fbc8b37e9b3cdb97bb88ceab7e4bf','resolver')
+ON CONFLICT (hash) DO NOTHING;"
+```
+
+The seed lives in the `postgres-data` volume — it survives restarts but a
+`down -v` wipes it, so re-seed after a volume reset (before re-deploying).
+
 ## 3. Build + deploy the subgraph
 
 ```sh
@@ -109,10 +140,17 @@ In `ens-app-v3/.env.development.local` (create if absent), add:
 NEXT_PUBLIC_SUBGRAPH_URL=http://127.0.0.1:8000/subgraphs/name/graphprotocol/ens
 ```
 
-This is the only wiring needed — `src/utils/chains/makeLocalhostChainWithEns.ts`
-reads `NEXT_PUBLIC_SUBGRAPH_URL` and forwards it to ensjs's subgraph
-client. If unset, the chain falls back to the legacy
-`http://localhost:42069/subgraph` endpoint used by `pnpm dev:glocal`.
+`src/utils/chains/makeLocalhostChainWithEns.ts` reads `NEXT_PUBLIC_SUBGRAPH_URL`
+and forwards it to ensjs's subgraph client. If unset, the chain falls back to
+the legacy `http://localhost:42069/subgraph` endpoint used by `pnpm dev:glocal`.
+
+Setting it also flips the **`My Names` data source**: `useNamesForAddress`
+otherwise short-circuits to a BaseRegistrar `Transfer` chain-scan whenever a
+custom deployment is configured (`NEXT_PUBLIC_MAINNET_DEPLOYMENT_ADDRESSES`
+etc.), and that path can only label names whose preimage is already in the
+browser's `ensjs:labels` cache — so a freshly-impersonated address sees
+`[labelhash].testing`. With `NEXT_PUBLIC_SUBGRAPH_URL` set, the hook queries
+the subgraph instead and renders the real label (incl. reserved names).
 
 Restart `pnpm dev` so Next picks up the new env var.
 
@@ -156,17 +194,23 @@ to make the SNRC mainnet `.testing` data surface work:
 
 - **Adapted** — `subgraph.yaml` (data-source addresses + `SimplexController`
   source), `networks.json` (SNRC addresses), `abis/SimplexController.json`,
-  `src/simplexController.ts` (NameRegistered + NameRenewed mappings).
+  `src/simplexController.ts` (NameRegistered + NameRenewed + **ReservedNameAdded
+  / ReservedNameRemoved** mappings), the `ReservedName` entity in
+  `schema.graphql`, and a preimage fallback in `src/ethRegistrar.ts`
+  (`handleNameRegistered` consults `ReservedName` when `nameByHash` misses).
+  This is what lets names **reserved then registered directly via the
+  BaseRegistrar** (e.g. `registerReserved`) resolve to their label — those
+  never emit `NameRegistered(string)`, so the reservation event is their only
+  on-chain label source.
 - **Still upstream** — schema, the four legacy mapping files
   (`ensRegistry.ts`, `resolver.ts`, `ethRegistrar.ts`, `nameWrapper.ts`),
   test fixtures. Those events have the same shape on our verbatim ENS
   contracts, so they index correctly without modification.
-- **Deferred** — mappings for `MinCharLengthChanged`,
-  `ReservedNameAdded/Removed`, `NftGateDisabled`, and the
-  `Ownable2Step` `OwnershipTransferStarted/Transferred` events on
-  `SimplexController`. The reserved-name admin dashboard and the
-  ownership-transition surface will need these wired through with
-  matching `schema.graphql` additions. Tracked in
+- **Deferred** — mappings for `MinCharLengthChanged`, `NftGateDisabled`, and
+  the `Ownable2Step` `OwnershipTransferStarted/Transferred` events on
+  `SimplexController`. The min-char / NFT-gate admin surface and the
+  ownership-transition surface will need these wired through with matching
+  `schema.graphql` additions. Tracked in
   [simplex-network/ens-app-v3#2](https://github.com/simplex-network/ens-app-v3/issues/2).
 
 ## Troubleshooting
