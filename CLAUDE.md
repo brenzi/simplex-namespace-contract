@@ -50,6 +50,8 @@ Two separate deployments — one per TLD. Each is a near-standard ENS deployment
 
 Each deployment: `ENSRegistry` + `BaseRegistrarImplementation` + `SimplexController` + `PublicResolver` + `NameWrapper` + `Root` + `ReverseRegistrar`. All ENS contracts verbatim except `SimplexController`.
 
+`SimplexController` is UUPS-upgradeable (ERC-1967 proxy). Every upgrade must preserve its storage layout — see [`ens-contracts/docs/upgrades.md`](./ens-contracts/docs/upgrades.md) for the `__gap` / append-only invariants and the pre-upgrade checklist.
+
 Resolver: ENS `PublicResolver` used verbatim. SimpleX links stored as text records: `simplex.contact`, `simplex.channel`.
 
 Subnames are on-chain (via NameWrapper), not off-chain. This diverges from the current whitepaper draft but is the intended design. NameWrapper also enables marketplace trading of names as ERC-1155 tokens.
