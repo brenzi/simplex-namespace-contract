@@ -21,23 +21,51 @@ pnpm --filter ens-contracts compile     # artifacts must reflect the 5-arg NameW
 
 ## 2. Deploy
 
+Uses the **same wait-for-cheap-base strategy as `deploy-mainnet.mjs`** (shared
+`gas-tools.mjs`). It differs in one spot: the preflight gas is measured with
+real-mainnet `eth_estimateGas` instead of a forked-node dry-run, because a
+Hardhat fork cannot execute these deploys — their constructors call into the
+*real* ENS registry via `ReverseClaimer`, and the fork aborts with "internal
+error". (The successful estimate also confirms the deploys won't revert.) After
+the ceiling-cost summary + Y/N confirm, the **real deploy is identical**: each tx
+sent with `maxFeePerGas = MAX_BASE_FEE_GWEI` / zero priority, waiting for
+`baseFee ≤ cap`, bumping the cap after a long stall, journalling each tx so a
+re-run resumes.
+
 ```
-DEPLOYER_KEY=0x...  MAINNET_RPC_URL=https://...  \
+DEPLOYER_KEY=0x...  MAINNET_RPC_URL=https://...  MAX_BASE_FEE_GWEI=0.078  \
   OWNER_ADDRESS=0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340  \
   METADATA_URI='https://<your-metadata-host>/mainnet/{id}'  \
   node scripts/redeploy-wrapper-testing.mjs
 ```
 
-Prints and writes `redeploy-wrapper.mainnet.testing.journal.json` with the three
-new addresses + their deploy blocks. Call the values below:
-`<NEW_WRAPPER>`, `<NEW_RESOLVER>`, `<NEW_METADATA>`, `<WRAPPER_BLOCK>`, `<RESOLVER_BLOCK>`.
+`MAX_BASE_FEE_GWEI` is required — pick it from Dune (e.g. 5th-percentile recent
+base fee). `CONFIRM=yes` skips the prompt; `BUMP_AFTER_HOURS` / `BUMP_PCT` /
+`FORK_PORT` behave as in `deploy-mainnet.mjs`.
+
+On success the script **rewrites the repo-root `deployments.mainnet.testing.json`**
+in place (`NameWrapper`, `PublicResolver`, `NameWrapperPublicResolver`,
+`StaticMetadataService`), writes the JSONL journal, and prints the new addresses,
+the **subgraph startBlocks**, and the **constructor args** for Etherscan. Call
+the printed values `<NEW_WRAPPER>`, `<NEW_RESOLVER>`, `<NEW_METADATA>`,
+`<WRAPPER_BLOCK>`, `<RESOLVER_BLOCK>` below.
 
 > The metadata URI is swappable later via `NameWrapper.setMetadataService(addr)`
 > (owner-only), so a placeholder is fine if the host isn't ready.
 
 ## 3. Config diffs (off-chain)
 
-### 3a. `deployments.mainnet.testing.json` — in **both** the repo root and `ens-app-v3/` (they're identical)
+### 3a. `deployments.mainnet.testing.json`
+
+The deploy script (Step 2) **already rewrote the repo-root copy** with these four
+keys — review the git diff to confirm, then **copy it into `ens-app-v3/`** (the
+two files are kept identical):
+
+```
+cp deployments.mainnet.testing.json ens-app-v3/deployments.mainnet.testing.json
+```
+
+The applied change is:
 
 ```diff
 -  "NameWrapper": "0x9be8cf2b3d315a290de52f4c878a9e890269877f",

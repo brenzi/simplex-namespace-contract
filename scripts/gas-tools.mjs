@@ -494,7 +494,7 @@ export async function analyzeAndConfirm({
 
   const { totalGas, perStep } = dryRunTotals
   const ceilingCost = totalGas * maxBaseFeeWei
-  console.log(`\n  Forked dry-run captured ${perStep.length} step${perStep.length === 1 ? '' : 's'}:`)
+  console.log(`\n  Preflight captured ${perStep.length} step${perStep.length === 1 ? '' : 's'}:`)
   console.log(`    total gas used:       ${totalGas.toLocaleString()} units`)
   console.log(`    ceiling cost @ cap:   ${fmtEth(ceilingCost)} ETH  (= total gas × ${fmtGwei(maxBaseFeeWei)} gwei)`)
   console.log(`    actual cost may be lower (paid at the chain's baseFee at inclusion, ≤ cap)`)
