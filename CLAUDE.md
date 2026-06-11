@@ -107,6 +107,12 @@ Both records store a **comma-separated list** of URLs (primary first, fallbacks 
 - **Sepolia testnet**: chainId 11155111, MockSMPXNFT deployed once + Chainlink ETH/USD feed (`0x694AA17…`)
 - **Mainnet**: Chainlink ETH/USD oracle, real SMPXNFT (`0x3AF6D9Ee...`), treasury = SNCC multisig
 
+### tracking of deployed versions
+
+Maintain the rule that each onchain deployment shall tag the git commit it deploys for later reference. Existing tags:
+* https://github.com/simplex-network/ens-contracts/releases/tag/simplex-sepolia-testing-v1
+* https://github.com/simplex-network/ens-contracts/releases/tag/simplex-mainnet-testing-v1
+
 ## Deployment order (per TLD)
 
 Each TLD is an independent deployment:
