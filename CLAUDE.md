@@ -48,7 +48,7 @@ Two separate deployments — one per TLD. Each is a near-standard ENS deployment
 - `.testing` — NFT-gated (SMPXNFT holders only initially), 6+ char minimum, reserved names
 - `.simplex` — NO NFT gate, 6+ char minimum, reserved names
 
-Each deployment: `ENSRegistry` + `BaseRegistrarImplementation` + `SimplexController` + `PublicResolver` + `NameWrapper` + `Root` + `ReverseRegistrar`. All ENS contracts verbatim except `SimplexController`.
+Each deployment: `ENSRegistry` + `BaseRegistrarImplementation` + `SimplexController` + `PublicResolver` + `NameWrapper` + `Root` + `ReverseRegistrar`. All ENS contracts verbatim except `SimplexController` and `NameWrapper` (the latter TLD-parameterised — see Deviations).
 
 `SimplexController` is UUPS-upgradeable (ERC-1967 proxy). Every upgrade must preserve its storage layout — see [`ens-contracts/docs/upgrades.md`](./ens-contracts/docs/upgrades.md) for the `__gap` / append-only invariants and the pre-upgrade checklist.
 
@@ -91,7 +91,8 @@ Both records store a **comma-separated list** of URLs (primary first, fallbacks 
 
 ## Deviations from `snrc-implementation-plan.md`
 
-- **NameWrapper not UUPS-wrapped.** Plan called for it (for upgradeability + marketplace flexibility), but NameWrapper is 25,925 bytes — already over the 24,576-byte EIP-170 limit before UUPS boilerplate is added. Adding `UUPSUpgradeable + Initializable + _authorizeUpgrade` pushes it to ~27,500 bytes. Two options were considered and rejected: BeaconProxy (same size constraint) and slimming NameWrapper by stripping ReverseClaimer/ERC20Recoverable/legacy upgrade path (too large a diff from upstream ENS, hurts auditability). Decision: keep NameWrapper verbatim, accept non-upgradeability. If a serious bug requires fixing post-launch, migrate names to a new wrapper via the existing `upgradeContract` hook ENS already provides.
+- **NameWrapper not UUPS-wrapped.** Plan called for it (for upgradeability + marketplace flexibility), but NameWrapper is 25,925 bytes — already over the 24,576-byte EIP-170 limit before UUPS boilerplate is added. Adding `UUPSUpgradeable + Initializable + _authorizeUpgrade` pushes it to ~27,500 bytes. Two options were considered and rejected: BeaconProxy (same size constraint) and slimming NameWrapper by stripping ReverseClaimer/ERC20Recoverable/legacy upgrade path (too large a diff from upstream ENS, hurts auditability). Decision: keep NameWrapper non-upgradeable (immutable). If a serious bug requires fixing post-launch, migrate names to a new wrapper via the existing `upgradeContract` hook ENS already provides.
+- **NameWrapper is TLD-parameterised, not verbatim.** Upstream hardcodes `ETH_NODE = namehash('eth')`, so it mis-wrapped SNRC `.testing` 2LDs under `label.eth` (or reverted when a resolver was supplied). Fixed by deriving the TLD node + DNS suffix from constructor args (`TLD_NODE` immutable + `names[TLD_NODE]`); see `docs/redeploy-wrapper-testing.md`. Because the wrapper is immutable (above), the fix shipped as a **fresh redeploy** — 0 names were wrapped on the old `0x9be8…877f`, so no migration. Live `.testing` wrapper is now `0x0994819e…e9ef` with new PublicResolver `0x15231918…dc1b` (tag `simplex-mainnet-testing-v2`).
 
 ## Toolchain
 
@@ -112,6 +113,7 @@ Both records store a **comma-separated list** of URLs (primary first, fallbacks 
 Maintain the rule that each onchain deployment shall tag the git commit it deploys for later reference. Existing tags:
 * https://github.com/simplex-network/ens-contracts/releases/tag/simplex-sepolia-testing-v1
 * https://github.com/simplex-network/ens-contracts/releases/tag/simplex-mainnet-testing-v1
+* https://github.com/simplex-network/ens-contracts/releases/tag/simplex-mainnet-testing-v2 (NameWrapper TLD-parameterisation — needs tagging on the redeploy commit)
 
 ## Deployment order (per TLD)
 

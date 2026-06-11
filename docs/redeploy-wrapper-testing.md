@@ -128,7 +128,15 @@ Also point `METADATA_URI` (above) at this service if not already.
 
 ## 4. Verify, tag, document
 
-- Etherscan-verify the new `NameWrapper`, `PublicResolver`, `StaticMetadataService` (`scripts/verify-etherscan.mjs` pattern).
+- Etherscan-verify the new `StaticMetadataService`, `NameWrapper`, `PublicResolver`:
+  ```
+  MAINNET_RPC_URL=https://... node scripts/prepare-wrapper-verification.mjs
+  ETHERSCAN_API_KEY=... NETWORK=mainnet SIMPLEX_TLD=testing node scripts/verify-etherscan.mjs
+  ```
+  The first script refreshes `verification.mainnet.testing.json` with the three new
+  addresses + ABI-encoded constructor args (reading the metadata URI from chain so
+  it's byte-exact); the second submits them to Etherscan. Commit the refreshed
+  `verification.mainnet.testing.json`.
 - Smoke test on mainnet: register a fresh `.testing` name → `wrapETH2LD` → `NameWrapper.ownerOf(namehash(name.testing))` returns you → metadata renders → `unwrapETH2LD` round-trips.
 - Git-tag the deploying commit: `simplex-mainnet-testing-v2` (per the deployment-version rule in CLAUDE.md).
 - Update `CLAUDE.md`: NameWrapper is no longer "verbatim ENS" — note the TLD-parameterisation deviation; the "subnames / ERC-1155 trading via NameWrapper" claims are now true for `.testing`.
