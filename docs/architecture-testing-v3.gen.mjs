@@ -108,7 +108,7 @@ text(null, POS.title[0], POS.title[1],
 // ---------- actors ----------
 box('user', 300, 110, '#d0bfff')
 text('user', 12, 10, 'User  (dApp)', 15)
-text('user', 12, 34, 'registers names, edits records,\ncreates subnames; "My Names" via\ngetLabels + ownerOf multicall', 11)
+text('user', 12, 34, 'registers names, edits records,\ncreates subnames (via controller);\n"My Names" via getLabels + ownerOf', 11)
 box('wallets', 330, 110, '#d0bfff')
 text('wallets', 12, 10, 'Wallets & marketplaces', 15)
 text('wallets', 12, 34, 'MetaMask, OpenSea, …\nshow & trade names as plain ERC-721\n(image via tokenURI data: URI)', 11)
@@ -124,7 +124,7 @@ box('controller', 450, 430, '#ffec99', { strokeWidth: 2 })
 text('controller', 12, 10, 'SimplexController  (UUPS proxy)', 16)
 text('controller', 12, 38, 'ROLE: registration gateway, TLD policy,\n           on-chain index (#20)', 12)
 text('controller', 12, 80, 'STORES:\n- commitments (commit-reveal)\n- tldNode / tldSuffix / minCharLength\n- reservedNames, NFT-gate config\n- price-oracle ref (+ freeze flag)\n- labelOf[labelhash] -> label   (#20)\n- allLabels[]  (every 2LD ever)   (#20)\n- childrenOf[parentNode] -> labelhashes (#20)', 11)
-text('controller', 12, 220, 'EXPOSES:\n- commit / register / renew  (payable)\n- rentPrice / available / valid\n- registerReserved / addReservedNames\n- submitLabel / submitSubname\n  (permissionless, hash-verified backfill)\n- getLabels / getChildren  (paginated views)\n- admin: setPriceOracle/freeze,\n  setMinCharLength, disableNftGate', 11)
+text('controller', 12, 220, 'EXPOSES:\n- commit / register / renew  (payable)\n- rentPrice / available / valid\n- registerReserved / addReservedNames\n- createSubname  (atomic create + index,\n  owner FORCED to parent owner; one-time\n  registry setApprovalForAll needed)\n- submitLabel / submitSubname  (permissionless\n  backfill, hash + owner verified)\n- getLabels / getChildren  (paginated views)\n- admin: setPriceOracle/freeze,\n  setMinCharLength, disableNftGate', 11)
 
 box('registrar', 410, 310, '#b2f2bb', { strokeWidth: 2 })
 text('registrar', 12, 10, 'BaseRegistrarImplementation  (v3)', 16)
@@ -136,7 +136,7 @@ box('registry', 350, 270, '#a5d8ff')
 text('registry', 12, 10, 'ENSRegistry', 16)
 text('registry', 12, 38, 'ROLE: the name tree — source of truth\n           for every node (incl. subnames)', 12)
 text('registry', 12, 80, 'STORES:\n- node -> { owner, resolver, ttl }', 11)
-text('registry', 12, 130, 'EXPOSES:\n- owner / resolver / ttl / recordExists\n- setSubnodeOwner  (subname creation,\n  parent-revocable by design)\n- setResolver / setRecord / setOwner', 11)
+text('registry', 12, 130, 'EXPOSES:\n- owner / resolver / ttl / recordExists\n- setSubnodeOwner  (SNRC subnames go via\n  controller.createSubname; direct foreign-\n  owned writes are unindexed + untrusted)\n- setResolver / setRecord / setOwner', 11)
 
 box('metadata', 410, 250, '#b2f2bb', { strokeWidth: 2 })
 text('metadata', 12, 10, 'OnchainMetadataService  (new)', 16)
@@ -171,7 +171,7 @@ text('universal', 12, 38, 'ROLE: one-call resolution\nfor clients\nEXPOSES: reso
 // ---------- dropped-wrapper note ----------
 box('note', 660, 120, '#ffc9c9')
 text('note', 12, 10, 'DROPPED: NameWrapper (ERC-1155, fuses, emancipation)', 13)
-text('note', 12, 36, '2LDs trade as plain ERC-721. Subnames are registry entries (parent-revocable —\nthe right semantic for org delegation; revisit wrapper only if trustless subname\nsales become a requirement). Subgraph: optional (history only), per #20.', 11)
+text('note', 12, 36, '2LDs trade as plain ERC-721. Subnames are created via controller.createSubname and\nare ALWAYS owned by the 2LD owner (hard-wired; foreign-owned subnames via direct\nregistry calls stay unindexed + untrusted). Subgraph: optional (history only), per #20.', 11)
 
 // ---------- legend ----------
 box('legend', 290, 170, '#ffffff')
@@ -186,14 +186,13 @@ sw(102, '#e9ecef'); text('legend', 38, 100, 'external', 11)
 sw(124, '#d0bfff'); text('legend', 38, 122, 'actors', 11)
 
 // ---------- arrows ----------
-arrow('user', 'controller', 'commit / register / renew;\nsubmitLabel / submitSubname; getLabels')
-arrow('user', 'registry', 'setSubnodeOwner (create subname)')
+arrow('user', 'controller', 'commit / register / renew;\ncreateSubname; submitLabel; getLabels')
 arrow('user', 'resolver', 'setText("simplex.contact", ...)')
 arrow('wallets', 'registrar', 'ownerOf / tokenURI / transferFrom')
 arrow('clients', 'universal', 'resolve(alice.testing)')
 arrow('multisig', 'registrar', 'swap tokenURI renderer', true)
 arrow('controller', 'registrar', 'register / renew\n(onlyController)')
-arrow('controller', 'registry', 'setRecord(node, owner, resolver)')
+arrow('controller', 'registry', 'setRecord (register);\nsetSubnodeOwner (createSubname, as operator)')
 arrow('controller', 'resolver', 'multicallWithNodeCheck\n(records at registration)')
 arrow('controller', 'reverse', 'setNameForAddr (reverse record)')
 arrow('controller', 'smpxnft', 'balanceOf (gate)')
