@@ -138,7 +138,7 @@ text('registry', 12, 38, 'ROLE: the name tree — source of truth\n           fo
 text('registry', 12, 80, 'STORES:\n- node -> { owner, resolver, ttl }', 11)
 text('registry', 12, 130, 'EXPOSES:\n- owner / resolver / ttl / recordExists\n- setSubnodeOwner  (SNRC subnames go via\n  controller.createSubname; direct foreign-\n  owned writes are unindexed + untrusted)\n- setResolver / setRecord / setOwner', 11)
 
-box('metadata', 410, 250, '#b2f2bb', { strokeWidth: 2 })
+box('metadata', 410, 250, '#ffec99', { strokeWidth: 2 })
 text('metadata', 12, 10, 'OnchainMetadataService  (new)', 16)
 text('metadata', 12, 38, 'ROLE: fully on-chain NFT metadata —\n           no server, no IPFS', 12)
 text('metadata', 12, 80, 'STORES:\n- static SVG artwork (bytecode constant,\n  same image for every name)', 11)
@@ -179,8 +179,8 @@ text('legend', 12, 10, 'LEGEND', 13)
 const sw = (dy, c) => els.push(base({ type: 'rectangle',
   x: boxes.legend.x + 12, y: boxes.legend.y + dy, width: 18, height: 12,
   backgroundColor: c, roundness: { type: 3 }, groupIds: ['grp-legend'] }))
-sw(36, '#ffec99'); text('legend', 38, 34, 'SNRC custom (UUPS)', 11)
-sw(58, '#b2f2bb'); text('legend', 38, 56, 'new / small diff in v3', 11)
+sw(36, '#ffec99'); text('legend', 38, 34, 'SNRC custom code', 11)
+sw(58, '#b2f2bb'); text('legend', 38, 56, 'upstream + small v3 diff', 11)
 sw(80, '#a5d8ff'); text('legend', 38, 78, 'verbatim upstream ENS', 11)
 sw(102, '#e9ecef'); text('legend', 38, 100, 'external', 11)
 sw(124, '#d0bfff'); text('legend', 38, 122, 'actors', 11)
