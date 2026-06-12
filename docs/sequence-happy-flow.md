@@ -49,21 +49,22 @@ sequenceDiagram
     note over P: record stored:<br/>alice.testing / simplex.contact -> link
 ```
 
-## 3 — Create a subname (no attributes)
+## 3 — Create a subname (atomic, owner = parent owner)
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor U as Alice (parent owner)
-    participant R as ENSRegistry
+    actor U as Alice (owner of alice.testing)
     participant C as SimplexController
+    participant R as ENSRegistry
 
-    U->>R: setSubnodeOwner(namehash("alice.testing"),<br/>labelhash("mobile"), bob)
-    note over R: node mobile.alice.testing now owned by bob<br/>(parent-revocable: Alice can reassign anytime)
-    U->>C: submitSubname(namehash("alice.testing"), "mobile")
-    C->>R: recordExists(node) ?
-    R-->>C: true
-    note over C: childrenOf[alice.testing] += "mobile",<br/>labelOf["mobile"] — issue 20 index
+    note over U,R: one-time setup per account:<br/>registry.setApprovalForAll(controller, true)
+    U->>C: createSubname(namehash("alice.testing"), "mobile")
+    C->>R: owner(parentNode) == caller ?
+    R-->>C: Alice — authorised
+    C->>R: setSubnodeOwner(parentNode,<br/>labelhash("mobile"), owner = Alice)
+    note over C: childrenOf += "mobile", labelOf["mobile"]<br/>indexed atomically — issue 20
+    note over U,R: subname owner is ALWAYS the parent owner —<br/>createSubname takes no owner parameter
 ```
 
 ## 4 — Resolution (SimpleX chat finds the contact by name)
@@ -103,7 +104,7 @@ sequenceDiagram
     B-->>W: owners + expiries
     note over W: keep names where owner == 0xb51f...<br/>e.g. alice.testing
     W->>C: getChildren(namehash("alice.testing"), 0, pageSize)
-    C-->>W: subnames, e.g. ["mobile"] (filter live: registry.owner != 0)
+    C-->>W: subnames, e.g. ["mobile"]<br/>(filter live: owner(sub) == owner(parent))
     W->>R: resolver(namehash("alice.testing"))
     R-->>W: PublicResolver
     W->>P: text(node, "simplex.contact"), addr(node)
@@ -144,10 +145,17 @@ Notes:
   `multicallWithNodeCheck`; omitted here for clarity, as is the optional reverse record.)
 - Flow 2 is the "edit profile" path: the resolver authorises the caller because the
   registry says they own the node.
-- Flow 3 needs no controller, payment, gate, or expiry — subnames are plain registry
-  entries created by the parent, revocable by the parent. The `submitSubname` indexing
-  step is permissionless and optional-but-recommended (anyone can do it later; the dApp
-  chains it automatically).
+- Flow 3: creation goes through the controller (`createSubname`), which makes it atomic
+  (create + index in one tx) and forces the subname owner to be the parent owner. The
+  one-time `setApprovalForAll(controller)` is the standard ENS operator grant. Honest
+  limit: the verbatim registry cannot *block* a parent from assigning a subname to a
+  third party via a direct `setSubnodeOwner` call — SNRC defends in depth instead:
+  `submitSubname` (the permissionless backfill path) refuses to index subnames whose
+  owner differs from the parent's, `getChildren` consumers filter
+  `owner(sub) == owner(parent)` live, and SimpleX clients validate the same before
+  trusting a subname's records. Foreign-owned subnames can exist on-chain but are
+  invisible to and untrusted by SNRC tooling. If a 2LD changes hands, stale subnames
+  automatically fail the same filter. No payment, gate, or expiry applies to subnames.
 - Flow 4 uses the UniversalResolver one-call path; a client can equally do the two reads
   itself — `registry.resolver(node)`, then `resolver.text(node, "simplex.contact")` —
   which is what `scripts/resolver/snrc-resolve.py` does.
