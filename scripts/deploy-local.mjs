@@ -79,10 +79,6 @@ async function main() {
   // Set TLD owner to deployer (need to set resolver before transferring)
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
 
-  const nameWrapper = await deploy('NameWrapper',
-    'wrapper/NameWrapper.sol/NameWrapper.json',
-    [ensRegistry.address, baseRegistrar.address, account.address])
-
   const dummyOracle = await deploy('DummyOracle',
     'ethregistrar/DummyOracle.sol/DummyOracle.json',
     [100000000n])
@@ -137,10 +133,12 @@ async function main() {
   // is the implementation's; calls reach storage via the proxy.
   const controller = { address: controllerProxy.address, abi: controllerImpl.abi }
 
-  // PublicResolver must trust the controller so it can write records during register()
+  // PublicResolver must trust the controller so it can write records during register().
+  // PublicResolver is verbatim ENS; SNRC is wrapper-free, so pass address(0) for the
+  // NameWrapper slot (its wrapper-auth branch is then never taken).
   const publicResolver = await deploy('PublicResolver',
     'resolvers/PublicResolver.sol/PublicResolver.json',
-    [ensRegistry.address, nameWrapper.address, controller.address, reverseRegistrar.address])
+    [ensRegistry.address, zeroAddress, controller.address, reverseRegistrar.address])
 
   await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
 
@@ -149,6 +147,18 @@ async function main() {
   await write(reverseRegistrar, 'setController', [controller.address, true])
   await write(defaultReverseRegistrar, 'setController', [controller.address, true])
   console.log(`Controller wired up`)
+
+  // On-chain NFT metadata: deploy the renderer and point the registrar's tokenURI at it.
+  const metadataRenderer = await deploy('MetadataRenderer',
+    'simplex/MetadataRenderer.sol/MetadataRenderer.json',
+    [`.${tld}`])
+  await write(baseRegistrar, 'setMetadataRenderer', [metadataRenderer.address])
+
+  // Subname creation + on-chain index. Users grant registry.setApprovalForAll(subnameRegistrar)
+  // before their first subname; createSubname forces the subname owner to the parent owner.
+  const subnameRegistrar = await deploy('SubnameRegistrar',
+    'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
+    [ensRegistry.address])
 
   // Genesis reserved-names list — these labels cannot be registered by the public.
   // Extend as needed before deploying to testnet / mainnet. Bulk in one tx.
@@ -191,7 +201,9 @@ async function main() {
     BaseRegistrarImplementation: baseRegistrar.address,
     ReverseRegistrar: reverseRegistrar.address,
     DefaultReverseRegistrar: defaultReverseRegistrar.address,
-    NameWrapper: nameWrapper.address,
+    NameWrapper: zeroAddress, // wrapper-free v3
+    MetadataRenderer: metadataRenderer.address,
+    SubnameRegistrar: subnameRegistrar.address,
     PublicResolver: publicResolver.address,
     ETHRegistrarController: controller.address,
     ExponentialPremiumPriceOracle: priceOracle.address,

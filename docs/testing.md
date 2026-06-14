@@ -32,11 +32,13 @@ npx vitest run test/simplex       # just our additions
 What's **not** covered in-contract today:
 
 - A full integration test that walks the lifecycle (register → set records →
-  transfer → renew → expire → re-register at premium → wrap in NameWrapper →
+  transfer → renew → expire → re-register at premium → create subname →
   admin operations). The plan called for one under
   `test/integration/full-flow.test.ts`. Some of this is covered cross-layer
-  by the parent-repo e2e suite (registration + records + admin), but not
-  the renew / expire / wrap paths.
+  by the parent-repo e2e suite (registration + records + admin), but not the
+  renew / expire / subname paths. (v3 is wrapper-free — there is no wrap path;
+  `BaseRegistrar` v3 enumeration, `MetadataRenderer`, and `SubnameRegistrar`
+  have their own unit + fuzz suites under `test/simplex/`.)
 - Formal coverage measurement. The plan target was >90% line coverage on
   `SimplexController`; we haven't run `npx hardhat coverage` against the SNRC
   branch yet.

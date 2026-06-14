@@ -48,13 +48,13 @@ Two separate deployments — one per TLD. Each is a near-standard ENS deployment
 - `.testing` — NFT-gated (SMPXNFT holders only initially), 6+ char minimum, reserved names
 - `.simplex` — NO NFT gate, 6+ char minimum, reserved names
 
-Each deployment: `ENSRegistry` + `BaseRegistrarImplementation` + `SimplexController` + `PublicResolver` + `NameWrapper` + `Root` + `ReverseRegistrar`. All ENS contracts verbatim except `SimplexController` and `NameWrapper` (the latter TLD-parameterised — see Deviations).
+Each deployment: `ENSRegistry` + `BaseRegistrarImplementation` + `SimplexController` + `PublicResolver` + `MetadataRenderer` + `SubnameRegistrar` + `Root` + `ReverseRegistrar`. ENS contracts are used verbatim except: `SimplexController` (custom, UUPS), `BaseRegistrarImplementation` (modified — see Architecture/Deviations: ERC721Enumerable + on-chain label index + `tokenURI`), plus the new SNRC contracts `MetadataRenderer` and `SubnameRegistrar`. **No NameWrapper** (removed — see Deviations).
 
 `SimplexController` is UUPS-upgradeable (ERC-1967 proxy). Every upgrade must preserve its storage layout — see [`ens-contracts/docs/upgrades.md`](./ens-contracts/docs/upgrades.md) for the `__gap` / append-only invariants and the pre-upgrade checklist.
 
 Resolver: ENS `PublicResolver` used verbatim. SimpleX links stored as text records: `simplex.contact`, `simplex.channel`.
 
-Subnames are on-chain (via NameWrapper), not off-chain. This diverges from the current whitepaper draft but is the intended design. NameWrapper also enables marketplace trading of names as ERC-1155 tokens.
+Subnames are on-chain via the `SubnameRegistrar`: plain ENS registry subnodes, **always owned by the 2LD owner** (hard-wired, parent-revocable), created + indexed on-chain so they enumerate without an indexer. 2LDs themselves are plain ERC-721 tokens on the `BaseRegistrar` and trade directly on any marketplace; their NFT metadata (JSON + SVG, with the domain name) is rendered fully on-chain by the `MetadataRenderer`. There is no NameWrapper and no ERC-1155 wrapping.
 
 Payment is ETH (same as ENS). Pricing: $1/year (6+ chars), $8 (5), $32 (4), $128 (3). ENS price oracle verbatim.
 
@@ -91,14 +91,14 @@ Both records store a **comma-separated list** of URLs (primary first, fallbacks 
 
 ## Deviations from `snrc-implementation-plan.md`
 
-- **NameWrapper not UUPS-wrapped.** Plan called for it (for upgradeability + marketplace flexibility), but NameWrapper is 25,925 bytes — already over the 24,576-byte EIP-170 limit before UUPS boilerplate is added. Adding `UUPSUpgradeable + Initializable + _authorizeUpgrade` pushes it to ~27,500 bytes. Two options were considered and rejected: BeaconProxy (same size constraint) and slimming NameWrapper by stripping ReverseClaimer/ERC20Recoverable/legacy upgrade path (too large a diff from upstream ENS, hurts auditability). Decision: keep NameWrapper non-upgradeable (immutable). If a serious bug requires fixing post-launch, migrate names to a new wrapper via the existing `upgradeContract` hook ENS already provides.
-- **NameWrapper is TLD-parameterised, not verbatim.** Upstream hardcodes `ETH_NODE = namehash('eth')`, so it mis-wrapped SNRC `.testing` 2LDs under `label.eth` (or reverted when a resolver was supplied). Fixed by deriving the TLD node + DNS suffix from constructor args (`TLD_NODE` immutable + `names[TLD_NODE]`); see `docs/redeploy-wrapper-testing.md`. Because the wrapper is immutable (above), the fix shipped as a **fresh redeploy** — 0 names were wrapped on the old `0x9be8…877f`, so no migration. Live `.testing` wrapper is now `0x0994819e…e9ef` with new PublicResolver `0x15231918…dc1b` (tag `simplex-mainnet-testing-v2`).
+- **NameWrapper removed entirely (wrapper-free v3).** The wrapper was the largest source of complexity/defects (`.eth`-hardcoding, renew-desync, wrapper-aware-resolver auth) for features SNRC doesn't need (ERC-1155 wrapping, fuses/emancipation for trustless subname markets). It is deleted from the source tree. Replacements: 2LDs trade as plain ERC-721; **`BaseRegistrarImplementation` (v3, modified)** adds `ERC721Enumerable` (trustless "My Names"), a write-once `labelOf` label index (`registerWithLabel(string,…)`), an owner-settable `maxLabelLength` guard, and `tokenURI` delegating to a swappable `metadataRenderer`; **`MetadataRenderer`** (SNRC, swappable via `setMetadataRenderer`) renders JSON + SVG fully on-chain; **`SubnameRegistrar`** (SNRC, immutable) creates + indexes subnames. Only the `wrapper/INameWrapper.sol` interface is kept, because the verbatim `PublicResolver` imports it (deployed with `nameWrapper = address(0)`). The earlier `simplex-mainnet-testing-v2` wrapper deployment (`0x0994819e…e9ef`) is historical; v3 is a fresh redeploy.
+- **`BaseRegistrarImplementation` is no longer verbatim.** It keeps the upstream `register(uint256,…)` for the `IBaseRegistrar` interface, and adds `registerWithLabel` / `labelOf` / `tokenURI` / `setMetadataRenderer` / `setMaxLabelLength` / ERC721Enumerable. Only `SimplexController` is wrapped in a proxy; the registrar is immutable.
 
 ## Toolchain
 
 - Node 22.x, pnpm 9.x
 - Solidity 0.8.26, Hardhat 3.x (ENS upstream uses this)
-- OpenZeppelin Contracts v5 (UUPS, ERC-721, ERC-1155, ERC-20, Ownable)
+- OpenZeppelin Contracts 4.9.x (ERC-721 + ERC721Enumerable, Base64, Ownable) + contracts-upgradeable (UUPS, Ownable2Step) for `SimplexController`
 - Frontend: Next.js + styled-components + wagmi/viem (fork of ens-app-v3, logo swap only)
 - Tests: Hardhat + ethers v6 (contracts), Playwright (e2e)
 
@@ -117,19 +117,22 @@ Maintain the rule that each onchain deployment shall tag the git commit it deplo
 
 ## Deployment order (per TLD)
 
-Each TLD is an independent deployment:
+Each TLD is an independent deployment. Only `SimplexController` is behind a proxy
+(ERC1967/UUPS); every other contract is non-upgradeable:
 
 1. MockSMPXNFT (local/testnet only, shared)
-2. ENSRegistry (UUPS proxy)
-3. PublicResolver (verbatim ENS)
-4. ReverseRegistrar
-5. Root → transfer registry root → assign TLD ownership → lock
-6. BaseRegistrarImplementation (UUPS proxy)
-7. Price oracle (DummyOracle local / Chainlink mainnet) + ExponentialPremiumPriceOracle
-8. SimplexController (NFT gate on for .testing, off for .simplex)
-9. Add controller to base registrar
-10. NameWrapper (UUPS-wrapped, verbatim ENS)
-11. Output addresses to `deployments/<network>-<tld>.json`
+2. ENSRegistry
+3. Root → transfer registry root → assign TLD ownership → lock
+4. BaseRegistrarImplementation v3 (own the TLD node)
+5. Price oracle (DummyOracle local / Chainlink mainnet) + ExponentialPremiumPriceOracle
+6. SimplexController = impl + ERC1967 proxy (NFT gate on for .testing, off for .simplex); add as controller on the base registrar
+7. PublicResolver (verbatim ENS; `nameWrapper = address(0)`, `trustedETHController = controller`)
+8. ReverseRegistrar + DefaultReverseRegistrar (controller as controller)
+9. MetadataRenderer(`.<tld>`) → `baseRegistrar.setMetadataRenderer(renderer)`
+10. SubnameRegistrar(registry)
+11. UniversalResolver + Multicall3
+12. (optional) `baseRegistrar.setMaxLabelLength(N)`; transfer ownership → SNCC multisig
+13. Output addresses to `deployments/<network>-<tld>.json`
 
 ## Conventions from the PoC to follow
 
@@ -183,7 +186,7 @@ Don't re-derive these. Check here first.
 - `bash scripts/run-local.sh` must run from `/work/simplex-namespace-contract/` (it doesn't `cd` to repo root).
 
 ### PublicResolver `trustedETHController` parameter
-- PublicResolver constructor takes `(ENS, NameWrapper, trustedETHController, trustedReverseRegistrar)`. Passing zero for trustedETHController means the controller **cannot** write resolver records during `register()`. Symptom: register reverts deep in `multicallWithNodeCheck` (used when `registration.data` is non-empty, e.g. setting a resolver + addr record + reverseRecord). The deploy script must deploy the controller FIRST, then the resolver with the controller address as the trusted controller. Don't pass zeroAddress.
+- PublicResolver constructor takes `(ENS, INameWrapper, trustedETHController, trustedReverseRegistrar)`. SNRC is wrapper-free, so pass `address(0)` for the **NameWrapper** slot (its wrapper-auth branch is then never taken). But do **not** pass zero for **trustedETHController**: that means the controller cannot write resolver records during `register()` (register reverts deep in `multicallWithNodeCheck` when `registration.data` is non-empty). So deploy the controller FIRST, then the resolver with the controller address as `trustedETHController`.
 - Same applies to `trustedReverseRegistrar`. We pass the ReverseRegistrar address there.
 
 ### Playwright fixture playbook (steal from ens-app-v3)

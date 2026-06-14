@@ -1,5 +1,10 @@
 # Partial mainnet redeploy — fixed NameWrapper + Resolver for `.testing`
 
+> **HISTORICAL (v2).** This documents the v2 `.testing` redeploy that shipped the
+> TLD-parameterised NameWrapper. SNRC **v3 is wrapper-free** — the NameWrapper is
+> removed from the source tree entirely. This file is kept only for the
+> deployment-history record; do not follow it for new deployments.
+
 Replaces the `.eth`-hardcoded NameWrapper (`0x9be8…`, which mis-wraps `.testing`
 names) with the TLD-parameterised one, plus a matching PublicResolver. **Nothing
 is wrapped on the old wrapper (verified: 0 names), so there is no migration.**

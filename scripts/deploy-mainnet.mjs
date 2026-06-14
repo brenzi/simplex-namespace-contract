@@ -130,10 +130,6 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
 
-  const nameWrapper = await deploy('NameWrapper',
-    'wrapper/NameWrapper.sol/NameWrapper.json',
-    [ensRegistry.address, baseRegistrar.address, account.address])
-
   const priceArray = tld === 'testing'
     ? [0n, 0n, 0n, 0n, 0n]
     : [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n]
@@ -183,7 +179,8 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
 
   const publicResolver = await deploy('PublicResolver',
     'resolvers/PublicResolver.sol/PublicResolver.json',
-    [ensRegistry.address, nameWrapper.address, controller.address, reverseRegistrar.address])
+    // wrapper-free v3: address(0) for the NameWrapper slot in verbatim PublicResolver
+    [ensRegistry.address, zeroAddress, controller.address, reverseRegistrar.address])
 
   await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
 
@@ -204,9 +201,18 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   await write(ensRegistry, 'setResolver', [namehash('eth-usd.data.eth'), publicResolver.address])
   await write(publicResolver, 'setAddr', [namehash('eth-usd.data.eth'), chainlinkEthUsd])
 
+  // On-chain NFT metadata + subname index. setMetadataRenderer must run while the
+  // deployer still owns the registrar (before the ownership handover below).
+  const metadataRenderer = await deploy('MetadataRenderer',
+    'simplex/MetadataRenderer.sol/MetadataRenderer.json',
+    [`.${tld}`])
+  await write(baseRegistrar, 'setMetadataRenderer', [metadataRenderer.address])
+  const subnameRegistrar = await deploy('SubnameRegistrar',
+    'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
+    [ensRegistry.address])
+
   if (ownerAddress.toLowerCase() !== account.address.toLowerCase()) {
     await write(baseRegistrar, 'transferOwnership', [ownerAddress])
-    await write(nameWrapper, 'transferOwnership', [ownerAddress])
     await write(reverseRegistrar, 'transferOwnership', [ownerAddress])
     await write(defaultReverseRegistrar, 'transferOwnership', [ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('reverse'), ownerAddress])
@@ -222,7 +228,9 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
     BaseRegistrarImplementation: baseRegistrar.address,
     ReverseRegistrar: reverseRegistrar.address,
     DefaultReverseRegistrar: defaultReverseRegistrar.address,
-    NameWrapper: nameWrapper.address,
+    NameWrapper: zeroAddress, // wrapper-free v3
+    MetadataRenderer: metadataRenderer.address,
+    SubnameRegistrar: subnameRegistrar.address,
     PublicResolver: publicResolver.address,
     ETHRegistrarController: controller.address,
     // Implementation address for the SimplexController behind the

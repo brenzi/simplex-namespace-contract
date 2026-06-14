@@ -14,37 +14,41 @@ gives the operational picture an integrator or auditor needs.
 
 ```
                 ┌──────────────────────┐
-                │ ENSRegistry (UUPS)   │ ◄─── owner of every node
+                │ ENSRegistry          │ ◄─── owner of every node (verbatim)
                 └──────────┬───────────┘
                            │ owner(node) / resolver(node)
-                ┌──────────┴───────────┐
-                │ BaseRegistrar (UUPS) │ ◄─── ERC-721, tokenId = labelhash
-                └──────────┬───────────┘
-                           │ controllers
-        ┌──────────────────┴──────────────────┐
-        │                                      │
-┌───────┴────────────┐                ┌────────┴───────────┐
-│ SimplexController  │ ── PublicResolver ──── DummyOracle / Chainlink
-└────────────────────┘                └────────────────────┘
-        │
-        ├─ minCharLength            ── enforced in register()
-        ├─ reservedNames            ── enforced in register()
-        ├─ smpxNft + nftGateEnabled ── enforced in register() (.testing only)
-        └─ admin functions          ── setMinCharLength, addReservedNames,
-                                       disableNftGate, registerReserved
+                ┌──────────┴────────────────┐
+                │ BaseRegistrar v3 (immut.)  │ ◄─ ERC-721 + ERC721Enumerable,
+                │   labelOf, tokenURI        │    tokenId = labelhash
+                └──────────┬─────────────────┘
+                  controllers │ tokenURI → ┌──────────────────┐
+                           │              │ MetadataRenderer │ (on-chain JSON+SVG)
+        ┌──────────────────┴───────┐      └──────────────────┘
+        │                          │
+┌───────┴────────────┐    ┌────────┴───────────┐    ┌──────────────────┐
+│ SimplexController  │ ── │ PublicResolver     │ ── DummyOracle/Chainlink
+│   (UUPS proxy)     │    └────────────────────┘    └──────────────────┘
+└───────┬────────────┘
+        ├─ minCharLength / reservedNames / nftGate ── enforced in register()
+        └─ admin ── setMinCharLength, addReservedNames, disableNftGate, registerReserved
+
+   SubnameRegistrar (immutable) ── creates + indexes registry subnodes (parent-owned)
 ```
 
-`NameWrapper`, `ReverseRegistrar`, `Root`, `PublicResolver`, `StringUtils`,
-`StablePriceOracle`, `ExponentialPremiumPriceOracle`, and the price-oracle
-interfaces are vendored verbatim from ENS — we only deploy them with our
-parameters. See the **change justification** table in the implementation plan
-for a per-file diff.
+`ENSRegistry`, `ReverseRegistrar`, `Root`, `PublicResolver`, `StringUtils`,
+`StablePriceOracle`, `ExponentialPremiumPriceOracle`, `UniversalResolver`, and the
+price-oracle interfaces are vendored verbatim from ENS. `SimplexController` is custom
+(UUPS); `BaseRegistrarImplementation` is modified (v3 — ERC721Enumerable + `labelOf`
+label index + `tokenURI`); `MetadataRenderer` (swappable) and `SubnameRegistrar`
+(immutable) are new SNRC contracts. **There is no NameWrapper** — only the
+`INameWrapper` interface is kept, because verbatim `PublicResolver` imports it
+(deployed with `nameWrapper = address(0)`). See the per-file diff in the plan.
 
 ## TLD strategy
 
 There is **one deployment per TLD**. Each is an independent ENS-shaped stack
-(`ENSRegistry → BaseRegistrar → SimplexController + PublicResolver + NameWrapper +
-Root + ReverseRegistrar`). The TLDs:
+(`ENSRegistry → BaseRegistrar v3 → SimplexController + PublicResolver +
+MetadataRenderer + SubnameRegistrar + Root + ReverseRegistrar`). The TLDs:
 
 | TLD        | NFT gate | Min chars | Launch |
 |------------|----------|-----------|--------|
@@ -68,7 +72,8 @@ User → SimplexController.commit(hash)
        ├─ priceOracle.price(...)               ← unchanged from ENS
        ├─ require(msg.value ≥ totalPrice)      ← unchanged
        ├─ commit-reveal age check              ← unchanged
-       ├─ base.register(labelhash, owner, duration)  ← unchanged
+       ├─ base.registerWithLabel(label, owner, duration)  ← v3: passes the
+       │      plaintext label so the registrar records labelOf (hash→name)
        ├─ ens.setRecord(node, owner, resolver, 0)    ← unchanged (if resolver ≠ 0)
        ├─ resolver.multicallWithNodeCheck(...)        ← unchanged
        ├─ base.transferFrom(this, owner, labelhash)  ← unchanged
@@ -76,8 +81,9 @@ User → SimplexController.commit(hash)
        └─ refund excess ETH                            ← unchanged
 ```
 
-Only the `_checkSimplexGates` line is new. Everything else is identical to
-ENS's `ETHRegistrarController.register`.
+New vs ENS's `ETHRegistrarController.register`: the `_checkSimplexGates` line, and
+`base.registerWithLabel(label,…)` in place of `base.register(labelhash,…)` so the
+registrar records the on-chain label index. Everything else is identical.
 
 ## SimpleX data on-chain
 
@@ -102,16 +108,30 @@ The frontend renders both as first-class social profile entries with the
 SimpleX logo; see `supportedSocialRecordKeys.ts`, `getSocialData.ts`,
 `parseSimplexUrls.ts`, and the click-to-expand `MultiUrlField`.
 
+## Subnames & NFT metadata (wrapper-free)
+
+There is no NameWrapper. Instead:
+
+- **2LDs are plain ERC-721** on the `BaseRegistrar` and trade directly. The
+  registrar adds `ERC721Enumerable` (trustless "My Names"), a write-once
+  `labelOf` index (`registerWithLabel`), and `tokenURI` that delegates to the
+  swappable **`MetadataRenderer`**, which builds the JSON + SVG (with the domain
+  name) fully on-chain — no off-chain metadata service.
+- **Subnames** are created + indexed by the immutable **`SubnameRegistrar`**:
+  plain registry subnodes, always owned by the 2LD owner (hard-wired,
+  parent-revocable), enumerable via `getChildren` without an indexer. Users
+  grant `registry.setApprovalForAll(subnameRegistrar, true)` before their first
+  subname.
+
 ## Upgrade story
 
-`ENSRegistry` and `BaseRegistrar` are deployed behind ERC-1967 proxies and
-use the UUPS pattern (`_authorizeUpgrade` gated on owner). The controller is
-intentionally non-upgradeable — upgrades happen by deploying a new controller
-and `addController()` / `removeController()` on the base registrar.
-
-**NameWrapper is not UUPS-wrapped.** Its bytecode is already 25.9KB — over the
-EIP-170 24,576-byte limit before any wrapper boilerplate. Migration, if ever
-needed, uses ENS's existing `upgradeContract` hook on the wrapper itself.
+Only `SimplexController` is upgradeable — it sits behind an ERC-1967 proxy and
+uses UUPS (`_authorizeUpgrade` gated on owner). Every other contract is
+**immutable**: `ENSRegistry`, `BaseRegistrar` (v3), `MetadataRenderer`,
+`SubnameRegistrar`, resolver, oracles. The two seams that avoid needing a
+registrar redeploy: `MetadataRenderer` is swapped via
+`baseRegistrar.setMetadataRenderer(...)`, and the `SubnameRegistrar` index is
+reconstructible from the registry via `submitSubname` if it is ever redeployed.
 
 ## Pricing
 
@@ -173,12 +193,16 @@ See [`deployment.md`](./deployment.md) for the per-network checklist.
 simplex-namespace-contract/      ← parent repo (this)
   ens-contracts/                 ← submodule (Solidity)
     contracts/
-      simplex/SimplexController.sol      ← new
+      simplex/SimplexController.sol      ← new (UUPS)
+      simplex/SimplexControllerProxy.sol ← new (ERC1967 proxy)
+      simplex/MetadataRenderer.sol       ← new (on-chain NFT JSON+SVG)
+      simplex/SubnameRegistrar.sol       ← new (subname create + index)
+      ethregistrar/BaseRegistrarImplementation.sol ← modified (v3: enumerable,
+                                            labelOf, tokenURI, registerWithLabel)
       mocks/MockSMPXNFT.sol              ← new
       mocks/Multicall3.sol               ← new (aggregate3 + tryAggregate)
-      registry/ENSRegistry.sol           ← UUPS-wrapped
-      ethregistrar/BaseRegistrarImplementation.sol ← UUPS-wrapped
-      …all other contracts verbatim from ENS
+      wrapper/INameWrapper.sol           ← kept (interface only, for PublicResolver)
+      …all other contracts verbatim from ENS (NameWrapper removed)
   ens-app-v3/                    ← submodule (frontend)
     src/components/SimplexInfoPanel.tsx
     src/hooks/useControllerLimits.ts

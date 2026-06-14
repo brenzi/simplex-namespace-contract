@@ -1,5 +1,12 @@
 # SNRC NFT metadata service (mainnet `.testing`)
 
+> **SUPERSEDED in v3.** SNRC v3 renders NFT metadata fully **on-chain** via the
+> `MetadataRenderer` contract — `BaseRegistrar.tokenURI(tokenId)` delegates to it,
+> passing the stored label, and it returns a `data:application/json;base64` URI
+> with an embedded SVG. The off-chain service below is no longer part of the
+> design; kept only as historical reference for the v1/v2 `.testing` deployment.
+> See `docs/architecture.md` and `contracts/simplex/MetadataRenderer.sol`.
+
 This is the off-chain renderer that makes SNRC names show up as proper NFTs —
 logo + name — in MetaMask, other wallets, and on OpenSea. It is our fork of
 [`ensdomains/ens-metadata-service`](https://github.com/ensdomains/ens-metadata-service)

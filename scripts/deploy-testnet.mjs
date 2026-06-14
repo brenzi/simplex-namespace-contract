@@ -109,10 +109,6 @@ async function main() {
   await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
 
-  const nameWrapper = await deploy('NameWrapper',
-    'wrapper/NameWrapper.sol/NameWrapper.json',
-    [ensRegistry.address, baseRegistrar.address, account.address])
-
   // Use the real Chainlink feed as the oracle. The ENS pricing contracts call
   // `latestAnswer()` on it; ChainlinkAggregator and our DummyOracle share that
   // method, so the feed slots in directly.
@@ -182,7 +178,8 @@ async function main() {
 
   const publicResolver = await deploy('PublicResolver',
     'resolvers/PublicResolver.sol/PublicResolver.json',
-    [ensRegistry.address, nameWrapper.address, controller.address, reverseRegistrar.address])
+    // wrapper-free v3: address(0) for the NameWrapper slot in verbatim PublicResolver
+    [ensRegistry.address, zeroAddress, controller.address, reverseRegistrar.address])
 
   await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
 
@@ -210,6 +207,15 @@ async function main() {
   await write(publicResolver, 'setAddr', [namehash('eth-usd.data.eth'), chainlinkEthUsd])
   console.log('eth-usd.data.eth -> Chainlink feed')
 
+  // On-chain NFT metadata + subname index (deployer still owns the registrar here).
+  const metadataRenderer = await deploy('MetadataRenderer',
+    'simplex/MetadataRenderer.sol/MetadataRenderer.json',
+    [`.${tld}`])
+  await write(baseRegistrar, 'setMetadataRenderer', [metadataRenderer.address])
+  const subnameRegistrar = await deploy('SubnameRegistrar',
+    'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
+    [ensRegistry.address])
+
   // Hand every persistent role off to the cold owner. After this block,
   // the deployer EOA holds nothing on any deployed contract — its only
   // remaining capability is admin on SimplexController, gated behind
@@ -223,8 +229,6 @@ async function main() {
     // Ownable (single-step — these transfer immediately).
     await write(baseRegistrar, 'transferOwnership', [ownerAddress])
     console.log(`  BaseRegistrar owner -> cold`)
-    await write(nameWrapper, 'transferOwnership', [ownerAddress])
-    console.log(`  NameWrapper owner -> cold`)
     await write(mockNft, 'transferOwnership', [ownerAddress])
     console.log(`  MockSMPXNFT owner -> cold`)
     await write(reverseRegistrar, 'transferOwnership', [ownerAddress])
@@ -263,7 +267,9 @@ async function main() {
     BaseRegistrarImplementation: baseRegistrar.address,
     ReverseRegistrar: reverseRegistrar.address,
     DefaultReverseRegistrar: defaultReverseRegistrar.address,
-    NameWrapper: nameWrapper.address,
+    NameWrapper: zeroAddress, // wrapper-free v3
+    MetadataRenderer: metadataRenderer.address,
+    SubnameRegistrar: subnameRegistrar.address,
     PublicResolver: publicResolver.address,
     ETHRegistrarController: controller.address,
     ExponentialPremiumPriceOracle: priceOracle.address,

@@ -1,5 +1,13 @@
 # Deployment
 
+> **v3 note (wrapper-free).** This document predates the v3 refactor in places.
+> In v3 there is **no NameWrapper** (removed); the stack adds `MetadataRenderer`
+> and `SubnameRegistrar`, the registrar is `BaseRegistrarImplementation` v3, and
+> **only `SimplexController` is behind a proxy** (everything else is immutable).
+> `PublicResolver` is deployed with `nameWrapper = address(0)`. For the canonical
+> v3 deploy order see `CLAUDE.md` → "Deployment order" and the scripts in
+> `scripts/deploy-*.mjs`; ignore NameWrapper rows/steps below.
+
 Three deployment targets — local Hardhat, **Sepolia testnet**, Ethereum
 mainnet. Each TLD (`.testing`, `.simplex`) is an independent deployment; run
 the playbook once per TLD per network.
@@ -107,8 +115,7 @@ What gets transferred at end-of-deploy:
 
 | Target                              | Type                | Effect                                              |
 |-------------------------------------|---------------------|------------------------------------------------------|
-| `BaseRegistrarImplementation`       | `Ownable` (1-step)  | controls who can be a controller, sets resolver      |
-| `NameWrapper`                       | `Ownable` (1-step)  | upgrade hook, metadata service, controllers          |
+| `BaseRegistrarImplementation` (v3)  | `Ownable` (1-step)  | controllers, `setResolver`, `setMetadataRenderer`, `setMaxLabelLength` |
 | `MockSMPXNFT`                       | `Ownable` (1-step)  | future `mint(address)` calls                         |
 | `ReverseRegistrar`                  | `Ownable` (1-step)  | `setController`                                      |
 | `DefaultReverseRegistrar`           | `Ownable` (1-step)  | `setController`                                      |

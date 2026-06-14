@@ -1,0 +1,200 @@
+// Generates docs/uml-class-diagram.excalidraw — UML-ish class diagram of the
+// wrapper-free v3 contracts: storage (with mapping keys), public function
+// signatures, and dependency / realization arrows.
+//
+//   node docs/uml-class-diagram.gen.mjs
+//
+// Edit POS to rearrange; text is box-relative; arrows auto-route edge-to-edge
+// and are bound to boxes, so everything stays attached when dragged.
+import { writeFileSync } from 'fs'
+
+// Positions reflect the manual arrangement in
+// "uml-classdiagram rearranged.excalidraw".
+const POS = {
+  title:      [40, -120],
+  legend:     [55, -87],
+  reverse:    [-632, 280],
+  registry:   [619, 628],
+  resolver:   [1278, 649],
+  controller: [-40, 240],
+  registrar:  [604, 1079],
+  subnames:   [719, 153],
+  oracle:     [-593, 587],
+  smpxnft:    [-462, 28],
+  metadata:   [-142, 1173],
+  chainlink:  [-560, 800],
+  ifaces:     [-64, 695],
+}
+
+let n = 0
+const id = (p = 'el') => `${p}-${++n}`
+const seed = () => Math.floor(Math.random() * 2 ** 31)
+const base = (over) => ({
+  id: id(), angle: 0, strokeColor: '#1e1e1e', backgroundColor: 'transparent',
+  fillStyle: 'solid', strokeWidth: 1, strokeStyle: 'solid', roughness: 1, opacity: 100,
+  groupIds: [], frameId: null, seed: seed(), version: 1, versionNonce: seed(),
+  isDeleted: false, boundElements: null, updated: 1, link: null, locked: false, ...over,
+})
+const els = []
+const boxes = {}
+
+const box = (key, w, h, bg, extra = {}) => {
+  const [x, y] = POS[key]
+  const gid = `grp-${key}`
+  const r = base({ id: `box-${key}`, type: 'rectangle', x, y, width: w, height: h,
+    backgroundColor: bg, roundness: { type: 3 }, groupIds: [gid], boundElements: [], ...extra })
+  els.push(r); boxes[key] = r
+  return key
+}
+const text = (key, dx, dy, str, size = 11, extra = {}) => {
+  const [bx, by] = key ? [boxes[key].x, boxes[key].y] : [0, 0]
+  const lines = str.split('\n')
+  const w = Math.max(...lines.map((l) => l.length)) * size * 0.6
+  const h = lines.length * size * 1.25
+  els.push(base({ type: 'text', x: bx + dx, y: by + dy, width: w, height: h, text: str,
+    fontSize: size, fontFamily: 3, textAlign: 'left', verticalAlign: 'top',
+    containerId: null, originalText: str, autoResize: true, lineHeight: 1.25,
+    groupIds: key ? [`grp-${key}`] : [], ...extra }))
+}
+// horizontal divider inside a class box (UML compartment separator)
+const divider = (key, dy, w) => els.push(base({ type: 'line', x: boxes[key].x, y: boxes[key].y + dy,
+  width: w, height: 0, points: [[0, 0], [w, 0]], groupIds: [`grp-${key}`], strokeColor: '#888' }))
+
+const edge = (r, tx, ty) => {
+  const cx = r.x + r.width / 2, cy = r.y + r.height / 2
+  const dx = tx - cx, dy = ty - cy
+  const t = Math.min(dx !== 0 ? Math.abs(r.width / 2 / dx) : Infinity,
+    dy !== 0 ? Math.abs(r.height / 2 / dy) : Infinity)
+  return [cx + dx * t, cy + dy * t]
+}
+// kind: 'dep' (solid, calls) | 'impl' (dashed, realization)
+const arrow = (fromKey, toKey, label, kind = 'dep') => {
+  const A = boxes[fromKey], B = boxes[toKey]
+  const [x1, y1] = edge(A, B.x + B.width / 2, B.y + B.height / 2)
+  const [x2, y2] = edge(B, A.x + A.width / 2, A.y + A.height / 2)
+  const a = base({ id: id('arrow'), type: 'arrow', x: x1, y: y1, width: x2 - x1, height: y2 - y1,
+    strokeStyle: kind === 'impl' ? 'dashed' : 'solid', roundness: { type: 2 },
+    points: [[0, 0], [x2 - x1, y2 - y1]], lastCommittedPoint: null,
+    startBinding: { elementId: A.id, focus: 0, gap: 4 },
+    endBinding: { elementId: B.id, focus: 0, gap: 4 },
+    startArrowhead: null, endArrowhead: kind === 'impl' ? 'triangle' : 'arrow',
+    elbowed: false, boundElements: [] })
+  els.push(a)
+  A.boundElements.push({ id: a.id, type: 'arrow' })
+  B.boundElements.push({ id: a.id, type: 'arrow' })
+  if (label) {
+    const fs = 9
+    const w = label.length * fs * 0.6, h = fs * 1.25
+    const t = base({ id: id('lbl'), type: 'text', x: (x1 + x2) / 2 - w / 2, y: (y1 + y2) / 2 - h / 2,
+      width: w, height: h, text: label, fontSize: fs, fontFamily: 3, textAlign: 'center',
+      verticalAlign: 'middle', containerId: a.id, originalText: label, autoResize: true,
+      lineHeight: 1.25, strokeColor: '#555' })
+    els.push(t); a.boundElements.push({ id: t.id, type: 'text' })
+  }
+}
+
+const C = { custom: '#ffec99', v3: '#b2f2bb', upstream: '#a5d8ff', external: '#e9ecef', iface: '#f3d9fa' }
+
+// ---------- title + legend ----------
+text(null, POS.title[0], POS.title[1], 'SNRC v3 — contract class diagram (storage keys + function signatures)', 20)
+box('legend', 1040, 26, '#ffffff')
+text('legend', 10, 6, 'yellow = SNRC custom   |   green = upstream + v3 diff   |   blue = verbatim upstream   |   violet = interface   |   gray = external   |   ──▷ implements   →  calls', 10)
+
+// ========== SimplexController ==========
+box('controller', 520, 300, C.custom, { strokeWidth: 2 })
+text('controller', 10, 8, 'SimplexController   «UUPS proxy»', 13)
+divider('controller', 30, 520)
+text('controller', 10, 36, 'storage:\n  base : BaseRegistrarImplementation\n  prices : IPriceOracle   ens : ENS\n  commitments : mapping(bytes32 commitment => uint256 ts)\n  reservedNames : mapping(bytes32 labelhash => bool)\n  tldNode : bytes32   tldSuffix : string   minCharLength : uint8\n  smpxNft : SMPXNFT   nftGateEnabled : bool\n  minCommitmentAge / maxCommitmentAge : uint256\n  priceOracleFrozen : bool   treasury : address', 10)
+divider('controller', 168, 520)
+text('controller', 10, 174, 'functions:\n  initialize(base, prices, …, config, owner)\n  commit(bytes32 commitment)\n  register(Registration) payable\n  renew(string label, uint256 duration, bytes32 referrer) payable\n  registerReserved(string, address, uint256)\n  addReservedNames(string[]) / removeReservedNames(string[])\n  rentPrice(string,uint256) / available(string) / valid(string)\n  setMinCharLength / disableNftGate / setPriceOracle / freezePriceOracle\n  setTreasury / withdraw / _authorizeUpgrade(onlyOwner)', 10)
+
+// ========== BaseRegistrarImplementation v3 ==========
+box('registrar', 540, 320, C.v3, { strokeWidth: 2 })
+text('registrar', 10, 8, 'BaseRegistrarImplementation  v3\n  is ERC721Enumerable, IBaseRegistrar, Ownable', 12)
+divider('registrar', 44, 540)
+text('registrar', 10, 50, 'storage:\n  expiries : mapping(uint256 tokenId => uint256)\n  labelOf : mapping(uint256 tokenId => string)   (tokenId = labelhash)\n  metadataRenderer : address   maxLabelLength : uint256 (0=∞)\n  controllers : mapping(address => bool)\n  ens : ENS   baseNode : bytes32\n  _ownedTokens / _allTokens (ERC721Enumerable)', 10)
+divider('registrar', 162, 540)
+text('registrar', 10, 168, 'functions:\n  registerWithLabel(string label, address owner, uint256 dur)\n  register(uint256 id, …) / registerOnly(…)  (upstream, no label)\n  renew(uint256,uint256) / reclaim(uint256,address)\n  ownerOf / nameExpires / available(uint256)\n  balanceOf / tokenOfOwnerByIndex / totalSupply / tokenByIndex\n  tokenURI(uint256) / labelOf(uint256)\n  setMetadataRenderer(address) / setMaxLabelLength(uint256) (onlyOwner)\n  addController / removeController / setResolver (onlyOwner)', 10)
+
+// ========== MetadataRenderer ==========
+box('metadata', 520, 130, C.custom, { strokeWidth: 2 })
+text('metadata', 10, 8, 'MetadataRenderer   «swappable»\n  is IMetadataRenderer', 12)
+divider('metadata', 44, 520)
+text('metadata', 10, 50, 'storage:  suffix : string  (e.g. ".testing")', 10)
+divider('metadata', 70, 520)
+text('metadata', 10, 76, 'functions:\n  constructor(string suffix)\n  tokenURI(uint256, string label) → data:application/json;base64 (JSON + SVG)', 10)
+
+// ========== SubnameRegistrar ==========
+box('subnames', 520, 230, C.custom, { strokeWidth: 2 })
+text('subnames', 10, 8, 'SubnameRegistrar   «immutable»\n  is ISubnameRegistrar', 12)
+divider('subnames', 44, 520)
+text('subnames', 10, 50, 'storage:\n  ens : ENS (immutable)\n  labelOf : mapping(bytes32 labelhash => string)\n  childIndexed : mapping(bytes32 node => bool)\n  _children : mapping(bytes32 parentNode => bytes32[])', 10)
+divider('subnames', 138, 520)
+text('subnames', 10, 144, 'functions:\n  constructor(ENS)\n  createSubname(bytes32 parentNode, string label) → node\n  submitSubname(bytes32 parentNode, string label)\n  getChildren(bytes32 parent, uint256 start, uint256 count)\n  childrenLength(bytes32 parent)', 10)
+
+// ========== ENSRegistry ==========
+box('registry', 460, 150, C.upstream)
+text('registry', 10, 8, 'ENSRegistry   «verbatim»', 12)
+divider('registry', 30, 460)
+text('registry', 10, 36, 'storage:\n  records : mapping(bytes32 node => {owner,resolver,ttl})\n  operators : mapping(owner => mapping(operator => bool))', 10)
+divider('registry', 86, 460)
+text('registry', 10, 92, 'functions:\n  setSubnodeOwner / setResolver / setRecord / setOwner\n  owner / resolver / ttl / recordExists / setApprovalForAll', 10)
+
+// ========== PublicResolver ==========
+box('resolver', 480, 150, C.upstream)
+text('resolver', 10, 8, 'PublicResolver   «verbatim»', 12)
+divider('resolver', 30, 480)
+text('resolver', 10, 36, 'storage:\n  versionable_texts : node => key(string) => string\n  versionable_addresses : node => coinType(uint) => bytes\n  nameWrapper : INameWrapper  (deployed as address(0))', 10)
+divider('resolver', 86, 480)
+text('resolver', 10, 92, 'functions:\n  setText / text / setAddr / addr / multicallWithNodeCheck\n  isAuthorised(node) [owner | operator | trustedETHController]', 10)
+
+// ========== PriceOracle ==========
+box('oracle', 430, 110, C.upstream)
+text('oracle', 10, 8, 'ExponentialPremiumPriceOracle   «verbatim»\n  is IPriceOracle', 11)
+divider('oracle', 42, 430)
+text('oracle', 10, 48, 'functions:  price(string,uint256 expires,uint256 dur)\n             → Price{base, premium}', 10)
+
+// ========== Reverse ==========
+box('reverse', 430, 96, C.upstream)
+text('reverse', 10, 8, 'ReverseRegistrar + DefaultReverseRegistrar   «verbatim»', 10)
+divider('reverse', 34, 430)
+text('reverse', 10, 40, 'functions:  setNameForAddr(addr, owner, resolver, name)\n             claim / setName', 10)
+
+// ========== SMPXNFT ==========
+box('smpxnft', 360, 80, C.external)
+text('smpxnft', 10, 8, 'SMPXNFT   «external ERC-721»', 11)
+divider('smpxnft', 30, 360)
+text('smpxnft', 10, 36, 'functions:  balanceOf(address) → uint256', 10)
+
+// ========== Chainlink ==========
+box('chainlink', 360, 56, C.external)
+text('chainlink', 10, 8, 'Chainlink ETH/USD feed   «external»', 11)
+text('chainlink', 10, 30, 'latestRoundData()', 10)
+
+// ========== Interfaces ==========
+box('ifaces', 360, 230, C.iface)
+text('ifaces', 10, 8, '«interfaces»', 12)
+divider('ifaces', 30, 360)
+text('ifaces', 10, 36, 'IMetadataRenderer\n  tokenURI(uint256, string) → string\n\nISubnameRegistrar\n  createSubname / submitSubname /\n  getChildren / childrenLength / labelOf\n\nIBaseRegistrar (upstream)\nIPriceOracle (upstream)\nINameWrapper (kept for PublicResolver)', 10)
+
+// ---------- realization (implements) ----------
+arrow('metadata', 'ifaces', 'implements', 'impl')
+arrow('subnames', 'ifaces', 'implements', 'impl')
+
+// ---------- dependencies (calls) ----------
+arrow('controller', 'registrar', 'registerWithLabel / renew / transferFrom')
+arrow('controller', 'registry', 'setRecord')
+arrow('controller', 'resolver', 'multicallWithNodeCheck')
+arrow('controller', 'oracle', 'price()')
+arrow('controller', 'smpxnft', 'balanceOf (gate)')
+arrow('controller', 'reverse', 'setNameForAddr')
+arrow('oracle', 'chainlink', 'ETH/USD')
+arrow('registrar', 'registry', 'setSubnodeOwner')
+arrow('registrar', 'metadata', 'tokenURI(id, labelOf[id])')
+arrow('subnames', 'registry', 'setSubnodeOwner / owner / recordExists')
+arrow('resolver', 'registry', 'owner / isAuthorised')
+
+const doc = { type: 'excalidraw', version: 2, source: 'snrc-uml-class',
+  elements: els, appState: { gridSize: null, viewBackgroundColor: '#ffffff' }, files: {} }
+writeFileSync(new URL('./uml-class-diagram.excalidraw', import.meta.url).pathname, JSON.stringify(doc, null, 1))
+console.log('elements:', els.length)
