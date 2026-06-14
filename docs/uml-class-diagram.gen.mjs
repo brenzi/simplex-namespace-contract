@@ -9,21 +9,35 @@
 import { writeFileSync } from 'fs'
 
 // Positions reflect the manual arrangement in
-// "uml-classdiagram rearranged.excalidraw".
 const POS = {
-  title:      [40, -120],
-  legend:     [55, -87],
+  title:      [-372, -80],
+  legend:     [-357, -47],
   reverse:    [-632, 280],
-  registry:   [619, 628],
-  resolver:   [1278, 649],
+  registry:   [675, 607],
+  resolver:   [791, 69],
   controller: [-40, 240],
-  registrar:  [604, 1079],
-  subnames:   [719, 153],
+  registrar:  [598, 892],
+  subnames:   [608, 256],
   oracle:     [-593, 587],
   smpxnft:    [-462, 28],
-  metadata:   [-142, 1173],
+  metadata:   [-105, 984],
   chainlink:  [-560, 800],
   ifaces:     [-64, 695],
+}
+
+// Hand-tuned arrow geometry
+const GEOM = {
+  "controller->registrar": { x: 372.74, y: 546, points: [[0,0],[332.94,340.1]] },
+  "controller->registry": { x: 486, y: 503.16, points: [[0,0],[230.22,97.93]] },
+  "controller->resolver": { x: 483.46, y: 255.43, points: [[0,0],[132.9,-67.91],[302.32,-110.21]] },
+  "controller->oracle": { x: -40, y: 499.57, points: [[0,0],[-207.48,87.43]] },
+  "controller->smpxnft": { x: -13.85, y: 240, points: [[0,0],[-205.79,-132]] },
+  "controller->reverse": { x: -40, y: 364.69, points: [[0,0],[-162,-15.77]] },
+  "oracle->chainlink": { x: -378.59, y: 697, points: [[0,0],[-1.11,103]] },
+  "registrar->registry": { x: 862.83, y: 886.1, points: [[0,0],[44.16,-124.02]] },
+  "registrar->metadata": { x: 592.16, y: 1051.67, points: [[0,0],[-171.17,-2.1]] },
+  "subnames->registry": { x: 882.67, y: 492.18, points: [[0,0],[13.13,108.9]] },
+  "resolver->registry": { x: 1166.8, y: 224.34, points: [[0,0],[2.3,323.38],[-32.69,389.58]] },
 }
 
 let n = 0
@@ -67,14 +81,25 @@ const edge = (r, tx, ty) => {
     dy !== 0 ? Math.abs(r.height / 2 / dy) : Infinity)
   return [cx + dx * t, cy + dy * t]
 }
-// kind: 'dep' (solid, calls) | 'impl' (dashed, realization)
+// kind: 'dep' (solid, calls) | 'impl' (dashed, realization).
+// Uses hand-tuned geometry from GEOM (bends + endpoints) when present; else
+// falls back to straight edge-to-edge routing.
 const arrow = (fromKey, toKey, label, kind = 'dep') => {
   const A = boxes[fromKey], B = boxes[toKey]
-  const [x1, y1] = edge(A, B.x + B.width / 2, B.y + B.height / 2)
-  const [x2, y2] = edge(B, A.x + A.width / 2, A.y + A.height / 2)
-  const a = base({ id: id('arrow'), type: 'arrow', x: x1, y: y1, width: x2 - x1, height: y2 - y1,
+  const g = GEOM[`${fromKey}->${toKey}`]
+  let x1, y1, pts
+  if (g) {
+    x1 = g.x; y1 = g.y; pts = g.points
+  } else {
+    const [ax, ay] = edge(A, B.x + B.width / 2, B.y + B.height / 2)
+    const [bx, by] = edge(B, A.x + A.width / 2, A.y + A.height / 2)
+    x1 = ax; y1 = ay; pts = [[0, 0], [bx - ax, by - ay]]
+  }
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1])
+  const a = base({ id: id('arrow'), type: 'arrow', x: x1, y: y1,
+    width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys),
     strokeStyle: kind === 'impl' ? 'dashed' : 'solid', roundness: { type: 2 },
-    points: [[0, 0], [x2 - x1, y2 - y1]], lastCommittedPoint: null,
+    points: pts, lastCommittedPoint: null,
     startBinding: { elementId: A.id, focus: 0, gap: 4 },
     endBinding: { elementId: B.id, focus: 0, gap: 4 },
     startArrowhead: null, endArrowhead: kind === 'impl' ? 'triangle' : 'arrow',
@@ -85,7 +110,9 @@ const arrow = (fromKey, toKey, label, kind = 'dep') => {
   if (label) {
     const fs = 9
     const w = label.length * fs * 0.6, h = fs * 1.25
-    const t = base({ id: id('lbl'), type: 'text', x: (x1 + x2) / 2 - w / 2, y: (y1 + y2) / 2 - h / 2,
+    const mx = x1 + (pts[0][0] + pts[pts.length - 1][0]) / 2
+    const my = y1 + (pts[0][1] + pts[pts.length - 1][1]) / 2
+    const t = base({ id: id('lbl'), type: 'text', x: mx - w / 2, y: my - h / 2,
       width: w, height: h, text: label, fontSize: fs, fontFamily: 3, textAlign: 'center',
       verticalAlign: 'middle', containerId: a.id, originalText: label, autoResize: true,
       lineHeight: 1.25, strokeColor: '#555' })
@@ -98,7 +125,7 @@ const C = { custom: '#ffec99', v3: '#b2f2bb', upstream: '#a5d8ff', external: '#e
 // ---------- title + legend ----------
 text(null, POS.title[0], POS.title[1], 'SNRC v3 — contract class diagram (storage keys + function signatures)', 20)
 box('legend', 1040, 26, '#ffffff')
-text('legend', 10, 6, 'yellow = SNRC custom   |   green = upstream + v3 diff   |   blue = verbatim upstream   |   violet = interface   |   gray = external   |   ──▷ implements   →  calls', 10)
+text('legend', 10, 6, 'yellow = SNRC custom   |   green = upstream + v3 diff   |   blue = verbatim upstream   |   violet = interface catalog   |   gray = external   |   →  calls   (realized interfaces are listed in each box title: "is …")', 10)
 
 // ========== SimplexController ==========
 box('controller', 520, 300, C.custom, { strokeWidth: 2 })
@@ -172,14 +199,11 @@ text('chainlink', 10, 8, 'Chainlink ETH/USD feed   «external»', 11)
 text('chainlink', 10, 30, 'latestRoundData()', 10)
 
 // ========== Interfaces ==========
-box('ifaces', 360, 230, C.iface)
-text('ifaces', 10, 8, '«interfaces»', 12)
+box('ifaces', 360, 250, C.iface)
+text('ifaces', 10, 8, '«interface catalog» (reference only)', 12)
 divider('ifaces', 30, 360)
-text('ifaces', 10, 36, 'IMetadataRenderer\n  tokenURI(uint256, string) → string\n\nISubnameRegistrar\n  createSubname / submitSubname /\n  getChildren / childrenLength / labelOf\n\nIBaseRegistrar (upstream)\nIPriceOracle (upstream)\nINameWrapper (kept for PublicResolver)', 10)
+text('ifaces', 10, 36, 'realized by their own contract (see "is …"):\n  IMetadataRenderer  ← MetadataRenderer\n    tokenURI(uint256, string) → string\n  ISubnameRegistrar  ← SubnameRegistrar\n    createSubname / submitSubname /\n    getChildren / childrenLength / labelOf\n\nupstream interfaces:\n  IBaseRegistrar ← BaseRegistrar\n  IETHRegistrarController ← SimplexController\n  IPriceOracle ← price oracle\n  INameWrapper (kept only for PublicResolver)', 10)
 
-// ---------- realization (implements) ----------
-arrow('metadata', 'ifaces', 'implements', 'impl')
-arrow('subnames', 'ifaces', 'implements', 'impl')
 
 // ---------- dependencies (calls) ----------
 arrow('controller', 'registrar', 'registerWithLabel / renew / transferFrom')
