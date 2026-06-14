@@ -212,6 +212,9 @@ async function main() {
     'simplex/MetadataRenderer.sol/MetadataRenderer.json',
     [`.${tld}`])
   await write(baseRegistrar, 'setMetadataRenderer', [metadataRenderer.address])
+  // Cap label length at the DNS octet limit (63 bytes). Bounds labelOf storage
+  // and on-chain SVG/JSON render size. (security.md L4)
+  await write(baseRegistrar, 'setMaxLabelLength', [63n])
   const subnameRegistrar = await deploy('SubnameRegistrar',
     'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
     [ensRegistry.address])
