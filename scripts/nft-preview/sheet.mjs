@@ -21,9 +21,11 @@ const H = rows * (TILE + CAP) + (rows + 1) * GAP
 
 let body = `<rect width="${W}" height="${H}" fill="#222"/>`
 cases.forEach((c, i) => {
-  const name = c.name ?? (c.label + '.testing')
-  const inner = c.name ? tileInner(c.name, 'g' + i, '') : tileInner(c.label, 'g' + i)
-  const L = layout(name.length)
+  const label = c.name ?? c.label
+  const suffix = c.name ? '' : '.testing'
+  const name = label + suffix
+  const inner = tileInner(label, 'g' + i, suffix)
+  const L = layout(label.length, suffix.length)
   const cap = c.cap
     ? `${cap0(name.length, L)}  |  ${c.cap}`
     : `${c.label.length}-char label -> name ${name.length}  |  ${L.size}px x ${L.lines} line(s)`

@@ -9,37 +9,46 @@ export const P1 = 'M3.02958 8.60922L8.622 14.2013L14.3705 8.45375L17.1669 11.249
 export const P2 = 'M14.0923 25.5156L16.944 22.6642L16.9429 22.6634L22.6467 16.9612L17.0513 11.3675L17.0523 11.367L14.2548 8.56979L8.65972 2.97535L11.5114 0.123963L17.1061 5.71849L22.8099 0.015625L25.6074 2.81285L19.9035 8.51562L25.4984 14.1099L31.2025 8.40729L34 11.2045L28.2958 16.907L33.8917 22.5017L31.0399 25.3531L25.4442 19.7584L19.7409 25.4611L25.3365 31.0559L22.4848 33.9073L16.8892 28.3124L11.1864 34.0156L8.38885 31.2184L14.0923 25.5156Z'
 
 // --- layout heuristic (char-count based, portable to Solidity) ---
-// Worst-case safe: K is the assumed max glyph advance per em (lowercase 'm' in
-// bold sans ~0.83). USABLE is the text width budget (canvas 500 - 2*24 margin).
-// Pick the FEWEST lines (1..3) whose computed font size clears a per-line-count
-// floor; size = USABLE / (charsPerLine * K), capped per line count.
-// K = worst-case lowercase glyph advance (measured: bold 'm' = 1.042 em),
-// with a small cross-font buffer. Sizing to this guarantees even an all-'m'
-// label keeps the 5% side margins (USABLE = 500 - 2*25).
+// A label of up to 8 chars renders on ONE line, filling the width (font
+// maximised for that single-line limit). A longer label keeps that same
+// single-line font (the 8-char "anchor") and WRAPS instead of shrinking: the
+// label is balanced across up to 4 lines and the suffix gets its own final line
+// (so the dot leads it — never trails), up to 5 lines total. The font only drops
+// below the anchor if the label can't fit in those lines (beyond the 63-char
+// cap, so never in practice). This guarantees a longer name is never rendered
+// bigger than a shorter one. K = worst-case bold 'm' advance (measured 1.042 em)
+// so even an all-'m' label keeps the 5% side margins (USABLE = 500 - 2*25).
 export const K = 1.05
 const USABLE = 450
 const MIN = 14
-const MAXLINES = 3 // max rendered name = 63-char 2LD + ".testing" = 71 chars (subnames aren't tokens)
-const MAXForLines = { 1: 44, 2: 30, 3: 24 }
-const FLOORForLines = { 1: 22, 2: 16, 3: MIN }
+const MAXSIZE = 48 // so a 1-2 char label doesn't render absurdly large
 
-export function layout(len) {
-  for (let lines = 1; lines <= MAXLINES; lines++) {
-    const perLine = Math.ceil(len / lines)
-    let size = Math.floor(USABLE / (perLine * K))
-    if (size > MAXForLines[lines]) size = MAXForLines[lines]
-    if (size >= FLOORForLines[lines] || lines === MAXLINES)
-      return { size: Math.max(size, MIN), lines }
+export function layout(labelLen, suffixLen) {
+  if (labelLen <= 8) {
+    let size = Math.floor(USABLE / ((labelLen + suffixLen) * K))
+    if (size > MAXSIZE) size = MAXSIZE
+    return { size: Math.max(size, MIN), lines: 1 }
   }
+  let size = Math.floor(USABLE / ((8 + suffixLen) * K)) // 8-char single-line anchor
+  let perLine = Math.floor(USABLE / (size * K)) // chars per line at the anchor font
+  let labelLines = Math.ceil(labelLen / perLine)
+  if (labelLines > 4) {
+    labelLines = 4
+    perLine = Math.ceil(labelLen / 4)
+    size = Math.floor(USABLE / (perLine * K))
+  }
+  return { size: Math.max(size, MIN), lines: labelLines + 1 }
 }
 
-// balanced split into `lines` chunks (ASCII-simple; UTF-8 split-safety is a
-// Solidity-port concern noted separately)
-function wrap(s, lines) {
-  if (lines === 1) return [s]
-  const per = Math.ceil(s.length / lines)
+// Dot-aware split (ASCII-simple; UTF-8 split-safety is a Solidity-port concern
+// noted separately): 1 line -> whole name; otherwise the label is balanced
+// across (lines-1) lines and the suffix is the final line, so the dot leads it.
+function wrap(label, suffix, lines) {
+  if (lines === 1) return [label + suffix]
+  const per = Math.ceil(label.length / (lines - 1))
   const out = []
-  for (let i = 0; i < s.length; i += per) out.push(s.slice(i, i + per))
+  for (let i = 0; i < label.length; i += per) out.push(label.slice(i, i + per))
+  out.push(suffix)
   return out
 }
 
@@ -51,9 +60,8 @@ function xmlEscape(s) {
 // Inner content of a 500x500 tile (no outer <svg>); gradId makes the gradient
 // id unique when many tiles share one document.
 export function tileInner(label, gradId = 'g', suffix = '.testing') {
-  const name = label + suffix
-  const { size, lines } = layout(name.length)
-  const parts = wrap(name, lines).map(xmlEscape)
+  const { size, lines } = layout(label.length, suffix.length)
+  const parts = wrap(label, suffix, lines).map(xmlEscape)
   const lineH = Math.round(size * 1.2)
   const blockH = lines * lineH
   const firstBaseline = Math.round(252 - blockH / 2 + size * 0.74)
@@ -70,9 +78,10 @@ export function tileInner(label, gradId = 'g', suffix = '.testing') {
     // brand logo gradient (P2): cyan -> blue, official userSpaceOnUse coords (applied inside the logo group)
     `<linearGradient id="${lg}" x1="12.8381" y1="-0.678252" x2="9.54355" y2="31.4493" gradientUnits="userSpaceOnUse">` +
     `<stop stop-color="#01F1FF"/><stop offset="1" stop-color="#0197FF"/></linearGradient>` +
-    // name text gradient: linear-gradient(90deg, #019bfe 0%, #64fdff 100%)
+    // name text gradient: linear-gradient(90deg, #33CCFF 0%, #64fdff 100%)
+    // (start = half-way colour of the old #019bfe->#64fdff ramp, for contrast)
     `<linearGradient id="${tg}" x1="0" y1="0" x2="1" y2="0">` +
-    `<stop offset="0%" stop-color="#019bfe"/><stop offset="100%" stop-color="#64fdff"/></linearGradient>` +
+    `<stop offset="0%" stop-color="#33CCFF"/><stop offset="100%" stop-color="#64fdff"/></linearGradient>` +
     `</defs>` +
     `<rect width="500" height="500" fill="url(#${gradId})"/>` +
     // SimpleX brand mark, top-left (~66px): P1 white, P2 brand gradient
@@ -87,7 +96,8 @@ export function tileSVG(label, suffix = '.testing') {
 // CLI: node gen.mjs '{"label":"ffobar"}'
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const o = JSON.parse(process.argv[2] || '{}')
-  const svg = tileSVG(o.label ?? 'ffobar', o.suffix ?? '.testing')
-  writeFileSync(join(DIR, 'out.svg'), svg)
-  console.log('len', (o.label ?? 'ffobar').length + (o.suffix ?? '.testing').length, layout(((o.label ?? 'ffobar') + (o.suffix ?? '.testing')).length))
+  const label = o.label ?? 'ffobar'
+  const suffix = o.suffix ?? '.testing'
+  writeFileSync(join(DIR, 'out.svg'), tileSVG(label, suffix))
+  console.log('len', label.length + suffix.length, layout(label.length, suffix.length))
 }
