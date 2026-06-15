@@ -41,6 +41,9 @@ fuzz-verified), but unbounded is undesirable. **Fix:** all deploy scripts now
 call `baseRegistrar.setMaxLabelLength(63)` (the DNS octet limit) right after
 `setMetadataRenderer`, while the deployer still owns the registrar. 63 bytes =
 63 ASCII characters; fewer for multibyte labels (the cap is on `bytes(label).length`).
+Subname labels are capped the same way: `SubnameRegistrar.MAX_LABEL_LENGTH = 63`
+(a constant, since that contract is immutable and ownerless), enforced in both
+`createSubname` and `submitSubname`.
 
 ## Accepted risks
 
