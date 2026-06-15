@@ -24,7 +24,13 @@ fi
 echo ""
 echo "=== Starting frontend ==="
 cd ens-app-v3
+# Pin the chain to localhost inline: `next dev` otherwise reads
+# NEXT_PUBLIC_CHAIN_NAME=mainnet from .env.development.local and targets mainnet.
+# Inline vars override .env files, and clearing .next forces fresh inlining of
+# the per-run deployment addresses.
+rm -rf .next
 NEXT_PUBLIC_DEPLOYMENT_ADDRESSES="$ADDRS" \
+NEXT_PUBLIC_CHAIN_NAME=localhost \
 NEXT_PUBLIC_PROVIDER=http://127.0.0.1:8545 \
 NEXT_PUBLIC_SIMPLEX_TLD="$TLD" \
 exec pnpm dev
