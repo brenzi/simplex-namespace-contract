@@ -134,11 +134,22 @@ async function main() {
   const controller = { address: controllerProxy.address, abi: controllerImpl.abi }
 
   // PublicResolver must trust the controller so it can write records during register().
-  // PublicResolver is verbatim ENS; SNRC is wrapper-free, so pass address(0) for the
-  // NameWrapper slot (its wrapper-auth branch is then never taken).
+  // SubnameRegistrar owns + resolves subnames, soulbound to the 2LD NFT. Deployed
+  // before the resolver, whose nameWrapper slot points at it.
+  const subnameRegistrar = await deploy('SubnameRegistrar',
+    'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
+    [ensRegistry.address, baseRegistrar.address])
+
+  // PublicResolver is verbatim ENS. SNRC is wrapper-free for 2LDs (their node is
+  // owned directly by the NFT holder via auto-reclaim), but the resolver's
+  // NameWrapper slot is repurposed for the SubnameRegistrar so subname records
+  // authorise against the live 2LD holder (subnameRegistrar.ownerOf).
   const publicResolver = await deploy('PublicResolver',
     'resolvers/PublicResolver.sol/PublicResolver.json',
-    [ensRegistry.address, zeroAddress, controller.address, reverseRegistrar.address])
+    [ensRegistry.address, subnameRegistrar.address, controller.address, reverseRegistrar.address])
+
+  await write(subnameRegistrar, 'setResolver', [publicResolver.address])
+  await write(baseRegistrar, 'setSubnameHook', [subnameRegistrar.address])
 
   await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
 
@@ -156,12 +167,6 @@ async function main() {
   // Cap label length at the DNS octet limit (63 bytes). Bounds labelOf storage
   // and on-chain SVG/JSON render size. (security.md L4)
   await write(baseRegistrar, 'setMaxLabelLength', [63n])
-
-  // Subname creation + on-chain index. Users grant registry.setApprovalForAll(subnameRegistrar)
-  // before their first subname; createSubname forces the subname owner to the parent owner.
-  const subnameRegistrar = await deploy('SubnameRegistrar',
-    'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
-    [ensRegistry.address])
 
   // Genesis reserved-names list — these labels cannot be registered by the public.
   // Extend as needed before deploying to testnet / mainnet. Bulk in one tx.

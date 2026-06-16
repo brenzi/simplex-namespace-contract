@@ -117,11 +117,17 @@ There is no NameWrapper. Instead:
   `labelOf` index (`registerWithLabel`), and `tokenURI` that delegates to the
   swappable **`MetadataRenderer`**, which builds the JSON + SVG (with the domain
   name) fully on-chain — no off-chain metadata service.
-- **Subnames** are created + indexed by the immutable **`SubnameRegistrar`**:
-  plain registry subnodes, always owned by the 2LD owner (hard-wired,
-  parent-revocable), enumerable via `getChildren` without an indexer. Users
-  grant `registry.setApprovalForAll(subnameRegistrar, true)` before their first
-  subname.
+- **Subnames** are created + indexed by the immutable **`SubnameRegistrar`**,
+  which *owns* the subname registry nodes and makes them **soulbound to the 2LD
+  NFT**: a subname's effective owner is derived on read by `ownerOf` (it walks
+  the `parentOf` chain up to the 2LD node, whose registry owner the BaseRegistrar
+  **auto-reclaim** hook keeps equal to the token holder). So subnames follow the
+  NFT automatically and are never independently transferable; enumerable via
+  `getChildren` without an indexer. Re-registering an expired 2LD bumps a
+  per-2LD `generation` via BaseRegistrar's **`onReregister`** hook, retiring all
+  old subnames at once (lazy `purge` frees their storage). Users grant
+  `registry.setApprovalForAll(subnameRegistrar, true)` before their first subname.
+  See [`sequence-happy-flow.md`](./sequence-happy-flow.md) flows 3 & 7.
 
 ## Upgrade story
 
@@ -131,7 +137,7 @@ uses UUPS (`_authorizeUpgrade` gated on owner). Every other contract is
 `SubnameRegistrar`, resolver, oracles. The two seams that avoid needing a
 registrar redeploy: `MetadataRenderer` is swapped via
 `baseRegistrar.setMetadataRenderer(...)`, and the `SubnameRegistrar` index is
-reconstructible from the registry via `submitSubname` if it is ever redeployed.
+reconstructible by re-creating subnames if it is ever redeployed.
 
 ## Pricing
 

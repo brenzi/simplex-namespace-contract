@@ -18,14 +18,15 @@ versus an oversight. Update it when the design or these decisions change.
 | ID | Severity | Status | Summary |
 |----|----------|--------|---------|
 | H1 | High (operational) | Accepted (runbook) | Deployer keeps `SimplexController` ownership (incl. UUPS upgrade) until the multisig calls `acceptOwnership()` |
-| L1 | Low / informational | Accepted | `SubnameRegistrar` holds a registry-wide operator grant; safe only by immutability + the `owner(parentNode)==msg.sender` gate |
-| L2 | Low / informational | Accepted (by design) | Subnames are parent-revocable (`createSubname` can seize an existing subname) |
+| L1 | Low / informational | Accepted | `SubnameRegistrar` holds a registry-wide operator grant; safe only by immutability + the `_controller(parentNode)==msg.sender` gate |
+| L2 | Low / informational | Accepted (by design) | Subnames are **soulbound to the 2LD NFT** (`ownerOf` derives from the token holder); not independently owned or transferable |
 | L3 | Low | Accepted | `setMetadataRenderer` does no contract/ERC-165 check (fat-finger → recoverable metadata outage) |
 | L4 | Low | **Fixed** | Label length now capped at 63 bytes at deploy (`setMaxLabelLength(63)`) |
-| L5 | Low / informational | Accepted | `PublicResolver` deployed with `nameWrapper = address(0)` — `isAuthorised` quirk on unowned nodes (not exploitable) |
+| L5 | Low / informational | Accepted | `PublicResolver`'s `nameWrapper` slot is the `SubnameRegistrar` (subname auth via `ownerOf`); the 2LD itself is never wrapped |
 | L6 | Low / informational | Accepted | `maxLabelLength` is freely settable up/down (owner-trusted policy knob) |
 | L7 | Low / informational | Accepted (read-side) | Enumeration / `tokenURI` include expired-but-unburned names; readers must filter by `nameExpires` |
 | L8 | Low / informational | Accepted | `UniversalResolver` deployed with a `DummyGatewayProvider` (CCIP-read unused) |
+| L9 | Low / informational | Accepted (read-side) | A re-registered 2LD's old subname records keep resolving until `purge`d (generation invalidates ownership immediately; record cleanup is lazy) |
 
 No critical or high vulnerability was found **in the contracts** themselves;
 the single High is in the deploy/ownership handoff.
@@ -42,8 +43,7 @@ call `baseRegistrar.setMaxLabelLength(63)` (the DNS octet limit) right after
 `setMetadataRenderer`, while the deployer still owns the registrar. 63 bytes =
 63 ASCII characters; fewer for multibyte labels (the cap is on `bytes(label).length`).
 Subname labels are capped the same way: `SubnameRegistrar.MAX_LABEL_LENGTH = 63`
-(a constant, since that contract is immutable and ownerless), enforced in both
-`createSubname` and `submitSubname`.
+(a constant, since that contract has no general owner), enforced in `createSubname`.
 
 ## Accepted risks
 
@@ -67,27 +67,38 @@ and cannot be closed from the deploy script (only the cold owner can accept).
 Each user grants `ens.setApprovalForAll(subnameRegistrar, true)`, a
 registry-wide operator permission over **all** their ENS nodes. This is safe
 only because of two properties that an auditor must re-verify on any change:
-1. The contract is **immutable** — no proxy, no `owner`, no `delegatecall`, no
-   `selfdestruct` — and its **only** registry write is
-   `ens.setSubnodeOwner(parentNode, labelhash, msg.sender)` in `createSubname`.
-2. `createSubname` gates on `require(ens.owner(parentNode) == msg.sender)`
-   (`SubnameRegistrar.sol:67`). This line is **load-bearing**: without it, since
+1. The contract is **immutable** (no proxy, no general `owner`, no `delegatecall`,
+   no `selfdestruct`) and its only operator-authorised registry write is
+   `ens.setSubnodeRecord(parentNode, labelhash, address(this), resolver, 0)` in
+   `createSubname` — i.e. it can only create a subnode **owned by itself** under
+   a node the caller controls. (Its other registry writes, `setOwner`/`setResolver`
+   in `_clear`, act only on nodes it already owns.)
+2. `createSubname`/`deleteSubname` gate on `_controller(parentNode) == msg.sender`
+   — the 2LD NFT holder (for a 2LD parent, the registry owner via auto-reclaim;
+   for a subname parent, `ownerOf`). This is **load-bearing**: without it, since
    the contract is the grantor's operator, anyone could create subnames under
-   another approver's node. With it, only the parent owner can, and the subname
-   owner is forced to the parent owner.
+   another approver's node.
 
-**Accepted** as the deliberate design (mirrors how ENS users approve the
-NameWrapper, but with a minimal single-purpose contract). Users can revoke at
-any time with `setApprovalForAll(subnameRegistrar, false)`. A future
-`SubnameRegistrar` redeploy requires users to re-approve the new address; the
-index is reconstructible via `submitSubname`.
+**Accepted** as the deliberate design (a minimal, single-purpose stand-in for the
+NameWrapper). Users can revoke at any time with
+`setApprovalForAll(subnameRegistrar, false)`. A `SubnameRegistrar` redeploy
+requires users to re-approve the new address and re-create subnames.
 
-### L2 — Subname seize / reclaim is intentional
-`createSubname` forces the subname owner to the parent owner, so calling it for
-an existing subname **reassigns** it to the parent — even if a third party holds
-it. This is the wrapper-free, parent-revocable model (no fuses/emancipation).
-**Accepted by design.** Integrators must not treat subnames as immutable or
-"sellable"; a subname is only as durable as the parent owner's goodwill.
+### L2 — Subnames are soulbound to the 2LD NFT (by design)
+A subname has no independent owner: in the registry it is owned by the
+`SubnameRegistrar`, and its effective owner is whoever holds the parent 2LD token
+(`ownerOf(node)` walks up the parent chain to the 2LD node, whose registry owner
+tracks the NFT via BaseRegistrar **auto-reclaim** on transfer). Consequences,
+all intended:
+- Transferring the 2LD NFT moves every subname with it instantly — no reclaim,
+  no re-seize, no stale ownership, and the previous owner loses all subname rights
+  the moment the token leaves (including the ability to create new subnames,
+  because the 2LD registry node also follows the NFT).
+- Subnames are **not** independently sellable/transferable; integrators must not
+  treat them as standalone assets.
+- The verbatim `PublicResolver` authorises subname records against this `ownerOf`
+  via its `nameWrapper` hook (see L5).
+**Accepted by design.** See also L9 (re-registration cleanup is lazy).
 
 ### L3 — `setMetadataRenderer` has no contract check
 Setting the renderer to an EOA or a non-conforming contract makes `tokenURI`
@@ -97,13 +108,17 @@ attacker-reachable, and fully recoverable by setting a correct renderer. Deploy
 scripts set a valid renderer; operators should spot-check `tokenURI(sampleId)`
 after any future `setMetadataRenderer`.
 
-### L5 — `PublicResolver` with `nameWrapper = address(0)`
-SNRC is wrapper-free, so the verbatim `PublicResolver` is deployed with
-`nameWrapper = address(0)`. For an **unowned** node (`owner == 0`),
-`isAuthorised` takes the wrapper branch (`0 == address(nameWrapper)`) and calls
-`ownerOf` on `address(0)`, reverting instead of returning `false`. Unowned nodes
-are not writable regardless, so this is not exploitable. **Accepted** (and we do
-not modify the verbatim resolver).
+### L5 — `PublicResolver`'s `nameWrapper` slot is the `SubnameRegistrar`
+The verbatim `PublicResolver` is deployed with `nameWrapper = subnameRegistrar`
+(not `address(0)`). Its `isAuthorised(node)` does `if (ens.owner(node) ==
+nameWrapper) owner = nameWrapper.ownerOf(node)` — so for a subname node (owned by
+the registrar) the resolver authorises records against the live 2LD holder
+(`subnameRegistrar.ownerOf`), while a **2LD** node (owned directly by the NFT
+holder via auto-reclaim) never takes that branch and authorises directly. So the
+2LD is **not** wrapped; only subname auth routes through the registrar. The
+registrar implements just the one function the resolver calls (`ownerOf(uint256)`);
+no other `INameWrapper` method is invoked on this path. We do not modify the
+verbatim resolver — only the constructor argument. **Accepted.**
 
 ### L6 — `maxLabelLength` not monotonic
 Unlike the controller's `minCharLength` (monotonic decrease), the registrar's
@@ -125,6 +140,20 @@ The `UniversalResolver` is deployed with a dummy CCIP-read gateway provider.
 SNRC resolves on-chain (text records), so no off-chain gateway is relied upon.
 **Accepted** as long as no CCIP-read path is introduced; revisit if off-chain
 resolution is ever added.
+
+### L9 — Re-registered 2LD's old subname records resolve until purged
+When a 2LD expires and is re-registered, BaseRegistrar calls
+`subnameRegistrar.onReregister(node)`, which bumps a per-2LD `generation`. This
+invalidates the previous owner's subnames **immediately** at the ownership level:
+`ownerOf` returns `address(0)` for them, so no one can modify them and the dApp
+won't list them. But their **stored resolver records keep resolving** until the
+registry/resolver storage is cleared — you cannot atomically delete an unbounded
+number of subnames inside the re-registration tx. Cleanup is therefore a
+permissionless, batched `purge(parentNode, labelhashes[])` (storage-refund
+incentivised). **Accepted (read-side):** this matches plain ENS (an expired
+name's subnames also linger until cleared); the dApp should `purge` on 2LD
+acquisition. The leak is records-only — ownership/authorisation never transfers
+to the new owner without an explicit `createSubname`.
 
 ## Assurances (verified properties)
 

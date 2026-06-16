@@ -27,13 +27,13 @@ const POS = {
 
 // Hand-tuned arrow geometry
 const GEOM = {
-  "controller->registrar": { x: 372.74, y: 546, points: [[0,0],[332.94,340.1]] },
+  "controller->registrar": { x: 372.74, y: 656, points: [[0,0],[332.94,230.1]] },
   "controller->registry": { x: 486, y: 503.16, points: [[0,0],[230.22,97.93]] },
   "controller->resolver": { x: 483.46, y: 255.43, points: [[0,0],[132.9,-67.91],[302.32,-110.21]] },
   "controller->oracle": { x: -40, y: 499.57, points: [[0,0],[-207.48,87.43]] },
   "controller->smpxnft": { x: -13.85, y: 240, points: [[0,0],[-205.79,-132]] },
   "controller->reverse": { x: -40, y: 364.69, points: [[0,0],[-162,-15.77]] },
-  "oracle->chainlink": { x: -378.59, y: 697, points: [[0,0],[-1.11,103]] },
+  "oracle->chainlink": { x: -378.59, y: 749, points: [[0,0],[-1.11,51]] },
   "registrar->registry": { x: 862.83, y: 886.1, points: [[0,0],[44.16,-124.02]] },
   "registrar->metadata": { x: 592.16, y: 1051.67, points: [[0,0],[-171.17,-2.1]] },
   "subnames->registry": { x: 882.67, y: 492.18, points: [[0,0],[13.13,108.9]] },
@@ -121,35 +121,54 @@ const arrow = (fromKey, toKey, label, kind = 'dep') => {
 }
 
 const C = { custom: '#ffec99', v3: '#b2f2bb', upstream: '#a5d8ff', external: '#e9ecef', iface: '#f3d9fa' }
+const DS = '#e8590c' // deployment-specific deploy value (varies per TLD / network)
 
 // ---------- title + legend ----------
 text(null, POS.title[0], POS.title[1], 'SNRC v3 — contract class diagram (storage keys + function signatures)', 20)
 box('legend', 1040, 26, '#ffffff')
 text('legend', 10, 6, 'yellow = SNRC custom   |   green = upstream + v3 diff   |   blue = verbatim upstream   |   violet = interface catalog   |   gray = external   |   →  calls   (realized interfaces are listed in each box title: "is …")', 10)
+text(null, POS.legend[0], -14, 'orange text = deploy-time value (mainnet .testing); deployment-specific (varies per TLD / network)', 10, { strokeColor: DS })
 
 // ========== SimplexController ==========
-box('controller', 520, 300, C.custom, { strokeWidth: 2 })
+box('controller', 520, 410, C.custom, { strokeWidth: 2 })
 text('controller', 10, 8, 'SimplexController   «UUPS proxy»', 13)
 divider('controller', 30, 520)
 text('controller', 10, 36, 'storage:\n  base : BaseRegistrarImplementation\n  prices : IPriceOracle   ens : ENS\n  commitments : mapping(bytes32 commitment => uint256 ts)\n  reservedNames : mapping(bytes32 labelhash => bool)\n  tldNode : bytes32   tldSuffix : string   minCharLength : uint8\n  smpxNft : SMPXNFT   nftGateEnabled : bool\n  minCommitmentAge / maxCommitmentAge : uint256\n  priceOracleFrozen : bool   treasury : address', 10)
 divider('controller', 168, 520)
 text('controller', 10, 174, 'functions:\n  initialize(base, prices, …, config, owner)\n  commit(bytes32 commitment)\n  register(Registration) payable\n  renew(string label, uint256 duration, bytes32 referrer) payable\n  registerReserved(string, address, uint256)\n  addReservedNames(string[]) / removeReservedNames(string[])\n  rentPrice(string,uint256) / available(string) / valid(string)\n  setMinCharLength / disableNftGate / setPriceOracle / freezePriceOracle\n  setTreasury / withdraw / _authorizeUpgrade(onlyOwner)', 10)
 
+divider('controller', 302, 520)
+text('controller', 10, 308, 'deploy config (.testing):', 10)
+text('controller', 10, 321, 'minCommitmentAge 60s · maxCommitmentAge 86400s (24h)', 10)
+text('controller', 10, 334, 'tldSuffix ".testing"  ·  minCharLength 6', 10, { strokeColor: DS })
+text('controller', 10, 347, 'nftGateEnabled true', 10, { strokeColor: DS })
+text('controller', 10, 360, 'smpxNft 0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291', 10, { strokeColor: DS })
+text('controller', 10, 373, 'cold owner simplexchat.eth (0xDa06…0340)', 10, { strokeColor: DS })
+text('controller', 10, 386, 'reserved simplex, simplex-chat', 10, { strokeColor: DS })
+
 // ========== BaseRegistrarImplementation v3 ==========
-box('registrar', 540, 320, C.v3, { strokeWidth: 2 })
+box('registrar', 540, 360, C.v3, { strokeWidth: 2 })
 text('registrar', 10, 8, 'BaseRegistrarImplementation  v3\n  is ERC721Enumerable, IBaseRegistrar, Ownable', 12)
 divider('registrar', 44, 540)
 text('registrar', 10, 50, 'storage:\n  expiries : mapping(uint256 tokenId => uint256)\n  labelOf : mapping(uint256 tokenId => string)   (tokenId = labelhash)\n  metadataRenderer : address   maxLabelLength : uint256 (0=∞)\n  controllers : mapping(address => bool)\n  ens : ENS   baseNode : bytes32\n  _ownedTokens / _allTokens (ERC721Enumerable)', 10)
 divider('registrar', 162, 540)
 text('registrar', 10, 168, 'functions:\n  registerWithLabel(string label, address owner, uint256 dur)\n  register(uint256 id, …) / registerOnly(…)  (upstream, no label)\n  renew(uint256,uint256) / reclaim(uint256,address)\n  ownerOf / nameExpires / available(uint256)\n  balanceOf / tokenOfOwnerByIndex / totalSupply / tokenByIndex\n  tokenURI(uint256) / labelOf(uint256)\n  setMetadataRenderer(address) / setMaxLabelLength(uint256) (onlyOwner)\n  addController / removeController / setResolver (onlyOwner)', 10)
 
+divider('registrar', 290, 540)
+text('registrar', 10, 296, 'deploy config (.testing):', 10)
+text('registrar', 10, 309, 'maxLabelLength 63   (DNS octet limit)', 10)
+text('registrar', 10, 322, 'baseNode namehash(".testing")', 10, { strokeColor: DS })
+
 // ========== MetadataRenderer ==========
-box('metadata', 520, 130, C.custom, { strokeWidth: 2 })
+box('metadata', 520, 152, C.custom, { strokeWidth: 2 })
 text('metadata', 10, 8, 'MetadataRenderer   «swappable»\n  is IMetadataRenderer', 12)
 divider('metadata', 44, 520)
 text('metadata', 10, 50, 'storage:  suffix : string  (e.g. ".testing")', 10)
 divider('metadata', 70, 520)
 text('metadata', 10, 76, 'functions:\n  constructor(string suffix)\n  tokenURI(uint256, string label) → data:application/json;base64 (JSON + SVG)', 10)
+
+divider('metadata', 118, 520)
+text('metadata', 10, 124, 'deploy (.testing):  suffix = ".testing"', 10, { strokeColor: DS })
 
 // ========== SubnameRegistrar ==========
 box('subnames', 520, 230, C.custom, { strokeWidth: 2 })
@@ -176,10 +195,16 @@ divider('resolver', 86, 480)
 text('resolver', 10, 92, 'functions:\n  setText / text / setAddr / addr / multicallWithNodeCheck\n  isAuthorised(node) [owner | operator | trustedETHController]', 10)
 
 // ========== PriceOracle ==========
-box('oracle', 430, 110, C.upstream)
+box('oracle', 430, 162, C.upstream)
 text('oracle', 10, 8, 'ExponentialPremiumPriceOracle   «verbatim»\n  is IPriceOracle', 11)
 divider('oracle', 42, 430)
 text('oracle', 10, 48, 'functions:  price(string,uint256 expires,uint256 dur)\n             → Price{base, premium}', 10)
+
+divider('oracle', 90, 430)
+text('oracle', 10, 96, 'deploy config (.testing):', 10)
+text('oracle', 10, 109, 'premium 1e26 start · 21-day halving', 10)
+text('oracle', 10, 122, 'ETH/USD feed 0x5f4e…8419 (Chainlink)', 10, { strokeColor: DS })
+text('oracle', 10, 135, 'base prices 0 — free, every length', 10, { strokeColor: DS })
 
 // ========== Reverse ==========
 box('reverse', 430, 96, C.upstream)

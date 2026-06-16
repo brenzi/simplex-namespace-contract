@@ -176,10 +176,20 @@ async function main() {
     console.log(`Reserved: ${label}.${tld}`)
   }
 
+  // SubnameRegistrar owns + resolves subnames, soulbound to the 2LD NFT. Deployed
+  // before the resolver, whose nameWrapper slot points at it.
+  const subnameRegistrar = await deploy('SubnameRegistrar',
+    'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
+    [ensRegistry.address, baseRegistrar.address])
+
   const publicResolver = await deploy('PublicResolver',
     'resolvers/PublicResolver.sol/PublicResolver.json',
-    // wrapper-free v3: address(0) for the NameWrapper slot in verbatim PublicResolver
-    [ensRegistry.address, zeroAddress, controller.address, reverseRegistrar.address])
+    // wrapper-free v3: the resolver's NameWrapper slot is repurposed for the
+    // SubnameRegistrar (the 2LD itself is never wrapped).
+    [ensRegistry.address, subnameRegistrar.address, controller.address, reverseRegistrar.address])
+
+  await write(subnameRegistrar, 'setResolver', [publicResolver.address])
+  await write(baseRegistrar, 'setSubnameHook', [subnameRegistrar.address])
 
   await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
 
@@ -215,9 +225,6 @@ async function main() {
   // Cap label length at the DNS octet limit (63 bytes). Bounds labelOf storage
   // and on-chain SVG/JSON render size. (security.md L4)
   await write(baseRegistrar, 'setMaxLabelLength', [63n])
-  const subnameRegistrar = await deploy('SubnameRegistrar',
-    'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
-    [ensRegistry.address])
 
   // Hand every persistent role off to the cold owner. After this block,
   // the deployer EOA holds nothing on any deployed contract — its only
