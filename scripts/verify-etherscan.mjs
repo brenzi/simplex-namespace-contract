@@ -173,6 +173,13 @@ async function pollStatus(guid) {
 
 let failures = 0
 for (const t of TARGETS) {
+  // Wrapper-free v3 leaves removed contracts (NameWrapper, DefaultReverseRegistrar,
+  // legacy controllers) at the zero address — nothing is deployed there to verify,
+  // and some of their artifacts no longer exist in ens-contracts. Skip them.
+  if (!t.address || /^0x0+$/i.test(t.address)) {
+    console.log(`\n--- ${t.label} ---\n  address: ${t.address}\n  skipped (not deployed)`)
+    continue
+  }
   const guid = await verify(t)
   if (!guid) {
     failures++

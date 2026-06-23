@@ -123,9 +123,10 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
     'reverseRegistrar/ReverseRegistrar.sol/ReverseRegistrar.json',
     [ensRegistry.address])
 
-  const defaultReverseRegistrar = await deploy('DefaultReverseRegistrar',
-    'reverseRegistrar/DefaultReverseRegistrar.sol/DefaultReverseRegistrar.json')
-
+  // addr.reverse must be owned by a ReverseRegistrar so the verbatim PublicResolver's
+  // ReverseClaimer constructor succeeds. Reverse resolution is otherwise disabled:
+  // there is no DefaultReverseRegistrar and the controller gets address(0) for both
+  // reverse args, so this registrar is never wired to the controller.
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash('reverse'), account.address])
   await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
@@ -150,8 +151,8 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
       priceOracle.address,
       60n,
       86400n,
-      reverseRegistrar.address,
-      defaultReverseRegistrar.address,
+      zeroAddress, // reverse resolution disabled — no ReverseRegistrar wiring
+      zeroAddress, // no DefaultReverseRegistrar
       ensRegistry.address,
       {
         tldNode,
@@ -171,8 +172,6 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   const controller = { address: controllerProxy.address, abi: controllerImpl.abi }
 
   await write(baseRegistrar, 'addController', [controller.address])
-  await write(reverseRegistrar, 'setController', [controller.address, true])
-  await write(defaultReverseRegistrar, 'setController', [controller.address, true])
 
   const reservedAtDeploy = ['simplex', 'simplex-chat']
   await write(controller, 'addReservedNames', [reservedAtDeploy])
@@ -195,8 +194,6 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   // the registrar (before the ownership handover below).
   await write(subnameRegistrar, 'setResolver', [publicResolver.address])
   await write(baseRegistrar, 'setSubnameHook', [subnameRegistrar.address])
-
-  await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
 
   const dummyGateway = await deploy('DummyGatewayProvider',
     'mocks/DummyGatewayProvider.sol/DummyGatewayProvider.json')
@@ -228,7 +225,6 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   if (ownerAddress.toLowerCase() !== account.address.toLowerCase()) {
     await write(baseRegistrar, 'transferOwnership', [ownerAddress])
     await write(reverseRegistrar, 'transferOwnership', [ownerAddress])
-    await write(defaultReverseRegistrar, 'transferOwnership', [ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('reverse'), ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('eth-usd.data.eth'), ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('data.eth'), ownerAddress])
@@ -241,7 +237,7 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
     ENSRegistry: ensRegistry.address,
     BaseRegistrarImplementation: baseRegistrar.address,
     ReverseRegistrar: reverseRegistrar.address,
-    DefaultReverseRegistrar: defaultReverseRegistrar.address,
+    DefaultReverseRegistrar: zeroAddress,
     NameWrapper: zeroAddress, // wrapper-free v3
     MetadataRenderer: metadataRenderer.address,
     SubnameRegistrar: subnameRegistrar.address,

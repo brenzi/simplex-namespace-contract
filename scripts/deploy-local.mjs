@@ -69,10 +69,10 @@ async function main() {
     'reverseRegistrar/ReverseRegistrar.sol/ReverseRegistrar.json',
     [ensRegistry.address])
 
-  const defaultReverseRegistrar = await deploy('DefaultReverseRegistrar',
-    'reverseRegistrar/DefaultReverseRegistrar.sol/DefaultReverseRegistrar.json')
-
-  // Set up reverse namespace
+  // addr.reverse must be owned by a ReverseRegistrar so the verbatim PublicResolver's
+  // ReverseClaimer constructor succeeds. Reverse resolution is otherwise disabled:
+  // there is no DefaultReverseRegistrar and the controller gets address(0) for both
+  // reverse args, so this registrar is never wired to the controller.
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash('reverse'), account.address])
   await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
 
@@ -111,8 +111,8 @@ async function main() {
       priceOracle.address,
       60n,
       86400n,
-      reverseRegistrar.address,
-      defaultReverseRegistrar.address,
+      zeroAddress, // reverse resolution disabled — no ReverseRegistrar wiring
+      zeroAddress, // no DefaultReverseRegistrar
       ensRegistry.address,
       {
         tldNode,
@@ -151,12 +151,8 @@ async function main() {
   await write(subnameRegistrar, 'setResolver', [publicResolver.address])
   await write(baseRegistrar, 'setSubnameHook', [subnameRegistrar.address])
 
-  await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
-
   // Wire up
   await write(baseRegistrar, 'addController', [controller.address])
-  await write(reverseRegistrar, 'setController', [controller.address, true])
-  await write(defaultReverseRegistrar, 'setController', [controller.address, true])
   console.log(`Controller wired up`)
 
   // On-chain NFT metadata: deploy the renderer and point the registrar's tokenURI at it.
@@ -208,7 +204,7 @@ async function main() {
     ENSRegistry: ensRegistry.address,
     BaseRegistrarImplementation: baseRegistrar.address,
     ReverseRegistrar: reverseRegistrar.address,
-    DefaultReverseRegistrar: defaultReverseRegistrar.address,
+    DefaultReverseRegistrar: zeroAddress,
     NameWrapper: zeroAddress, // wrapper-free v3
     MetadataRenderer: metadataRenderer.address,
     SubnameRegistrar: subnameRegistrar.address,
