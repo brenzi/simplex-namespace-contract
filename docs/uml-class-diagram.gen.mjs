@@ -176,7 +176,7 @@ text('subnames', 10, 8, 'SubnameRegistrar   «immutable»\n  is ISubnameRegistra
 divider('subnames', 44, 520)
 text('subnames', 10, 50, 'storage:\n  ens : ENS (immutable)\n  labelOf : mapping(bytes32 labelhash => string)\n  childIndexed : mapping(bytes32 node => bool)\n  _children : mapping(bytes32 parentNode => bytes32[])', 10)
 divider('subnames', 138, 520)
-text('subnames', 10, 144, 'functions:\n  constructor(ENS)\n  createSubname(bytes32 parentNode, string label) → node\n  submitSubname(bytes32 parentNode, string label)\n  getChildren(bytes32 parent, uint256 start, uint256 count)\n  childrenLength(bytes32 parent)', 10)
+text('subnames', 10, 144, 'functions:\n  constructor(ENS, baseRegistrar)\n  createSubname(bytes32 parentNode, string label) → node\n  deleteSubname(bytes32 parentNode, string label)\n  getChildren(bytes32 parent, uint256 start, uint256 count)\n  childrenLength(bytes32 parent)', 10)
 
 // ========== ENSRegistry ==========
 box('registry', 460, 150, C.upstream)
@@ -190,7 +190,7 @@ text('registry', 10, 92, 'functions:\n  setSubnodeOwner / setResolver / setRecor
 box('resolver', 480, 150, C.upstream)
 text('resolver', 10, 8, 'PublicResolver   «verbatim»', 12)
 divider('resolver', 30, 480)
-text('resolver', 10, 36, 'storage:\n  versionable_texts : node => key(string) => string\n  versionable_addresses : node => coinType(uint) => bytes\n  nameWrapper : INameWrapper  (deployed as address(0))', 10)
+text('resolver', 10, 36, 'storage:\n  versionable_texts : node => key(string) => string\n  versionable_addresses : node => coinType(uint) => bytes\n  nameWrapper : INameWrapper  (deployed as SubnameRegistrar)', 10)
 divider('resolver', 86, 480)
 text('resolver', 10, 92, 'functions:\n  setText / text / setAddr / addr / multicallWithNodeCheck\n  isAuthorised(node) [owner | operator | trustedETHController]', 10)
 
@@ -227,7 +227,7 @@ text('chainlink', 10, 30, 'latestRoundData()', 10)
 box('ifaces', 360, 250, C.iface)
 text('ifaces', 10, 8, '«interface catalog» (reference only)', 12)
 divider('ifaces', 30, 360)
-text('ifaces', 10, 36, 'realized by their own contract (see "is …"):\n  IMetadataRenderer  ← MetadataRenderer\n    tokenURI(uint256, string) → string\n  ISubnameRegistrar  ← SubnameRegistrar\n    createSubname / submitSubname /\n    getChildren / childrenLength / labelOf\n\nupstream interfaces:\n  IBaseRegistrar ← BaseRegistrar\n  IETHRegistrarController ← SimplexController\n  IPriceOracle ← price oracle\n  INameWrapper (kept only for PublicResolver)', 10)
+text('ifaces', 10, 36, 'realized by their own contract (see "is …"):\n  IMetadataRenderer  ← MetadataRenderer\n    tokenURI(uint256, string) → string\n  ISubnameRegistrar  ← SubnameRegistrar\n    createSubname / deleteSubname /\n    getChildren / childrenLength / labelOf\n\nupstream interfaces:\n  IBaseRegistrar ← BaseRegistrar\n  IETHRegistrarController ← SimplexController\n  IPriceOracle ← price oracle\n  INameWrapper (kept only for PublicResolver)', 10)
 
 
 // ---------- dependencies (calls) ----------

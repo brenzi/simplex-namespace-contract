@@ -6,33 +6,43 @@ adapted for SimpleX Chat. It maps human-readable names (`alice.simplex`,
 
 The full design rationale lives in
 [`snrc-implementation-plan.md`](../snrc-implementation-plan.md). This document
-gives the operational picture an integrator or auditor needs.
+gives the operational picture an integrator or auditor needs. For a
+plain-language summary of how SNRC differs from ENS, see
+[`ens-diff.md`](./ens-diff.md).
 
 ---
 
 ## Components
 
 ```
-                ┌──────────────────────┐
-                │ ENSRegistry          │ ◄─── owner of every node (verbatim)
-                └──────────┬───────────┘
-                           │ owner(node) / resolver(node)
-                ┌──────────┴────────────────┐
-                │ BaseRegistrar v3 (immut.)  │ ◄─ ERC-721 + ERC721Enumerable,
-                │   labelOf, tokenURI        │    tokenId = labelhash
-                └──────────┬─────────────────┘
-                  controllers │ tokenURI → ┌──────────────────┐
-                           │              │ MetadataRenderer │ (on-chain JSON+SVG)
-        ┌──────────────────┴───────┐      └──────────────────┘
-        │                          │
-┌───────┴────────────┐    ┌────────┴───────────┐    ┌──────────────────┐
-│ SimplexController  │ ── │ PublicResolver     │ ── DummyOracle/Chainlink
-│   (UUPS proxy)     │    └────────────────────┘    └──────────────────┘
-└───────┬────────────┘
-        ├─ minCharLength / reservedNames / nftGate ── enforced in register()
-        └─ admin ── setMinCharLength, addReservedNames, disableNftGate, registerReserved
+      ┌────────────────────────────┐
+      │ ENSRegistry  (verbatim)    │  owner + resolver of every node
+      └──────────────┬─────────────┘
+                     │
+                     ▼
+      ┌────────────────────────────┐   tokenURI   ┌────────────────────────────┐
+      │ BaseRegistrar v3           │─────────────▶│ MetadataRenderer           │
+      │ ERC-721 + Enumerable,      │              │ on-chain JSON + SVG        │
+      │ labelOf · tokenURI         │              └────────────────────────────┘
+      └──────────────┬─────────────┘
+                     │ controllers
+                     ▼
+      ┌────────────────────────────┐   records    ┌────────────────────────────┐
+      │ SimplexController          │─────────────▶│ PublicResolver (verbatim)  │
+      │ (UUPS proxy)               │              │ text: simplex.contact,     │
+      └──────────────┬─────────────┘              │ simplex.channel            │
+                     │ price()                    └────────────────────────────┘
+                     ▼
+      ┌────────────────────────────┐
+      │ Price oracle               │
+      │ DummyOracle / Chainlink    │
+      └────────────────────────────┘
 
-   SubnameRegistrar (immutable) ── creates + indexes registry subnodes (parent-owned)
+  register() enforces:  minCharLength · reservedNames · nftGate
+  admin:  setMinCharLength · addReservedNames · disableNftGate · registerReserved
+
+  SubnameRegistrar (immutable) — owns + indexes registry subnodes, soulbound to the
+  2LD NFT; it is also the PublicResolver's nameWrapper slot (subname auth via ownerOf).
 ```
 
 `ENSRegistry`, `ReverseRegistrar`, `Root`, `PublicResolver`, `StringUtils`,
@@ -42,7 +52,8 @@ price-oracle interfaces are vendored verbatim from ENS. `SimplexController` is c
 label index + `tokenURI`); `MetadataRenderer` (swappable) and `SubnameRegistrar`
 (immutable) are new SNRC contracts. **There is no NameWrapper** — only the
 `INameWrapper` interface is kept, because verbatim `PublicResolver` imports it
-(deployed with `nameWrapper = address(0)`). See the per-file diff in the plan.
+(deployed with `nameWrapper = SubnameRegistrar`, so subname records authorise via
+`SubnameRegistrar.ownerOf`). See the per-file diff in the plan.
 
 ## TLD strategy
 
@@ -50,14 +61,16 @@ There is **one deployment per TLD**. Each is an independent ENS-shaped stack
 (`ENSRegistry → BaseRegistrar v3 → SimplexController + PublicResolver +
 MetadataRenderer + SubnameRegistrar + Root + ReverseRegistrar`). The TLDs:
 
-| TLD        | NFT gate | Min chars | Launch |
-|------------|----------|-----------|--------|
-| `.testing` | enabled  | 6 → 3     | first  |
-| `.simplex` | disabled | 6 → 3     | later  |
+| TLD        | NFT gate             | Min chars | Launch |
+|------------|----------------------|-----------|--------|
+| `.testing` | enabled → **lifted** | 6 → 3     | first  |
+| `.simplex` | disabled             | 6 → 3     | later  |
 
-Both TLDs share the same `SimplexController` source. `.simplex` constructs it
-with `smpxNft = address(0)` and `nftGateEnabled = false`, making the NFT-gate
-code path dead.
+`.testing` launched NFT-gated; the gate was disabled on-chain on 2026-07-09
+(`disableNftGate`, one-way), so `.testing` registration is now open — and with an
+all-zero price oracle it is also free. `.simplex` shares the same
+`SimplexController` source but constructs it with `smpxNft = address(0)` and
+`nftGateEnabled = false`, so its NFT-gate code path is dead from the start.
 
 ## Data flow: register
 
@@ -98,10 +111,9 @@ records:
 Each of these stores a comma-separated list of URLs (primary first,
 fallbacks after) so a name can advertise multiple SMP servers for
 redundancy. Clients SHOULD try the URLs in order. The on-chain layer
-remains a single text-record string; the SNRC REST resolver
-(`scripts/resolver/snrc-resolve.py`) and the dApp share an identical
-parse rule (split on `,`, trim, drop empties) so the two sides
-round-trip cleanly. The dApp's editor caps the list at 5 entries; the
+remains a single text-record string; the dApp and any resolver client
+share an identical parse rule (split on `,`, trim, drop empties) so the
+two sides round-trip cleanly. The dApp's editor caps the list at 5 entries; the
 on-chain record itself is unconstrained.
 
 The frontend renders both as first-class social profile entries with the
@@ -152,8 +164,10 @@ expired names) verbatim.
 | 4      | $32         |
 | 3      | $128        |
 
-For local dev, we use ENS's `DummyOracle` (fixed ETH/USD = $1). On Sepolia
-and mainnet we point the oracle at the live Chainlink ETH/USD feed.
+For local dev, we use ENS's `DummyOracle` (fixed ETH/USD = $1). On mainnet we
+point the oracle at the live Chainlink ETH/USD feed. The table above is the
+`.simplex` production curve; the live `.testing` deployment uses an all-zero
+oracle, so registration there is **free**.
 
 ## Admin authority
 
@@ -188,7 +202,6 @@ The full per-file diff against `ensdomains/ens-app-v3` is the audit surface.
 | Network | Provider              | NFT contract                                  | Oracle                                  |
 |---------|-----------------------|-----------------------------------------------|------------------------------------------|
 | local   | Hardhat node          | `MockSMPXNFT`                                 | `DummyOracle` (fixed $1/ETH)             |
-| Sepolia | Sepolia testnet       | `MockSMPXNFT` deployed once                   | Chainlink ETH/USD `0x694AA17…`           |
 | Mainnet | Ethereum              | `0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291` | Chainlink ETH/USD                        |
 
 See [`deployment.md`](./deployment.md) for the per-network checklist.
@@ -219,6 +232,6 @@ simplex-namespace-contract/      ← parent repo (this)
   scripts/
     deploy-local.mjs             ← parameterized by SIMPLEX_TLD env var
     run-local.sh                 ← orchestrates node + deploy + frontend
-  test/e2e/simplex-flow.spec.ts  ← 14 Playwright tests
+  test/e2e/simplex-flow.spec.ts  ← 25 Playwright tests
   docs/                          ← this directory
 ```

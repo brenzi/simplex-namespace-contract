@@ -1,7 +1,10 @@
 # SNRC v3 — security review & accepted risks
 
-Review date: 2026-06-14. Scope: the wrapper-free v3 contracts that differ from
-upstream ENS, plus the deploy scripts.
+Review dates: 2026-06-14 (initial) and 2026-07-09 (independent re-review on the
+Fable model — see the dated section at the end). Scope: the wrapper-free v3
+contracts that differ from upstream ENS, plus the deploy scripts. The `.testing`
+TLD is now live on mainnet; findings whose status changed with deployment reality
+are called out in the re-review.
 
 - `ens-contracts/contracts/ethregistrar/BaseRegistrarImplementation.sol` (v3 changes)
 - `ens-contracts/contracts/simplex/MetadataRenderer.sol` (new)
@@ -31,6 +34,9 @@ versus an oversight. Update it when the design or these decisions change.
 No critical or high vulnerability was found **in the contracts** themselves;
 the single High is in the deploy/ownership handoff.
 
+> A second, independent review on 2026-07-09 (run on Fable) confirmed this ledger
+> and added findings **N1–N8** — see [the re-review](#2026-07-09--independent-re-review-fable).
+
 ## Fixed
 
 ### L4 — Unbounded label length → capped at 63 bytes
@@ -49,18 +55,18 @@ Subname labels are capped the same way: `SubnameRegistrar.MAX_LABEL_LENGTH = 63`
 
 ### H1 — Two-step ownership handoff window (operational)
 `SimplexController` is `Ownable2StepUpgradeable`. The deploy script calls
-`transferOwnership(multisig)`, which only sets `pendingOwner`; the multisig must
-then call `acceptOwnership()`. Until it does, the **ephemeral deployer key**
+`transferOwnership(coldOwner)`, which only sets `pendingOwner`; the cold owner
+must then call `acceptOwnership()`. Until it does, the **ephemeral deployer key**
 still owns the controller — including `_authorizeUpgrade` (UUPS), `setPriceOracle`,
-`disableNftGate`, `setMinCharLength`, `withdraw`, `setTreasury`. (The registrar
-and reverse registrars are 1-step `Ownable` and transfer immediately; only the
-controller has this window.)
+`disableNftGate`, `setMinCharLength`, and `withdraw` (which pays `owner()`; there
+is no `setTreasury`). (The registrar and reverse registrars are 1-step `Ownable`
+and transfer immediately; only the controller has this window.)
 
 **Accepted because** it is inherent to the ephemeral-deployer + 2-step pattern
 and cannot be closed from the deploy script (only the cold owner can accept).
 **Required operational mitigation (runbook):**
-1. Immediately after deploy, the multisig calls `SimplexController.acceptOwnership()`.
-2. Verify `SimplexController.owner() == multisig` and `pendingOwner() == address(0)`.
+1. Immediately after deploy, the cold owner calls `SimplexController.acceptOwnership()`.
+2. Verify `SimplexController.owner() == coldOwner` and `pendingOwner() == address(0)`.
 3. Only then destroy/retire the deployer key. Treat it as fully privileged until step 2 passes.
 
 ### L1 — `SubnameRegistrar` registry-wide operator grant
@@ -173,3 +179,84 @@ to the new owner without an explicit `createSubname`.
   adversarial labels (`test/simplex/FuzzMetadataRenderer.test.ts`).
 - Removing NameWrapper eliminated the prior renew-desync issue and the
   wrapper-aware-resolver authorization complexity.
+
+---
+
+## 2026-07-09 — independent re-review (Fable)
+
+A fresh review of the same scope, run independently on the Fable model and
+cross-checked against live mainnet state. It **confirms every ledger finding
+above** (H1, L1–L9) and adds the items below. **Owner note:** the live cold owner
+is the `simplexchat.eth` **EOA** (`0xDa06…0340`), not a multisig — read "multisig"
+above as "the cold owner."
+
+### Ledger status change
+
+- **H1 — exposure elevated, still open.** 16 days after the `.testing` deploy
+  (2026-06-23) the cold owner still has not called `acceptOwnership()`, so the
+  ephemeral deployer EOA (`0xD83B…fBC9`) remains the controller owner — and the
+  key is demonstrably **hot**: on 2026-07-09 it sent `disableNftGate()` then a
+  `commit`/`register`. The blast radius is wider than first stated: the verbatim
+  `PublicResolver` trusts `trustedETHController` (the proxy) for **every** node,
+  so UUPS-upgrade authority ⇒ the ability to rewrite any name's
+  `simplex.contact`/`simplex.channel` records (a routing hijack across all
+  `.testing` names), plus arbitrary register/renew, an oracle swap, and a one-step
+  `renounceOwnership()` brick. `trustedETHController` is immutable in the resolver,
+  so recovery from a malicious upgrade would mean redeploying the resolver and
+  migrating every name. **Action: complete the ownership handoff now; treat the
+  deployer key as fully privileged until then.**
+
+### New findings
+
+| ID | Severity | Summary |
+|----|----------|---------|
+| N1 | Medium (operational) | NFT gate now disabled + zero pricing ⇒ open, free `.testing` registration |
+| N2 | Low | A revived subname inherits the previous owner's resolver records |
+| N3 | Low | Deleting a middle subname strands its descendants (records keep resolving) |
+| N4 | Low / info | Reverse-record registrations always revert on mainnet (reverse registrars are `address(0)`) |
+| N5 | Low / info | Unrestricted on-chain charset ⇒ display spoofing (homoglyph/bidi), not injection |
+| N6 | Info | `purge`/`delete` linear-scan children — quadratic on large sets; purge front-first |
+| N7 | Info | `withdraw()` pays `owner()` (the deployer during the H1 window); `renounceOwnership` not disabled |
+| N8 | Info | Documentation drift (some fixed with this review) |
+
+- **N1** — `nftGateEnabled()` is now `false` (disabled on-chain 2026-07-09,
+  one-way) and the `.testing` price array is all zeros, so anyone can mass-register
+  6+-char `.testing` names for gas only (the reserved list covers only `simplex`,
+  `simplex-chat`). If unintended, recourse is `setPriceOracle` (still unfrozen) or
+  a UUPS upgrade. Confirm intent.
+- **N2** — `createSubname` revives a generation-dead node but leaves the old
+  owner's `PublicResolver` records intact (`purge`/`_clear` zero the registry
+  resolver pointer, not resolver storage). Mitigation: the dApp should
+  `clearRecords(node)` alongside `createSubname`, and on 2LD acquisition.
+- **N3** — `deleteSubname` on a middle node zeroes it but leaves descendants with
+  a dangling `parentOf`; their records keep resolving and `purge` skips them while
+  their generation still matches. Mitigation: delete leaf-first in the dApp, or
+  accept as self-inflicted within a single owner.
+- **N4** — `register()` still calls the reverse registrars when the reverse bits
+  are set, but both are `address(0)` on mainnet, so such a call reverts after the
+  60 s commit is spent. Mitigation: early-revert when a reverse bit is set with no
+  reverse registrar, or ensure the dApp never sets the bits.
+- **N5** — only min length (≥ 6 codepoints) and max bytes (≤ 63) are enforced;
+  labels may contain homoglyph/bidi/zero-width characters. The renderer escaping
+  blocks JSON/SVG injection, but lookalike names can be minted for
+  marketplace/social spoofing. ENSIP-15-normalising clients won't resolve them.
+  Accept (matches ENS's on-chain posture) or enforce an LDH charset in `valid()`.
+- **N6** — `_removeChild` linear-scans `_children`; deleting/purging a large dead
+  set naively is O(n·m). A front-of-array-first purge is O(1) per item.
+  Self-inflicted; document the ordering.
+- **N7** — permissionless `withdraw()` pays `owner()` (the deployer during the H1
+  window; no funds at risk today with zero pricing, relevant once `.simplex`
+  charges). The inherited one-step `renounceOwnership` is not disabled — an owner
+  slip permanently orphans admin/upgrades. Consider overriding it to revert.
+- **N8** — doc fixes applied with this review: H1 no longer claims a `setTreasury`
+  (none exists; `withdraw` pays `owner()`) and clarifies "multisig" = the cold
+  EOA. Still open **outside `docs/`** (flagged, not changed): `CLAUDE.md` line 95
+  ("keeps upstream `register(uint256,…)`" — that function was removed) and
+  `ens-contracts/docs/upgrades.md` (`__gap[49]` vs the code's `_reentrancyStatus`
+  + `__gap[48]`).
+
+**Verdict:** no new critical/high in the contracts themselves. The dominant risk
+remains operational — the ownership handoff is still open with a hot deployer key
+whose upgrade authority transitively controls every name's resolver records, and
+that same key one-way-disabled the NFT gate (with zero pricing ⇒ open, free
+registration).

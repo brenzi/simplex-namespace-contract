@@ -1,6 +1,7 @@
 # SNRC happy flows — register, set record, subname, resolve
 
-> Caution: matches the implemented wrapper-free v3 contracts; not yet deployed.
+> Matches the deployed wrapper-free v3 contracts (`.testing` is live on mainnet;
+> `.simplex` is not yet deployed).
 
 Companion to [`architecture-testing-v3.excalidraw`](./architecture-testing-v3.excalidraw)
 (same components, wrapper-free v3 design). Flows below: register a bare name, attach the
@@ -33,7 +34,7 @@ sequenceDiagram
     C->>N: balanceOf(user) >= 1 ? (NFT gate)
     C->>O: price("alice", expires, duration)
     O-->>C: { base, premium }
-    C->>B: register("alice", owner=user, duration)
+    C->>B: registerWithLabel("alice", owner=user, duration)
     note over B: stores labelOf[tokenId] = "alice",<br/>_mint updates ERC721Enumerable indices
     B->>R: setSubnodeOwner(tldNode, labelhash -> user)
     B-->>C: expiry
@@ -42,11 +43,12 @@ sequenceDiagram
 
 Note: registers with `resolver = 0` — the registrar mints straight to the user and no
 registry record is set beyond ownership. The controller passes the **plaintext label** to
-`registrar.register(label, …)`, so the registrar stores `labelOf[tokenId]` and maintains
+`registrar.registerWithLabel(label, …)`, so the registrar stores `labelOf[tokenId]` and maintains
 ERC721Enumerable indices at mint — it self-serves hash→name, enumeration, and `tokenURI`/SVG
 with no external call. (The dApp can also register with a resolver and records in one
 transaction — the controller passes them through `multicallWithNodeCheck`; omitted here for
-clarity, as is the optional reverse record.)
+clarity, as is the optional reverse record — inert on the live mainnet deploys, where both
+reverse registrars are `address(0)`.)
 
 _vs ENS:_ the ENS registrar takes the labelhash, stores no plaintext label, and is plain
 `ERC721` (not enumerable); hash→name and "My Names" there depend on the subgraph.
@@ -160,8 +162,8 @@ sequenceDiagram
 ```
 
 Note: uses the UniversalResolver one-call path; a client can equally do the two reads
-itself — `registry.resolver(node)`, then `resolver.text(node, "simplex.contact")` — which
-is what `scripts/resolver/snrc-resolve.py` does.
+itself — `registry.resolver(node)`, then `resolver.text(node, "simplex.contact")` — the
+same two reads any resolver client can make.
 
 ## 5 — dApp My Names view (indexer-free)
 
@@ -237,8 +239,8 @@ the dApp via `getChildren` (flow 5).
 
 The `MetadataRenderer` sits behind a registrar-held pointer, swappable by the multisig via
 `setMetadataRenderer` (an auditable on-chain event), so rendering can be fixed without a TLD
-redeploy; a label charset enforced on-chain at registration keeps labels from breaking the
-JSON/SVG.
+redeploy; the renderer JSON/XML-escapes labels (`_jsonEscape` / `_xmlEscape`), so arbitrary
+characters can't break the JSON/SVG — there is no on-chain charset restriction.
 
 _vs ENS:_ ENS renders NFT metadata off-chain via a hosted metadata service (so the image can
 change for everyone at once); SNRC renders fully on-chain, and any change is an explicit,
@@ -300,7 +302,7 @@ sequenceDiagram
 
     note over B: name expired + grace period passed
     C->>CT: register("alice", Carol, ...)
-    CT->>B: register("alice", Carol, duration)
+    CT->>B: registerWithLabel("alice", Carol, duration)
     note over B: _register sees the old token -> _burn(old),<br/>then mints fresh to Carol
     B->>SR: onReregister(namehash("alice.testing"))
     note over SR: generation[2LD]++ — every old subname now has<br/>generationAt != generation, so ownerOf -> 0 (dead)

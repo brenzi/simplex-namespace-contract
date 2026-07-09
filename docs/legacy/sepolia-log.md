@@ -1,3 +1,9 @@
+# LEGACY — Sepolia deploy transcript
+
+> **Historical.** Sepolia is no longer part of the active SNRC deployment plan
+> (see [`../deployment.md`](../deployment.md)). This is the raw transcript of the
+> original Sepolia deploy/upgrade sessions, kept only for the record.
+
 <!-- Historical transcript of the Sepolia deploy sessions. The commands
 below reference `scripts/verify-sepolia.mjs` — that script was later
 renamed to `scripts/verify-etherscan.mjs` as it gained mainnet support.
