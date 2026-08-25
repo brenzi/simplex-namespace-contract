@@ -12,6 +12,7 @@ Target: `.simplex` deployed on mainnet 30 Oct 2026, governance handover 2 Nov, a
 3. The baseline this built on
 4. Work items
 5. Design decisions
+5b. Adversarial review outcomes
 6. Storage layout
 7. Deployment, handover and freeze
 8. Redeploy contingency
@@ -35,11 +36,13 @@ the price list is configured in, so the limit does not drift with the ETH price.
 subname creation, registry approval — is a one-shot EIP-712 signature submitted by a
 relayer that pays gas and nothing else. No standing delegation.
 
-**Edit credits.** Relayed record writes are metered per name, on-chain, granted at
-registration and renewal and topped up by purchase. A direct write by an owner paying
-their own gas is never metered.
+**Relayed writes are metered off-chain.** The relayer is the only caller of the sponsored
+write path — it is the party with ETH — so an on-chain budget could only reject a
+transaction the relayer had already chosen to pay for. Authority comes from the signature
+and the nonce; how much relaying a name may consume is the service's ledger, alongside the
+payload and gas limits it already enforces (§9).
 
-**Status.** W1 to W6 are implemented on `ens-contracts@ab/names-v2` and green: 1062 tests
+**Status.** W1 to W6 and W11 are implemented on `ens-contracts@ab/names-v2` and green: 1062 tests
 pass, 219 of them in `test/simplex` across 19 files. W7 to W10 — the deployment script, the
 handover and freeze runbooks, the redeploy runbook and the docs — live in the parent repo
 and are not started. One pre-existing failure remains in
@@ -56,30 +59,28 @@ Already implemented, 19 tests passing:
   grace-aware ownership check, self-transfer rejected, `_transfer` so auto-reclaim fires,
   `StealthNameTransfer` emitted only when an ephemeral key is supplied.
 - `SimplexResolver` — `PublicResolver` subclass with `setTextWithSig`, per-signer nonces,
-  `editCredits(node)`, and `grantEditCredits(node, amount)` restricted to an immutable
-  `trustedController`.
+  and `relayedSigner`.
 - `Root.sol` compiles but is deployed nowhere.
 - `SimplexController` is UUPS behind `SimplexControllerProxy`, with `_reentrancyStatus`
   and `uint256[48] __gap` at the tail.
 
-Not yet present: any credit system, the beneficiary role, the upgrade freeze, the public
+Not yet present: the registrar allowance, the beneficiary role, the upgrade freeze, the public
 sales switch, sponsored subname creation, and a `.simplex` deployment script.
 
 ## 4. Work items
 
-W1 to W6 are implemented in `ens-contracts` on `ab/names-v2`. W7 to W10 live in the parent
-repo and are outstanding.
+W1 to W6 and W11 are implemented in `ens-contracts` on `ab/names-v2`. W7 to W10 live in
+the parent repo and are outstanding.
 
 ### W1 — `SimplexController`: allowance, beneficiary, sales switch, freeze (done)
 
 New state (§6): `beneficiary`, `frozen`, `registrarAllowance`, `defaultResolver`,
-`publicSalesOpen`, `editCreditPriceUSD`. New constant `EDIT_CREDITS_PER_YEAR = 10`.
+`publicSalesOpen`.
 
 ```solidity
 function setBeneficiary(address) external;             // owner while unset, beneficiary after
 function addReservedNames(string[] calldata) external; // owner or beneficiary
 function setRegistrarAllowance(address, uint256) external onlyBeneficiary;  // attoUSD
-function setEditCreditPrice(uint256) external onlyOwner;                   // attoUSD
 function setDefaultResolver(address) external onlyOwner;
 function setPublicSalesOpen(bool) external;             // owner or beneficiary; reverts once frozen
 function freeze() external onlyOwner;                  // one-way
@@ -92,6 +93,13 @@ function renewWithCredit(string calldata, uint256, bytes32) external nonReentran
 flag closes both: after the freeze the implementation is permanent and the sales switch
 holds whatever value it had, so the contract can no longer be made to do less than it does
 at that moment.
+
+`freeze()` refuses while `publicSalesOpen` is false. Freezing then would shut the payable
+path permanently, since the same flag disables both the switch and the upgrade escape, and
+the ordering is racy in practice: the pause belongs to the guardian and is immediate, the
+freeze belongs to the owner and sits behind a timelock, so a pause answering an incident
+can land between a queued freeze and its execution. The check makes that race fail safe —
+the freeze reverts and is re-queued — and turns a runbook step into an enforced invariant.
 
 `freezePriceOracle()` is removed. `StablePriceOracle.usdOracle` is `immutable`, so
 changing the price feed means deploying a new oracle and calling `setPriceOracle`; freezing
@@ -125,32 +133,37 @@ whose `msg.sender` would be the registrar rather than the buyer.
 nothing else, and `setSubnodeOwner` sets an owner but not a resolver, so a reserved name
 does not resolve at all. It takes the shape of `register`'s resolver branch: register to
 the controller, `ens.setRecord(namehash, owner, defaultResolver, 0)`, transfer the token,
-grant the edit credits. A brand's name then resolves the moment it is reserved and its
-later edits can be relayed, without the brand ever holding ETH.
+transfer the token. A brand's name then resolves the moment it is reserved and its later
+edits can be relayed, without the brand ever holding ETH.
 
-### W2 — edit-credit grants and the acceptance top-up (done)
+### W2 — on-chain edit credits: removed (done)
 
-```solidity
-interface IEditCredits { function grantEditCredits(bytes32 node, uint256 amount) external; }
+An earlier revision metered relayed writes with a per-name on-chain credit balance
+(`editCredits`, `grantEditCredits`, `topUpEditCredits`, `editCreditPriceUSD`,
+`EDIT_CREDITS_PER_YEAR`). It is deleted. The rationale did not survive scrutiny: the
+relayer is the sole caller of the metered functions, so the on-chain check could only fire
+on a transaction it had already decided to send and pay for — it gated the relayer against
+itself and could not bound gas exposure the way the service's own ledger does. Credits
+never protected the user either; the signature and the nonce do that, so removing them
+costs no sovereignty.
 
-function topUpEditCredits(bytes32 node, uint256 amount) external;  // deducts amount x editCreditPriceUSD
-```
+What went with it: a permissionless credit faucet whenever `editCreditPriceUSD` sat at its
+zero default, a checked-addition overflow that could brick both renewal paths for a name,
+a full-year grant on a one-day renewal, and the nonce-stall where a zero-credit node's
+intent reverted without consuming its nonce.
 
-After a successful registration, when `registration.resolver == defaultResolver` and that
-is non-zero, grant `EDIT_CREDITS_PER_YEAR * years`, where `years = duration / 365 days` by
-integer division with a minimum of 1. The same on both renew paths, keyed by
-`keccak256(abi.encodePacked(tldNode, labelhash))`.
+The one property lost is portability — an on-chain, node-bound allowance would let a user
+recovering from their seed carry metered relaying to any relayer. That only pays off with
+several independent relayers; with one service it buys nothing the service's ledger does
+not. Revisit if that changes.
 
-`topUpEditCredits` is what a purchase buys when someone accepts a name sent to them, or
-re-points a name after recovering from their phrase, or exhausts a name's credits. It
-deducts `amount × editCreditPriceUSD` from the registrar's allowance, which keeps it under
-the same limit and the same kill switch as registration. `editCreditPriceUSD` defaults to
-zero, so it has to be set at deployment or top-ups are free.
+Kept: the per-signer nonce (replay protection) and the registrar money allowance (§W1),
+which is the real kill switch.
 
 ### W3 — `clearRecordsWithSig` on the resolver (done)
 
 `clearRecordsWithSig(bytes32 node, uint256 nonce, uint256 deadline, bytes calldata sig)`,
-type hash `ClearRecords(bytes32 node,uint256 nonce,uint256 deadline)`, one credit, reusing
+type hash `ClearRecords(bytes32 node,uint256 nonce,uint256 deadline)`, reusing
 `_authorizeRelayed`, then `recordVersions[node]++` and the `VersionChanged` event.
 Constant gas regardless of how many records exist, which is what makes accepting a gifted
 name affordable: one call wipes whatever the sender left behind.
@@ -188,7 +201,73 @@ computes, with the contract's own nonce map.
 Both W5 and W6 ship in the 30 Oct deployment even though subnames are a February 2027
 feature, for the reason in §5.
 
-### W7 — `.simplex` deployment script (outstanding)
+### W11 — remove reverse resolution (done)
+
+`.simplex` runs no reverse registrar. `SimplexController` loses the `reverseRegistrar` and
+`defaultReverseRegistrar` storage slots, their two initializer arguments, the
+`REVERSE_RECORD_*` bit constants and the branches in `_registerCore`.
+`Registration.reverseRecord` stays in the struct — it belongs to
+`IETHRegistrarController` and removing it would change the ABI tooling encodes against —
+but `makeCommitment` now rejects any non-zero value with `ReverseRecordNotSupported`, so
+the field is refused rather than silently dropped.
+
+One upstream deviation was unavoidable: `PublicResolver` inherited `ReverseClaimer`, whose
+constructor calls `claim` on whatever owns `addr.reverse`. That is a hard dependency on a
+deployed reverse registrar — with the node unowned the call hits `address(0)` and the
+resolver deployment reverts. It cannot be short-circuited from `SimplexResolver`, because
+the call is in a parent constructor, so the inheritance is dropped from `PublicResolver`.
+Three lines, all deletions, of a feature this deployment does not use. The upstream
+resolver and reverse-registrar suites still pass unchanged.
+
+`trustedReverseRegistrar` stays in the `PublicResolver` constructor and is passed
+`address(0)`. It is a second permanently-trusted address with authority over every node,
+so leaving it inert is the point; removing the parameter would be a wider diff for no
+change in behaviour.
+
+`UniversalResolver` inherited `ReverseClaimer` as well, and it is deployed — so it needed
+the same three-line deletion. Its `owner` constructor argument is retained and unused, to
+keep the constructor ABI compatible with upstream and with the deploy scripts.
+
+Deploy scripts drop the `ReverseRegistrar` and `DefaultReverseRegistrar` dependencies and
+the `setController` / `setDefaultResolver` wiring — both the `ens-contracts/deploy/` ones
+and the parent repo's `scripts/deploy-{mainnet,local,testnet}.mjs`. The contracts stay in
+the tree for the upstream test suite, as other unused upstream code does; they are simply
+never deployed.
+`TestSponsoredReverseRecord.test.ts` is deleted with the feature it tested.
+
+Docs follow the code: both diagram generators mark the reverse registrars removed —
+greyed, dashed, with a legend entry — rather than deleting the box, so what was dropped
+stays legible; `architecture.md`, `deployment.md` and `sequence-happy-flow.md` no longer
+list or draw them; and `security.md`'s finding **N4** ("reverse-record registrations
+always revert on mainnet") is marked FIXED, since this implements its recommended
+early-revert and then removes the feature outright.
+
+Storage: the two slots are **reserved, not removed**. `reverseRegistrar` and
+`defaultReverseRegistrar` become `_unusedReverseRegistrar` and
+`_unusedDefaultReverseRegistrar`, two `address private` placeholders, following the
+`_unusedPriceOracleFrozen` precedent. Deleting them would have shifted every variable
+below, and reserving them means reverse resolution can be reintroduced in a later upgrade
+by re-typing the slots, with no layout migration. Verified empirically rather than argued
+from the packing rules: `maxCommitmentAge` sits at slot 254 and `prices` at 257, so the
+placeholders take exactly one slot each and nothing below them moved.
+`TestControllerStorageLayout.test.ts` pins that gap.
+
+### W7 — `.simplex` deployment script (partly done)
+
+The existing `scripts/deploy-{mainnet,local,testnet}.mjs` are brought up to date: no
+reverse registrar, `SimplexResolver` in place of `PublicResolver`, the six-entry price
+curve, the shortened `initialize` signature, `setMaxLabelLength(63)`,
+`setDefaultResolver`, and — critically — `setBeneficiary(guardian)` **before** the
+ownership handover, since it is owner-callable only while unset. `deploy-mainnet.mjs`
+takes the guardian from `GUARDIAN_ADDRESS` and warns if it equals the admin owner, which
+would defeat the two-key split. Verified by running `deploy-local.mjs` end to end against
+a Hardhat node and then registering through both the payable and the sponsored path on the
+deployed stack.
+
+Still outstanding: a purpose-built `.simplex` script that also deploys `Root`, reserves
+the ~3000 a-priori names, and prints the handover calls.
+
+
 
 `scripts/deploy-simplex.mjs`, modelled on `deploy-mainnet.mjs`. Only what differs is listed
 here; the full call sequence including the unchanged wiring is Appendix A1 of the
@@ -216,8 +295,6 @@ character ratio holds without rounding drift. The one- and two-character rungs c
 the ladder rather than sitting at zero, so lowering `minCharLength` further can never hand
 out free names.
 
-`setEditCreditPrice` is set here too — it defaults to zero, which would make relayed-write
-top-ups free and leave an unpriced hole in a money-bounded registrar allowance.
 `setDefaultResolver` after both the controller and the resolver exist — the dependency is
 circular, which is why it is a setter and not an initializer argument.
 
@@ -249,7 +326,7 @@ updated, with a verification step for each.
 
 ### W10 — documentation (outstanding)
 
-`docs/architecture.md` for credits, relayed writes and the announcement.
+`docs/architecture.md` for the registrar allowance, relayed writes and the announcement.
 `docs/security.md` for the new accepted risks: relayer liveness, the registry-wide scope
 of a signed approval, the deliberately unbounded relayed entry points and the service-side
 mitigation that replaces a contract cap, the public sales switch, and the fact that the
@@ -266,23 +343,20 @@ bounds transactions rather than exposure. `IPriceOracle.price` returns wei, whic
 with ETH and is useless as a limit, so `StablePriceOracle` gains `priceUSD` returning the
 same quote in attoUSD before conversion — the unit the price list is already configured
 in — and `setPriceOracle` is typed to `IPriceOracleUSD` so a replacement oracle must
-provide it. Edit-credit top-ups have no name price, so they deduct an owner-settable
-`editCreditPriceUSD` per credit; leaving them unpriced would be an unbounded hole in a
-money-bounded limit.
+provide it.
 
-**Per-name edit credits stay counted.** A record write has no market price, and what that
-credit bounds is relayed gas, not value.
+**Relayed writes are metered off-chain, not on-chain.** The relayer is the only caller of
+`setTextWithSig` and `clearRecordsWithSig`, so an on-chain per-name budget could only
+reject a transaction the relayer had already agreed to pay for. It is the same reasoning
+that puts payload and gas ceilings in the service (§9): the party paying is the party that
+must decide before submitting. What stays on-chain is what an off-chain ledger genuinely
+cannot do — the signature that authorises the write, and the nonce that makes it
+single-use. W2 records what the on-chain version cost.
 
-**Credits are added, never set.** `renew()` is `external payable` with no access control,
-so anyone can renew anyone's name. With set semantics a stranger could renew a ten-year
-name for the minimum term and collapse the owner's allowance to ten. Adding makes a
-hostile renewal a gift, which is the right outcome for an unauthenticated call. Registrar
-the registrar allowance is the opposite — `setRegistrarAllowance` replaces, because it is
-a kill switch.
-
-**One credit is one operation**, whatever term is bought. Simpler to reason about than
-per-name-year, and adequate for what the credit is for, which is bounding a compromised
-registrar's blast radius.
+**`setRegistrarAllowance` replaces rather than adds.** It is a kill switch, and zeroing a
+compromised registrar must take one transaction. Note that `renew()` is `external payable`
+with no access control, so anyone may renew anyone's name — deliberate, and now
+consequence-free since renewal no longer grants anything.
 
 **Public sales are an owner switch, not a date.** A hard-coded timestamp cannot absorb a
 moved release, and a date already passed cannot be undone. `setPublicSalesOpen(bool)`
@@ -383,6 +457,74 @@ logic living in two places is where a divergence bug hides. `SimplexController` 
 heavily customised fork, not verbatim ENS, so keeping `register` byte-identical in the
 `main...simplex` diff buys less than the duplication costs.
 
+## 5b. Adversarial review outcomes
+
+An adversarial review by three expert personas, a completeness critic and independent
+refutation produced no critical, high or medium finding. The non-custodial invariant, the
+EIP-712 intent surfaces, the allowance kill switch, the split-key rule and the storage
+layout all held. What came out of it:
+
+**Fixed.** The on-chain edit credits are gone (W2), which removed a permissionless faucet
+at the zero-price default, an overflow that could brick both renewal paths for a name, a
+full-year grant on a one-day renewal, and a nonce stall. `freeze()` now enforces
+`publicSalesOpen` (W1).
+
+**Accepted.** *A compromised guardian is unrecoverable after the freeze.* Only the
+beneficiary may rotate itself, and the post-freeze upgrade escape is closed, so a
+compromised guardian permanently holds `withdraw` and `setRegistrarAllowance`. Names are
+untouched — `require(available(id))` in the immutable registrar holds even here. Accepted
+on the basis that the guardian is a Safe: compromise requires the multisig threshold, and
+the alternative — letting the slow owner replace the beneficiary — would put the treasury
+back under the key the split exists to keep away from it.
+
+**Closed, not a finding.** *Reserving is front-run-proof.* `addReservedNames` is a single
+atomic call with no commit/reveal, while both registration paths must present a commitment
+already aged `minCommitmentAge` (60s in the deployment). An attacker who first learns a
+name from the guardian's pending transaction cannot register it: the reservation mines in
+the next block, long before their commitment matures. A speculative pre-commitment does not
+help either — the reserved check runs at registration time — and if they had targeted the
+name in advance they could have registered it at any earlier moment, so the mempool leak
+adds nothing. Pinned by `TestReservationRace.test.ts`.
+
+**Out of scope.** *The `.testing` proxy needs a migration batch after an in-place upgrade.*
+`.testing` is not being upgraded; it is left as it stands and `.simplex` is a fresh deploy.
+
+**Fixed since.** *The price feed.* `StablePriceOracle` reverts `InvalidPriceFeed(answer)`
+when `latestAnswer()` reports zero or negative, instead of panicking on the division or
+wrapping the cast and flooring every quote to zero. And the sponsored path no longer reads
+the feed at all: `registerWithCredit` and `renewWithCredit` used to compute a wei price
+purely to fill an event field, which coupled the app-store flow to Chainlink — a dead feed
+took registration *and* renewal down on both paths, not just the payable one, which the
+review understated. They now emit a zero cost, which is also the honest figure: nothing is
+paid on-chain, and `RegistrarAllowanceSpent` carries what was consumed in attoUSD. That
+closes the review's INFO about credited events overstating on-chain revenue too.
+
+Deferred deliberately: a staleness bound would mean moving to `latestRoundData`, which
+changes the `AggregatorInterface` this file declares and therefore `DummyOracle` and every
+deployment and test that uses it. Worth doing, but as its own change.
+
+**Fixed since.** *The reverse-record subject.* `_registerCore` passed `msg.sender` as the
+address a `reverseRecord` bit applies to. That is right on the payable path, where the
+caller is the buyer, and wrong on the sponsored one, where the caller is the registrar's
+shared hot wallet: the relayer got named instead of the buyer, and every later sponsored
+registration overwrote it. `_registerCore` now takes the subject explicitly —
+`msg.sender` from `register`, `registration.owner` from `registerWithCredit` — and the
+buyer owns their own reverse node, so they can change it later. Both reverse registrars
+authorise a registered controller to act for an arbitrary address, so no new privilege was
+needed. Superseded by W11, which removes reverse resolution outright — the fix and its
+test stand in history so the defect is on the record and the removal is a separate,
+reviewable decision rather than a way to bury it.
+
+Nothing from the review is left open.
+
+**Noted, then made moot.** The payable path kept upstream's semantics, where the reverse
+record follows `msg.sender` rather than `registration.owner` — so paying for someone else
+pointed the *payer's* primary name at a name they did not own. Defensible on its own terms,
+since the caller is the one expressing the intent and writing the recipient's reverse
+record would touch a third party's namespace without consent; and inert in practice,
+because reverse records are self-asserted (`ReverseRegistrar.setName` takes an arbitrary
+string) and mean nothing until forward-verified. W11 removes the question.
+
 ## 6. Storage layout
 
 Appended after `_reentrancyStatus`, before `__gap`, per
@@ -392,11 +534,11 @@ Appended after `_reentrancyStatus`, before `__gap`, per
 slot n+0   address beneficiary;      bool frozen;              // packed
 slot n+1   mapping(address => uint256) registrarAllowance;     // attoUSD
 slot n+2   address defaultResolver;  bool publicSalesOpen;     // packed
-slot n+3   uint256 editCreditPriceUSD;
-           uint256[44] __gap;                                  // was 48
+           uint256[45] __gap;                                  // was 48
 ```
 
-`EDIT_CREDITS_PER_YEAR` is a constant and consumes no slot.
+`defaultResolver` survives the credit removal because `registerReserved` needs it: it is
+what a brand's name is pointed at so the name resolves without the brand holding ETH.
 
 ## 7. Deployment, handover and freeze
 
@@ -406,9 +548,9 @@ view of the same sequence.
 1. **30 Oct 2026** — deploy per W7, reserve the ~3000 a-priori names, verify on Etherscan,
    tag the commit (`simplex-mainnet-v1`). `publicSalesOpen` false, `Root.locked("simplex")`
    false.
-2. **2 Nov 2026** — governance handover. Before it, confirm `editCreditPriceUSD` is
-   non-zero and the six-entry curve is in place: both are owner-only, so after the handover
-   they move at the timelock's pace. `setBeneficiary(guardianSafe)` first, since it is
+2. **2 Nov 2026** — governance handover. Before it, confirm the six-entry price curve is in
+   place: `setPriceOracle` is owner-only, so after the handover it moves at the timelock's
+   pace. `setBeneficiary(guardianSafe)` first, since it is
    owner-callable only while unset, then ownership of all three ownable contracts to the
    admin timelock. `SimplexController` is `Ownable2Step`, so the timelock's
    `acceptOwnership` is itself a scheduled call and lands 9 Nov; `BaseRegistrar` and `Root`
@@ -461,7 +603,9 @@ These carry security properties the contracts deliberately do not:
 - Pre-flight simulate every relayed transaction and refuse to submit above a gas
   threshold. This covers both oversized payloads and the gas an ERC-1271 fallthrough would
   otherwise make the relayer pay for when a signature fails against a contract "owner".
-- Validate payload sizes and entry counts at request time, before a credit is spent.
+- Validate payload sizes and entry counts at request time, before submitting.
+- Meter how much relaying each name may consume. This moved off-chain deliberately (W2);
+  it is now the only place it happens.
 - Treat the thresholds as tunable configuration, not constants.
 - Monitor the registrar allowance with generous headroom, in money rather than in
   operations: exhaustion is a hard service stop only the guardian Safe can clear.
@@ -475,13 +619,14 @@ New files under `ens-contracts/test/simplex/`, following the existing fixture id
   deduction is unchanged when the ETH price moves; the allowance refuses a name it cannot
   cover; the payable path is unaffected and still refunds; `setRegistrarAllowance` zeroes
   in one transaction; only the beneficiary may call it.
-- `TestEditCreditGrants.test.ts` — `10 × years` on register and renew; a renewal by an
-  unrelated address adds; a registration against a non-default resolver grants nothing;
-  floor rounding at 364 and 366 days; `registerReserved` sets `defaultResolver` on the
-  node and grants credits.
-- `TestTopUpEditCredits.test.ts` — a top-up deducts `editCreditPriceUSD` per credit, is
-  additive, refuses when the allowance cannot cover it, and only the owner may reprice.
-- `TestClearRecordsWithSig.test.ts` — type-hash pinning, one credit spent, every prior
+- `TestReservationRace.test.ts` — a squatter who commits on seeing the reservation cannot
+  land in time; a matured speculative commitment is refused just the same; an immature
+  commitment is refused on both registration paths; `registerReserved` needs no commitment.
+- `TestRegisterReserved.test.ts` — a brand receives the token, the registry node and a
+  working resolver, and can then have records relayed; unreserved names, short durations
+  and a guardian caller are refused; a name someone already holds cannot be taken; and the
+  no-default-resolver degradation is pinned.
+- `TestClearRecordsWithSig.test.ts` — type-hash pinning, every prior
   record reads empty, wrong signer, replay, expiry, refusal at zero credits.
 - `TestSubnameRelayedEdit.test.ts` — the 2LD holder signs an edit for a subname and it
   lands; a non-holder's does not.
@@ -498,11 +643,12 @@ New files under `ens-contracts/test/simplex/`, following the existing fixture id
 - `TestAdminSplit.test.ts` — the access split the custody model depends on:
   `addReservedNames` accepts owner and beneficiary; `removeReservedNames`,
   `registerReserved`, `setDefaultResolver`, `setMinCharLength`, `setPriceOracle` and
-  `freeze` and `setEditCreditPrice` accept the owner only and reject the beneficiary;
-  `setRegistrarAllowance` and
+  `freeze` accept the owner only and reject the beneficiary; `setRegistrarAllowance` and
   `setBeneficiary` accept the beneficiary only and reject the owner.
 - `TestBeneficiaryAndFreeze.test.ts` — beneficiary bootstrap and permanence, `withdraw`
-  pays the beneficiary and not the owner, `freeze` blocks `upgradeTo`, `upgradeToAndCall` and
+  pays the beneficiary and not the owner, `freeze` refuses while sales are closed and the
+  guardian's mid-timelock pause makes a queued freeze fail safe, `freeze` blocks
+  `upgradeTo`, `upgradeToAndCall` and
   `setPublicSalesOpen` and is one-way, while `setPriceOracle`, `registerReserved` and the
   reserved-name setters still work afterwards — so the retained surface is exactly what the
   launch-to-freeze plan enumerates and nothing more.

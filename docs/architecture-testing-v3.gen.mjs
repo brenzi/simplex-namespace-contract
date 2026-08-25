@@ -98,7 +98,7 @@ const edge = (r, tx, ty) => {
   )
   return [cx + dx * t, cy + dy * t]
 }
-const arrow = (fromKey, toKey, label, dashed = false) => {
+const arrow = (fromKey, toKey, label, dashed = false, removed = false) => {
   const A = boxes[fromKey], B = boxes[toKey]
   // Prefer hand-tuned geometry (bends + endpoints) captured from the manual
   // arrangement; fall back to straight edge-to-edge for any arrow not in GEOM.
@@ -114,7 +114,9 @@ const arrow = (fromKey, toKey, label, dashed = false) => {
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1])
   const a = base({ id: id('arrow'), type: 'arrow', x: x1, y: y1,
     width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys),
-    strokeStyle: dashed ? 'dashed' : 'solid', roundness: { type: 2 },
+    strokeStyle: dashed ? 'dashed' : 'solid',
+    strokeColor: removed ? '#adb5bd' : '#1e1e1e',
+    roundness: { type: 2 },
     points: pts, lastCommittedPoint: null,
     startBinding: { elementId: A.id, focus: 0, gap: 4 },
     endBinding: { elementId: B.id, focus: 0, gap: 4 },
@@ -134,7 +136,8 @@ const arrow = (fromKey, toKey, label, dashed = false) => {
       x: mx - w / 2, y: my - h / 2, width: w, height: h,
       text: label, fontSize: fs, fontFamily: 2, textAlign: 'center',
       verticalAlign: 'middle', containerId: a.id, originalText: label,
-      autoResize: true, lineHeight: 1.25, strokeColor: '#666666' })
+      autoResize: true, lineHeight: 1.25,
+      strokeColor: removed ? '#adb5bd' : '#666666' })
     els.push(t)
     a.boundElements.push({ id: t.id, type: 'text' })
   }
@@ -208,9 +211,11 @@ box('smpxnft', 220, 130, '#e9ecef')
 text('smpxnft', 12, 10, 'SMPXNFT (external)', 14)
 text('smpxnft', 12, 36, 'ROLE: .testing registration\ngate (ERC-721 holders only)\nEXPOSES: balanceOf(user)', 11)
 
-box('reverse', 290, 210, '#a5d8ff')
-text('reverse', 12, 10, 'ReverseRegistrar +\nDefaultReverseRegistrar', 14)
-text('reverse', 12, 54, 'ROLE: primary names\n(address -> name)\nSTORES: addr.reverse subtree,\ndefault resolver\nEXPOSES: setNameForAddr\n(controller), claim / setName', 11)
+// REMOVED in names-v2: kept on the diagram, greyed and dashed, so the shape of
+// what was dropped stays legible rather than silently vanishing.
+box('reverse', 290, 210, '#f1f3f5', { strokeStyle: 'dashed', strokeColor: '#adb5bd' })
+text('reverse', 12, 10, 'ReverseRegistrar +\nDefaultReverseRegistrar', 14, { strokeColor: '#868e96' })
+text('reverse', 12, 54, 'REMOVED in names-v2.\nWas: primary names\n(address -> name).\n.simplex resolves names ->\nSimpleX links only, one way.\nNot deployed; controller slots\nreserved for reintroduction.', 11, { strokeColor: '#868e96' })
 
 box('universal', 290, 160, '#a5d8ff')
 text('universal', 12, 10, 'UniversalResolver', 16)
@@ -222,7 +227,7 @@ text('note', 12, 10, 'DROPPED: NameWrapper (ERC-1155, fuses, emancipation)', 13)
 text('note', 12, 36, '2LDs trade as plain ERC-721 and self-serve enumeration + labels + metadata from the\nregistrar. Subnames are NOT tokens: created + indexed by the SubnameRegistrar, ALWAYS\nowned by the 2LD owner (hard-wired). Subgraph: optional (history only).', 11)
 
 // ---------- legend ----------
-box('legend', 290, 170, '#ffffff')
+box('legend', 290, 192, '#ffffff')
 text('legend', 12, 10, 'LEGEND', 13)
 const sw = (dy, c) => els.push(base({ type: 'rectangle',
   x: boxes.legend.x + 12, y: boxes.legend.y + dy, width: 18, height: 12,
@@ -232,6 +237,7 @@ sw(58, '#b2f2bb'); text('legend', 38, 56, 'upstream ENS, modified', 11)
 sw(80, '#a5d8ff'); text('legend', 38, 78, 'verbatim upstream ENS', 11)
 sw(102, '#e9ecef'); text('legend', 38, 100, 'external', 11)
 sw(124, '#d0bfff'); text('legend', 38, 122, 'actors', 11)
+sw(146, '#f1f3f5'); text('legend', 38, 144, 'removed in names-v2', 11)
 
 // ---------- keys & terms glossary ----------
 box('keys', 470, 196, '#ffffff')
@@ -248,7 +254,7 @@ arrow('clients', 'universal', 'resolve(alice.testing)')
 arrow('multisig', 'registrar', 'admin: addController,\nsetMetadataRenderer (swap, auditable)', true)
 arrow('controller', 'registrar', 'register(label) / renew\n(onlyController)')
 arrow('controller', 'resolver', 'multicallWithNodeCheck\n(records at registration)')
-arrow('controller', 'reverse', 'setNameForAddr (reverse record)')
+arrow('controller', 'reverse', 'setNameForAddr (reverse record)\n[REMOVED in names-v2]', true, true)
 arrow('controller', 'smpxnft', 'balanceOf (gate)')
 arrow('controller', 'oracle', 'price()')
 arrow('oracle', 'chainlink', 'ETH/USD')

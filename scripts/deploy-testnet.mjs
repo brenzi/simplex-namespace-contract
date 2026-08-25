@@ -98,15 +98,9 @@ async function main() {
     'ethregistrar/BaseRegistrarImplementation.sol/BaseRegistrarImplementation.json',
     [ensRegistry.address, tldNode])
 
-  const reverseRegistrar = await deploy('ReverseRegistrar',
-    'reverseRegistrar/ReverseRegistrar.sol/ReverseRegistrar.json',
-    [ensRegistry.address])
-
-  const defaultReverseRegistrar = await deploy('DefaultReverseRegistrar',
-    'reverseRegistrar/DefaultReverseRegistrar.sol/DefaultReverseRegistrar.json')
-
-  await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash('reverse'), account.address])
-  await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
+  // No reverse registrar: SNRC resolves names to SimpleX links in one direction
+  // only. PublicResolver and UniversalResolver no longer inherit ReverseClaimer,
+  // so nothing needs to own addr.reverse for them to deploy.
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
 
   // Use the real Chainlink feed as the oracle. The ENS pricing contracts call
@@ -118,8 +112,15 @@ async function main() {
   // production pricing curve: $1 / $8 / $32 / $128 per year for 6+ / 5 / 4 / 3
   // chars, with an exponential premium ramp on expired names.
   const priceArray = tld === 'testing'
-    ? [0n, 0n, 0n, 0n, 0n]
-    : [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n]
+    ? [0n, 0n, 0n, 0n, 0n, 0n]
+    : [
+        31709791983700000n, // 1 char    $1,000,000 / yr
+        3170979198370000n,  // 2 chars     $100,000 / yr
+        317097919837000n,   // 3 chars      $10,000 / yr
+        31709791983700n,    // 4 chars       $1,000 / yr
+        3170979198370n,     // 5 chars         $100 / yr
+        317097919837n,      // 6+ chars         $10 / yr
+      ]
   const priceOracle = await deploy('ExponentialPremiumPriceOracle',
     'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
     [chainlinkEthUsd, priceArray, 100000000000000000000000000n, 21n])
@@ -144,8 +145,6 @@ async function main() {
       priceOracle.address,
       60n,
       86400n,
-      reverseRegistrar.address,
-      defaultReverseRegistrar.address,
       ensRegistry.address,
       {
         tldNode,
@@ -166,8 +165,6 @@ async function main() {
   const controller = { address: controllerProxy.address, abi: controllerImpl.abi }
 
   await write(baseRegistrar, 'addController', [controller.address])
-  await write(reverseRegistrar, 'setController', [controller.address, true])
-  await write(defaultReverseRegistrar, 'setController', [controller.address, true])
   console.log('Controller wired up')
 
   const reservedAtDeploy = ['simplex', 'simplex-chat']
@@ -182,16 +179,19 @@ async function main() {
     'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
     [ensRegistry.address, baseRegistrar.address])
 
-  const publicResolver = await deploy('PublicResolver',
-    'resolvers/PublicResolver.sol/PublicResolver.json',
-    // wrapper-free v3: the resolver's NameWrapper slot is repurposed for the
-    // SubnameRegistrar (the 2LD itself is never wrapped).
-    [ensRegistry.address, subnameRegistrar.address, controller.address, reverseRegistrar.address])
+  // SimplexResolver = PublicResolver + signed record writes. wrapper-free v3: the
+  // NameWrapper slot is repurposed for the SubnameRegistrar (the 2LD itself is
+  // never wrapped). trustedReverseRegistrar is address(0) and inert.
+  const publicResolver = await deploy('SimplexResolver',
+    'simplex/SimplexResolver.sol/SimplexResolver.json',
+    [ensRegistry.address, subnameRegistrar.address, controller.address, zeroAddress])
 
   await write(subnameRegistrar, 'setResolver', [publicResolver.address])
   await write(baseRegistrar, 'setSubnameHook', [subnameRegistrar.address])
-
-  await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
+  await write(baseRegistrar, 'setMaxLabelLength', [63n])
+  await write(controller, 'setDefaultResolver', [publicResolver.address])
+  await write(controller, 'setBeneficiary', [account.address])
+  await write(controller, 'setPublicSalesOpen', [true])
 
   // UniversalResolver — needed by the frontend for name lookups
   const dummyGateway = await deploy('DummyGatewayProvider',
@@ -241,7 +241,6 @@ async function main() {
     console.log(`  BaseRegistrar owner -> cold`)
     await write(mockNft, 'transferOwnership', [ownerAddress])
     console.log(`  MockSMPXNFT owner -> cold`)
-    await write(reverseRegistrar, 'transferOwnership', [ownerAddress])
     console.log(`  ReverseRegistrar owner -> cold`)
     await write(defaultReverseRegistrar, 'transferOwnership', [ownerAddress])
     console.log(`  DefaultReverseRegistrar owner -> cold`)
@@ -275,7 +274,7 @@ async function main() {
   const addresses = {
     ENSRegistry: ensRegistry.address,
     BaseRegistrarImplementation: baseRegistrar.address,
-    ReverseRegistrar: reverseRegistrar.address,
+    ReverseRegistrar: zeroAddress,
     DefaultReverseRegistrar: defaultReverseRegistrar.address,
     NameWrapper: zeroAddress, // wrapper-free v3
     MetadataRenderer: metadataRenderer.address,

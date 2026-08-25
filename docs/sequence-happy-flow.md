@@ -47,8 +47,9 @@ registry record is set beyond ownership. The controller passes the **plaintext l
 ERC721Enumerable indices at mint — it self-serves hash→name, enumeration, and `tokenURI`/SVG
 with no external call. (The dApp can also register with a resolver and records in one
 transaction — the controller passes them through `multicallWithNodeCheck`; omitted here for
-clarity, as is the optional reverse record — inert on the live mainnet deploys, where both
-reverse registrars are `address(0)`.)
+clarity. The optional reverse record is gone entirely: names-v2 removed reverse
+resolution, and a registration carrying a `reverseRecord` bit now reverts
+`ReverseRecordNotSupported`.)
 
 _vs ENS:_ the ENS registrar takes the labelhash, stores no plaintext label, and is plain
 `ERC721` (not enumerable); hash→name and "My Names" there depend on the subgraph.
@@ -202,7 +203,8 @@ being soulbound to the 2LD they are owned by whoever holds it, so My Names finds
 listing the children of each 2LD you own and filtering live on `ownerOf` (which drops
 deleted, purged, or generation-dead entries) — no global owner→subname index needed. Cost of the
 registrar enumeration: ERC721Enumerable adds ~45k gas per **transfer** (the per-owner index
-it maintains). The account's primary name (reverse resolution) is omitted for brevity.
+it maintains). There is no primary name to show: reverse resolution is not part of this
+deployment.
 
 _vs ENS:_ ENS answers "My Names" from the subgraph (the registrar is plain `ERC721`); SNRC
 answers it from on-chain reads only, needing just an RPC.

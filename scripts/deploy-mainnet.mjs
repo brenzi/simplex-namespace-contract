@@ -69,6 +69,11 @@ const maxBaseFeeGwei = process.env.MAX_BASE_FEE_GWEI
 const chainlinkEthUsd = process.env.ETHUSD_FEED || '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
 const smpxNftAddr = process.env.SMPXNFT_ADDR || '0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291'
 const ownerAddress = process.env.OWNER_ADDRESS || '0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340'
+// The guardian holds the restrictive, no-delay powers: setRegistrarAllowance (the
+// money kill switch), setPublicSalesOpen (the pause), addReservedNames, and it is
+// `withdraw`'s payee. It must differ from the admin owner — that separation is the
+// point. See docs/plans/names-v2-launch-to-freeze-plan.md.
+const guardianAddress = process.env.GUARDIAN_ADDRESS || ownerAddress
 
 const bumpAfterMs = (parseFloat(process.env.BUMP_AFTER_HOURS) || (DEFAULTS.BUMP_AFTER_MS / 3600000)) * 3600 * 1000
 const bumpPct = BigInt(process.env.BUMP_PCT || DEFAULTS.BUMP_PCT)
@@ -119,21 +124,26 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
     'ethregistrar/BaseRegistrarImplementation.sol/BaseRegistrarImplementation.json',
     [ensRegistry.address, tldNode])
 
-  const reverseRegistrar = await deploy('ReverseRegistrar',
-    'reverseRegistrar/ReverseRegistrar.sol/ReverseRegistrar.json',
-    [ensRegistry.address])
-
-  // addr.reverse must be owned by a ReverseRegistrar so the verbatim PublicResolver's
-  // ReverseClaimer constructor succeeds. Reverse resolution is otherwise disabled:
-  // there is no DefaultReverseRegistrar and the controller gets address(0) for both
-  // reverse args, so this registrar is never wired to the controller.
-  await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash('reverse'), account.address])
-  await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
+  // No reverse registrar: SNRC maps names to SimpleX links in one direction and
+  // nothing resolves an address back to a name. PublicResolver no longer inherits
+  // ReverseClaimer, so nothing needs to own addr.reverse for the resolver to deploy.
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
 
+  // attoUSD per second by label length [1, 2, 3, 4, 5, 6+]. Six entries, not five:
+  // a five-entry array makes price5Letter apply to everything 5 chars and up, so
+  // 5 and 6+ could not be priced apart. $10/yr at 6+, ten times more per character
+  // lost, continuing down to 1 char so lowering minCharLength never hands out free
+  // names.
   const priceArray = tld === 'testing'
-    ? [0n, 0n, 0n, 0n, 0n]
-    : [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n]
+    ? [0n, 0n, 0n, 0n, 0n, 0n]
+    : [
+        31709791983700000n, // 1 char    $1,000,000 / yr
+        3170979198370000n,  // 2 chars     $100,000 / yr
+        317097919837000n,   // 3 chars      $10,000 / yr
+        31709791983700n,    // 4 chars       $1,000 / yr
+        3170979198370n,     // 5 chars         $100 / yr
+        317097919837n,      // 6+ chars         $10 / yr
+      ]
   const priceOracle = await deploy('ExponentialPremiumPriceOracle',
     'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
     [chainlinkEthUsd, priceArray, 100000000000000000000000000n, 21n])
@@ -151,8 +161,6 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
       priceOracle.address,
       60n,
       86400n,
-      zeroAddress, // reverse resolution disabled — no ReverseRegistrar wiring
-      zeroAddress, // no DefaultReverseRegistrar
       ensRegistry.address,
       {
         tldNode,
@@ -183,17 +191,22 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
     'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
     [ensRegistry.address, baseRegistrar.address])
 
-  const publicResolver = await deploy('PublicResolver',
-    'resolvers/PublicResolver.sol/PublicResolver.json',
-    // wrapper-free v3: the verbatim resolver's NameWrapper slot is repurposed for
-    // the SubnameRegistrar (the 2LD itself is never wrapped — its node is owned
-    // directly by the NFT holder via auto-reclaim).
-    [ensRegistry.address, subnameRegistrar.address, controller.address, reverseRegistrar.address])
+  // SimplexResolver = PublicResolver + signed record writes (setTextWithSig,
+  // clearRecordsWithSig), so a user with no ETH can have records relayed.
+  // wrapper-free v3: the NameWrapper slot is repurposed for the SubnameRegistrar
+  // (the 2LD itself is never wrapped — its node is owned directly by the NFT
+  // holder via auto-reclaim). trustedReverseRegistrar is address(0) and inert.
+  const publicResolver = await deploy('SimplexResolver',
+    'simplex/SimplexResolver.sol/SimplexResolver.json',
+    [ensRegistry.address, subnameRegistrar.address, controller.address, zeroAddress])
 
   // One-time wiring now that the resolver exists, while the deployer still owns
   // the registrar (before the ownership handover below).
   await write(subnameRegistrar, 'setResolver', [publicResolver.address])
   await write(baseRegistrar, 'setSubnameHook', [subnameRegistrar.address])
+  // registerReserved points a brand's name here, so it resolves without the brand
+  // ever holding ETH.
+  await write(controller, 'setDefaultResolver', [publicResolver.address])
 
   const dummyGateway = await deploy('DummyGatewayProvider',
     'mocks/DummyGatewayProvider.sol/DummyGatewayProvider.json')
@@ -222,10 +235,17 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   // and on-chain SVG/JSON render size. (security.md L4)
   await write(baseRegistrar, 'setMaxLabelLength', [63n])
 
+  // Set the beneficiary BEFORE handing ownership over. `setBeneficiary` is
+  // owner-callable only while it is unset and beneficiary-callable thereafter, so
+  // doing it here is what makes revenue and the registrar kill switch independent
+  // of the admin key from the first block. Skipping it leaves `withdraw` reverting.
+  if (guardianAddress.toLowerCase() === ownerAddress.toLowerCase()) {
+    console.warn('  ! GUARDIAN_ADDRESS is unset: guardian == admin owner, which defeats the two-key split')
+  }
+  await write(controller, 'setBeneficiary', [guardianAddress])
+
   if (ownerAddress.toLowerCase() !== account.address.toLowerCase()) {
     await write(baseRegistrar, 'transferOwnership', [ownerAddress])
-    await write(reverseRegistrar, 'transferOwnership', [ownerAddress])
-    await write(ensRegistry, 'setOwner', [namehash('reverse'), ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('eth-usd.data.eth'), ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('data.eth'), ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('eth'), ownerAddress])
@@ -236,7 +256,7 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   return {
     ENSRegistry: ensRegistry.address,
     BaseRegistrarImplementation: baseRegistrar.address,
-    ReverseRegistrar: reverseRegistrar.address,
+    ReverseRegistrar: zeroAddress,
     DefaultReverseRegistrar: zeroAddress,
     NameWrapper: zeroAddress, // wrapper-free v3
     MetadataRenderer: metadataRenderer.address,

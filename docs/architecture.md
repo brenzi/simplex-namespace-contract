@@ -45,7 +45,7 @@ plain-language summary of how SNRC differs from ENS, see
   2LD NFT; it is also the PublicResolver's nameWrapper slot (subname auth via ownerOf).
 ```
 
-`ENSRegistry`, `ReverseRegistrar`, `Root`, `PublicResolver`, `StringUtils`,
+`ENSRegistry`, `Root`, `PublicResolver`, `StringUtils`,
 `StablePriceOracle`, `ExponentialPremiumPriceOracle`, `UniversalResolver`, and the
 price-oracle interfaces are vendored verbatim from ENS. `SimplexController` is custom
 (UUPS); `BaseRegistrarImplementation` is modified (v3 — ERC721Enumerable + `labelOf`
@@ -53,13 +53,19 @@ label index + `tokenURI`); `MetadataRenderer` (swappable) and `SubnameRegistrar`
 (immutable) are new SNRC contracts. **There is no NameWrapper** — only the
 `INameWrapper` interface is kept, because verbatim `PublicResolver` imports it
 (deployed with `nameWrapper = SubnameRegistrar`, so subname records authorise via
-`SubnameRegistrar.ownerOf`). See the per-file diff in the plan.
+`SubnameRegistrar.ownerOf`). **There is no reverse registrar either** — removed in
+names-v2: `.simplex` maps names to SimpleX links in one direction and nothing resolves an
+address back to a name, so `ReverseRegistrar` and `DefaultReverseRegistrar` are not
+deployed, `PublicResolver` no longer inherits `ReverseClaimer`, and a registration
+carrying a `reverseRecord` bit reverts `ReverseRecordNotSupported`. The controller's two
+former slots are reserved, not deleted, so it can be reintroduced without a layout
+migration. See the per-file diff in the plan.
 
 ## TLD strategy
 
 There is **one deployment per TLD**. Each is an independent ENS-shaped stack
 (`ENSRegistry → BaseRegistrar v3 → SimplexController + PublicResolver +
-MetadataRenderer + SubnameRegistrar + Root + ReverseRegistrar`). The TLDs:
+MetadataRenderer + SubnameRegistrar + Root`). The TLDs:
 
 | TLD        | NFT gate             | Min chars | Launch |
 |------------|----------------------|-----------|--------|
@@ -90,8 +96,10 @@ User → SimplexController.commit(hash)
        ├─ ens.setRecord(node, owner, resolver, 0)    ← unchanged (if resolver ≠ 0)
        ├─ resolver.multicallWithNodeCheck(...)        ← unchanged
        ├─ base.transferFrom(this, owner, labelhash)  ← unchanged
-       ├─ reverseRegistrar.setNameForAddr(...)        ← unchanged (if bit set)
        └─ refund excess ETH                            ← unchanged
+
+   (the reverse-record branch is gone — names-v2 removed reverse resolution, and
+    makeCommitment now rejects any non-zero reverseRecord up front)
 ```
 
 New vs ENS's `ETHRegistrarController.register`: the `_checkSimplexGates` line, and

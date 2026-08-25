@@ -48,11 +48,11 @@ Two separate deployments — one per TLD. Each is a near-standard ENS deployment
 - `.testing` — NFT-gated (SMPXNFT holders only initially), 6+ char minimum, reserved names
 - `.simplex` — NO NFT gate, 6+ char minimum, reserved names
 
-Each deployment: `ENSRegistry` + `BaseRegistrarImplementation` + `SimplexController` + `PublicResolver` + `MetadataRenderer` + `SubnameRegistrar` + `Root` + `ReverseRegistrar`. ENS contracts are used verbatim except: `SimplexController` (custom, UUPS), `BaseRegistrarImplementation` (modified — see Architecture/Deviations: ERC721Enumerable + on-chain label index + `tokenURI`), plus the new SNRC contracts `MetadataRenderer` and `SubnameRegistrar`. **No NameWrapper** (removed — see Deviations).
+Each deployment: `ENSRegistry` + `BaseRegistrarImplementation` + `SimplexController` + `SimplexResolver` + `MetadataRenderer` + `SubnameRegistrar` + `Root`. ENS contracts are used verbatim except: `SimplexController` (custom, UUPS), `BaseRegistrarImplementation` (modified — ERC721Enumerable + on-chain label index + `tokenURI` + `transferWithSig`), `ENSRegistry` (adds `setApprovalForAllWithSig`), `PublicResolver` (no longer inherits `ReverseClaimer`), `StablePriceOracle` (adds `priceUSD` + a sixth length bucket), plus the new SNRC contracts `MetadataRenderer`, `SubnameRegistrar` and `SimplexResolver`. **No NameWrapper** and **no reverse registrar** (both removed — see Deviations).
 
 `SimplexController` is UUPS-upgradeable (ERC-1967 proxy). Every upgrade must preserve its storage layout — see [`ens-contracts/docs/upgrades.md`](./ens-contracts/docs/upgrades.md) for the `__gap` / append-only invariants and the pre-upgrade checklist.
 
-Resolver: ENS `PublicResolver` used verbatim. SimpleX links stored as text records: `simplex.contact`, `simplex.channel`.
+Resolver: `SimplexResolver` — `PublicResolver` plus signed record writes (`setTextWithSig`, `clearRecordsWithSig`). SimpleX links stored as text records: `simplex.contact`, `simplex.channel`.
 
 Subnames are on-chain via the `SubnameRegistrar`: registry subnodes **owned by the registrar and soulbound to the 2LD NFT** — a subname's effective owner is the current 2LD token holder, derived via `SubnameRegistrar.ownerOf` (which walks up the parent chain to the 2LD node), so transferring the NFT moves all its subnames instantly. Record authorisation routes through the verbatim `PublicResolver`'s `nameWrapper` hook (deployed with `nameWrapper = subnameRegistrar`); the 2LD node itself is owned directly by the NFT holder because `BaseRegistrar` **auto-reclaims** it to the new holder on transfer. On re-registration, `BaseRegistrar` calls `subnameRegistrar.onReregister` to bump a per-2LD generation that invalidates the previous owner's subnames (garbage-collected via permissionless `purge`). Subnames are created + indexed on-chain so they enumerate without an indexer; depth (subnames of subnames) is supported in the contracts. 2LDs themselves are plain ERC-721 tokens on the `BaseRegistrar` and trade directly on any marketplace; their NFT metadata (JSON + SVG, with the domain name) is rendered fully on-chain by the `MetadataRenderer`. There is no NameWrapper and no ERC-1155 wrapping.
 
@@ -75,24 +75,41 @@ Key non-standard functions: `setMinter(address)`, `setNextTokenURI(string)`, `lo
 
 ## SimpleX data in resolver
 
-ENS PublicResolver used verbatim. SimpleX links stored as text records:
+`SimplexResolver` — `PublicResolver` plus a sponsored path (see names-v2 below).
+SimpleX links stored as text records:
 - `simplex.contact` — contact short link (1:1 messaging)
 - `simplex.channel` — channel short link (group/channel)
 
 Both records store a **comma-separated list** of URLs (primary first, fallbacks after) so a name can advertise multiple SMP servers for redundancy. Clients SHOULD try them in order. The on-chain layer is unchanged — it's still a plain `setText` / `text` against the ENSIP-5 key. The SNRC REST resolver (`scripts/resolver/snrc-resolve.py`) parses the CSV and returns each as `string[]` (`simplexContact`, `simplexChannel`). The dApp's editor caps the list at 5 entries.
 
+## names-v2
+
+A user buys a name through the app store and never holds ETH; SimpleX relays every on-chain action. See [`docs/plans/names-v2-contracts.md`](./docs/plans/names-v2-contracts.md).
+
+- **Registrar allowance.** The guardian grants a registrar hot wallet a spending limit in **attoUSD**; `registerWithCredit` / `renewWithCredit` deduct the name's own list price and attach no value. Replaces rather than adds, so zeroing it is a one-transaction kill switch. `StablePriceOracle` gained `priceUSD()` (`IPriceOracleUSD`) so the limit is denominated in the unit the price list is configured in and does not drift with ETH.
+- **Signed intents.** One-shot EIP-712 signatures relayed by anyone: `transferWithSig` (BaseRegistrar, with the ERC-5564 `StealthNameTransfer` announcement), `setTextWithSig` / `clearRecordsWithSig` (SimplexResolver), `setApprovalForAllWithSig` (ENSRegistry — the one call that otherwise forces a user to hold ETH), `createSubnameWithSig` / `deleteSubnameWithSig` (SubnameRegistrar). Each contract keeps its own per-signer nonce.
+- **Metering is off-chain.** The relayer is the only caller of the sponsored write paths, so an on-chain budget could only reject a transaction it had already agreed to pay for. It bounds payload size and gas itself; the contracts carry the signature and the nonce.
+- **No reverse resolution.** `ReverseRegistrar` / `DefaultReverseRegistrar` are not deployed, `PublicResolver` no longer inherits `ReverseClaimer`, and a non-zero `reverseRecord` reverts `ReverseRecordNotSupported`. The controller's two slots are reserved, not deleted.
+
 ## Admin capabilities
 
-- `setNftGateEnabled(false)` — one-way (true→false)
-- `setMinCharLength(uint8)` — monotonic decrease only (6→5→4→3)
-- `addReservedNames` / `removeReservedNames` / `registerReserved` (the two reserved-name setters take string arrays — bulk in a single tx, ~1000/call)
-- `setTreasury` (where ETH fees go)
-- UUPS upgrade authority (can be renounced)
+Two keys. **Admin** (a timelock behind a multisig) holds the rare and permissive powers; **guardian** (a multisig, no delay) holds the restrictive and urgent ones. The rule: a power is on the fast key only when the harm it answers accrues faster than the timelock delay.
+
+- `disableNftGate()` — one-way (true→false) — *admin*
+- `setMinCharLength(uint8)` — monotonic decrease only (6→5→4→3) — *admin*
+- `removeReservedNames` / `registerReserved` / `setDefaultResolver` / `setPriceOracle` / `recoverFunds` — *admin*
+- `addReservedNames` — *admin **or** guardian*: a scheduled reservation would tell a squatter which name is valuable and for how long
+- `setPublicSalesOpen(bool)` — *admin **or** guardian*: gates the payable path only; the credited, reserved and renew paths are exempt
+- `setRegistrarAllowance` / `setBeneficiary` — **guardian only**; `withdraw()` is permissionless and pays `beneficiary` (there is no `setTreasury`)
+- `freeze()` — *admin*, one-way: fixes the implementation and seals the sales switch. Refuses while sales are closed
+- UUPS upgrade authority — *admin*, until `freeze()`. The owner is **not** renounced: brand reservation must continue indefinitely
 
 ## Deviations from `snrc-implementation-plan.md`
 
 - **NameWrapper removed entirely (wrapper-free v3).** The wrapper was the largest source of complexity/defects (`.eth`-hardcoding, renew-desync, wrapper-aware-resolver auth) for features SNRC doesn't need (ERC-1155 wrapping, fuses/emancipation for trustless subname markets). It is deleted from the source tree. Replacements: 2LDs trade as plain ERC-721; **`BaseRegistrarImplementation` (v3, modified)** adds `ERC721Enumerable` (trustless "My Names"), a write-once `labelOf` label index (`registerWithLabel(string,…)`), an owner-settable `maxLabelLength` guard, and `tokenURI` delegating to a swappable `metadataRenderer`; **`MetadataRenderer`** (SNRC, swappable via `setMetadataRenderer`) renders JSON + SVG fully on-chain; **`SubnameRegistrar`** (SNRC, immutable) creates + indexes subnames. Only the `wrapper/INameWrapper.sol` interface is kept, because the verbatim `PublicResolver` imports it (deployed with `nameWrapper = address(0)`). The earlier `simplex-mainnet-testing-v2` wrapper deployment (`0x0994819e…e9ef`) is historical; v3 is a fresh redeploy.
-- **`BaseRegistrarImplementation` is no longer verbatim.** It keeps the upstream `register(uint256,…)` for the `IBaseRegistrar` interface, and adds `registerWithLabel` / `labelOf` / `tokenURI` / `setMetadataRenderer` / `setMaxLabelLength` / ERC721Enumerable. Only `SimplexController` is wrapped in a proxy; the registrar is immutable.
+- **`BaseRegistrarImplementation` is no longer verbatim.** `registerWithLabel` is the only registration path (the raw-labelhash `register` is gone), so every registration records its label; it also adds `labelOf` / `tokenURI` / `setMetadataRenderer` / `setMaxLabelLength` / ERC721Enumerable, and in names-v2 `transferWithSig` + `StealthNameTransfer`. Only `SimplexController` is wrapped in a proxy; the registrar is immutable.
+- **`ENSRegistry` is no longer verbatim.** names-v2 adds `setApprovalForAllWithSig`. It is the root of trust, so the diff is deliberately additive: the same `_operatorApprovals` write and `ApprovalForAll` event the existing setter produces, reached by signature instead of by transaction.
+- **`PublicResolver` no longer inherits `ReverseClaimer`.** Its constructor called `claim` on whatever owns `addr.reverse`, which is a hard dependency on a deployed reverse registrar. It cannot be short-circuited from a subclass, so the inheritance is dropped — three lines, all deletions, of a feature this deployment does not use.
 
 ## Toolchain
 
@@ -126,13 +143,15 @@ Each TLD is an independent deployment. Only `SimplexController` is behind a prox
 4. BaseRegistrarImplementation v3 (own the TLD node)
 5. Price oracle (DummyOracle local / Chainlink mainnet) + ExponentialPremiumPriceOracle
 6. SimplexController = impl + ERC1967 proxy (NFT gate on for .testing, off for .simplex); add as controller on the base registrar
-7. PublicResolver (verbatim ENS; `nameWrapper = address(0)`, `trustedETHController = controller`)
-8. ReverseRegistrar + DefaultReverseRegistrar (controller as controller)
+7. SubnameRegistrar(registry, baseRegistrar)
+8. SimplexResolver (`nameWrapper = SubnameRegistrar`, `trustedETHController = controller`, `trustedReverseRegistrar = address(0)`) → `subnameRegistrar.setResolver(resolver)` → `controller.setDefaultResolver(resolver)`
 9. MetadataRenderer(`.<tld>`) → `baseRegistrar.setMetadataRenderer(renderer)`
-10. SubnameRegistrar(registry)
-11. UniversalResolver + Multicall3
-12. (optional) `baseRegistrar.setMaxLabelLength(N)`; transfer ownership → SNCC multisig
+10. UniversalResolver + Multicall3
+11. `baseRegistrar.setMaxLabelLength(63)` — not optional: the label is written to `labelOf` permanently
+12. Reserve the a-priori names, then hand over: `setBeneficiary(guardian)` **first** (owner-callable only while unset), then ownership of Root, BaseRegistrar and the controller to the admin timelock
 13. Output addresses to `deployments/<network>-<tld>.json`
+
+No reverse registrar is deployed. `Root.lock` is **not** called at deployment — while the label is unlocked a redeploy can keep the registry and re-point the TLD, which is the cheap recovery path until real users exist.
 
 ## Conventions from the PoC to follow
 

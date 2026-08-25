@@ -98,7 +98,9 @@ const arrow = (fromKey, toKey, label, kind = 'dep') => {
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1])
   const a = base({ id: id('arrow'), type: 'arrow', x: x1, y: y1,
     width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys),
-    strokeStyle: kind === 'impl' ? 'dashed' : 'solid', roundness: { type: 2 },
+    strokeStyle: kind === 'impl' || kind === 'removed' ? 'dashed' : 'solid',
+    strokeColor: kind === 'removed' ? '#adb5bd' : '#1e1e1e',
+    roundness: { type: 2 },
     points: pts, lastCommittedPoint: null,
     startBinding: { elementId: A.id, focus: 0, gap: 4 },
     endBinding: { elementId: B.id, focus: 0, gap: 4 },
@@ -115,18 +117,19 @@ const arrow = (fromKey, toKey, label, kind = 'dep') => {
     const t = base({ id: id('lbl'), type: 'text', x: mx - w / 2, y: my - h / 2,
       width: w, height: h, text: label, fontSize: fs, fontFamily: 3, textAlign: 'center',
       verticalAlign: 'middle', containerId: a.id, originalText: label, autoResize: true,
-      lineHeight: 1.25, strokeColor: '#555' })
+      lineHeight: 1.25, strokeColor: kind === 'removed' ? '#adb5bd' : '#555' })
     els.push(t); a.boundElements.push({ id: t.id, type: 'text' })
   }
 }
 
-const C = { custom: '#ffec99', v3: '#b2f2bb', upstream: '#a5d8ff', external: '#e9ecef', iface: '#f3d9fa' }
+const C = { custom: '#ffec99', v3: '#b2f2bb', upstream: '#a5d8ff', external: '#e9ecef', iface: '#f3d9fa', removed: '#f1f3f5' }
+const RM = '#868e96' // text colour for classes removed in names-v2
 const DS = '#e8590c' // deployment-specific deploy value (varies per TLD / network)
 
 // ---------- title + legend ----------
 text(null, POS.title[0], POS.title[1], 'SNRC v3 — contract class diagram (storage keys + function signatures)', 20)
 box('legend', 1040, 26, '#ffffff')
-text('legend', 10, 6, 'yellow = SNRC custom   |   green = upstream + v3 diff   |   blue = verbatim upstream   |   violet = interface catalog   |   gray = external   |   →  calls   (realized interfaces are listed in each box title: "is …")', 10)
+text('legend', 10, 6, 'yellow = SNRC custom   |   green = upstream + v3 diff   |   blue = verbatim upstream   |   violet = interface catalog   |   gray = external   |   dashed+grey = removed in names-v2   |   →  calls   (realized interfaces are listed in each box title: "is …")', 10)
 text(null, POS.legend[0], -14, 'orange text = deploy-time value (mainnet .testing); deployment-specific (varies per TLD / network)', 10, { strokeColor: DS })
 
 // ========== SimplexController ==========
@@ -206,11 +209,12 @@ text('oracle', 10, 109, 'premium 1e26 start · 21-day halving', 10)
 text('oracle', 10, 122, 'ETH/USD feed 0x5f4e…8419 (Chainlink)', 10, { strokeColor: DS })
 text('oracle', 10, 135, 'base prices 0 — free, every length', 10, { strokeColor: DS })
 
-// ========== Reverse ==========
-box('reverse', 430, 96, C.upstream)
-text('reverse', 10, 8, 'ReverseRegistrar + DefaultReverseRegistrar   «verbatim»', 10)
+// ========== Reverse — REMOVED in names-v2 ==========
+// Kept on the diagram, greyed and dashed, so what was dropped stays legible.
+box('reverse', 430, 110, C.removed, { strokeStyle: 'dashed', strokeColor: '#adb5bd' })
+text('reverse', 10, 8, 'ReverseRegistrar + DefaultReverseRegistrar   «REMOVED»', 10, { strokeColor: RM })
 divider('reverse', 34, 430)
-text('reverse', 10, 40, 'functions:  setNameForAddr(addr, owner, resolver, name)\n             claim / setName', 10)
+text('reverse', 10, 40, 'Not deployed. .simplex maps names -> SimpleX links, one way;\nnothing resolves an address back to a name. PublicResolver no\nlonger inherits ReverseClaimer. Controller slots reserved.', 10, { strokeColor: RM })
 
 // ========== SMPXNFT ==========
 box('smpxnft', 360, 80, C.external)
@@ -236,7 +240,7 @@ arrow('controller', 'registry', 'setRecord')
 arrow('controller', 'resolver', 'multicallWithNodeCheck')
 arrow('controller', 'oracle', 'price()')
 arrow('controller', 'smpxnft', 'balanceOf (gate)')
-arrow('controller', 'reverse', 'setNameForAddr')
+arrow('controller', 'reverse', 'setNameForAddr  [REMOVED]', 'removed')
 arrow('oracle', 'chainlink', 'ETH/USD')
 arrow('registrar', 'registry', 'setSubnodeOwner')
 arrow('registrar', 'metadata', 'tokenURI(id, labelOf[id])')
