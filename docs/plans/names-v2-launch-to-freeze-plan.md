@@ -18,10 +18,11 @@ Who controls the contracts, from deployment to the freeze. Dates match
 
 | Date | Change |
 |---|---|
-| 30 Oct 2026 | `.simplex` deployed. The deploy key owns everything. Public sales closed. |
-| 2 Nov 2026 | Handover. Admin timelock and both Safes take over. The deploy key owns nothing. |
-| 2–3 Nov 2026 | Guardian Safe reserves the a-priori brand list. First real use of the new setup. |
+| 30 Oct 2026 | `.simplex` deployed and the ~3000 a-priori names reserved, both by the deploy key. Public sales closed. |
+| 2 Nov 2026 | Handover starts. `setBeneficiary` and two of three ownership transfers. |
+| 2–3 Nov 2026 | Guardian Safe funds the registrar. First real use of the new setup. |
 | 4 Nov 2026 | Contracts, registrar, app and codes all live. |
+| 9 Nov 2026 | Timelock accepts the controller. The deploy key owns nothing and is destroyed. |
 | 12 Nov 2026 | Investor window opens. **Hard deadline for handover** — first names owned by third parties. |
 | 12 Dec 2026 | Public sales open. Admin Safe at 3-of-5 by this date. |
 | 22 Feb 2027 *(earliest)* | Admin Safe schedules `Root.lock` and `freeze()` in the timelock. |
@@ -55,11 +56,14 @@ registrar credits, submits relayed user signatures.
 | Key | 2 Nov 2026 to the freeze | After the freeze |
 |---|---|---|
 | Deploy key | nothing | nothing |
-| Admin timelock (7 days) | upgrade the controller; `removeReservedNames`; `registerReserved`; `setMinCharLength`; `setDefaultResolver`; `setPriceOracle`; `recoverFunds`; `addController`; `removeController`; `setMetadataRenderer`; `setMaxLabelLength`; `setSubnameHook`; `Root.setResolver`; `Root.lock`; `freeze()` | same, minus upgrade and minus `freeze()`, which are spent |
+| Admin timelock (7 days) | upgrade the controller; `removeReservedNames`; `registerReserved`; `setMinCharLength`; `setDefaultResolver`; `setPriceOracle`; `recoverFunds`; `addController`; `removeController`; `setMetadataRenderer`; `setMaxLabelLength`; `setSubnameHook`; `baseRegistrar.setResolver`; `Root.setResolver`; `Root.setController`; `Root.lock`; `freeze()` | same, minus upgrade and minus `freeze()`, which are spent |
 | Admin Safe | proposes and executes timelock actions; adds and removes its own signers | same |
 | Guardian Safe (instant) | `addReservedNames`; `setPublicSalesOpen`; `setRegistrarCredits`; `setBeneficiary`; receives `withdraw()`; cancels timelock actions | same, minus `setPublicSalesOpen` |
 | Registrar hot wallet | `registerWithCredit`; `renewWithCredit`; `topUpEditCredits`; relaying signed user intents | same |
 | Anyone | `commit`; payable `register` and `renew`; `withdraw`; all signed-intent paths; own-name record writes; `reclaim`; subname create and delete; `purge` | same |
+
+`disableNftGate` is the one owner function not listed. `.simplex` deploys with the gate
+already off and the function reverts when it is, so it is inert from day one.
 
 Three powers exist after the freeze because losing them would be worse than keeping them.
 `registerReserved` and `addReservedNames` keep brand outreach open with no end date.
@@ -145,7 +149,16 @@ Caller: **deploy key**, alone.
    `baseRegistrar.setMaxLabelLength(63)`; `baseRegistrar.setSubnameHook(subnameRegistrar)`.
 4. `subnameRegistrar.setResolver(simplexResolver)`.
 5. `controller.setDefaultResolver(simplexResolver)`.
-6. Leave `publicSalesOpen == false` and `Root.locked("simplex") == false`.
+6. `controller.addReservedNames([...])` for the ~3000 a-priori names, in batches of about
+   300. Roughly 24k gas per name, so about 7M gas per batch and 70M in total — run it at a
+   low base fee, which `deploy-mainnet.mjs` already supports through `MAX_BASE_FEE_GWEI`.
+   The list is final from 15 Oct, so it is ready.
+7. Leave `publicSalesOpen == false` and `Root.locked("simplex") == false`.
+
+Reserving here rather than after the handover is not closing an open hole — `publicSalesOpen`
+is false and the registrar has no credits, so nothing can be registered before 12 Nov
+anyway. It removes a task that could slip, and it makes the reserved set part of the
+deployment's acceptance check rather than a separate errand.
 
 Prerequisite, before this date: both Safes deployed and each has executed one rehearsal
 transaction; the `TimelockController` deployed with proposer = admin Safe, cancellers =
@@ -176,10 +189,11 @@ Safe; every former deploy-key call reverts.
 
 Caller: **guardian Safe**, 2 signatures.
 
-1. `controller.addReservedNames([...a-priori brand list...])` — bulk, about 1000 per
-   transaction.
-2. `controller.setRegistrarCredits(registrarHotWallet, N)` — sized to expected demand plus
+1. `controller.setRegistrarCredits(registrarHotWallet, N)` — sized to expected demand plus
    headroom.
+
+This works even though A2 step 3 is still pending, because `setRegistrarCredits` is
+beneficiary-only and does not depend on who currently owns the controller.
 
 ### A4. Open public sales — 12 Dec 2026
 
