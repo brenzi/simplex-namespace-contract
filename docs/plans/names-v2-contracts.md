@@ -587,6 +587,24 @@ the window is up to `BUMP_AFTER_HOURS` — is now recovered from the attempts lo
 being sent a second time. Journals written under the old positional scheme are refused
 outright rather than mis-resumed.
 
+**Third pass, on the fixes themselves.** Record retirement was scoped to the *current*
+default resolver, so the first `setDefaultResolver` rotation would have silently stopped
+retiring records for every name still pointing at the old one; the controller now remembers
+every resolver it has ever defaulted to (`wasDefaultResolver`, appended, `__gap` 45 → 44).
+And the deploy runner treated inclusion as success — a reverted transaction was journalled as
+done and skipped on every later resume — so `recordSuccess` now refuses a non-success receipt.
+
+**H2, shadow subnames: documented, not fixed, and it cannot be fixed on-chain.** A 2LD holder
+owns its registry node and can create subnodes the registrar never tracks — or pull tracked
+ones back out. Registry authority over a subnode belongs to the parent's owner by
+construction; the registrar's soulbinding holds only because it happens to own the nodes it
+created. What makes this a disclosure problem rather than a theft one is that it is always
+recoverable: `setSubnodeOwner` is authorised against the parent, so a buyer can overwrite
+anything under their name unilaterally and lock the seller out. The obligation is therefore on
+the buyer and on any marketplace surface — enumerate a name's subnodes from registry
+`NewOwner` logs (the registrar's index shows only what it created), then overwrite what should
+not be there. Pinned in `TestShadowSubnames.test.ts`; see `docs/security.md`.
+
 **Build verification.** `scripts/build-verification.mjs` had drifted out of the branch
 entirely: a 9-argument `initialize`, the pre-names-v2 five-entry price array, `PublicResolver`
 where the deploy uses `SimplexResolver`, and no targets for `SubnameRegistrar`,
@@ -741,6 +759,11 @@ New files under `ens-contracts/test/simplex/`, following the existing fixture id
 - `TestTransferWithSig.test.ts` pins the extended `TRANSFER_TYPEHASH` and the exact ERC-5564
   metadata layout, so a client that stops matching the standard fails here rather than in the
   field.
+- `TestShadowSubnames.test.ts` — an untracked subnode is invisible to the registrar and
+  survives the sale of its 2LD, but the buyer can always overwrite it and the seller is then
+  locked out; the same holds for a tracked subname pulled out of the registrar.
+- `TestStaleRecords.test.ts` also covers the resolver rotation: with retirement scoped to the
+  current default instead of the historical set, that case fails.
 - `scripts/` resume behaviour is covered by a stub-client harness: named keys survive an
   inserted step, a changed call to a journalled step aborts, an orphaned submitted tx is
   recovered rather than resent, and an old positional journal is refused.

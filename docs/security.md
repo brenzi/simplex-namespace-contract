@@ -340,6 +340,92 @@ grieving themselves. **Relayer operators must enforce a depth limit** (5 is
 ample for the SimpleX UX) along with the payload and gas bounds they already
 apply.
 
+### Shadow subnames, and what a buyer must check
+
+A 2LD's holder owns its registry node, so they can call
+`ENSRegistry.setSubnodeOwner` directly and create a subname the
+`SubnameRegistrar` never sees. Such a node is not soulbound, is not indexed, and
+has no generation, so **selling the 2LD does not move it**: after the sale
+`pay.alice.simplex` can still be owned — and still resolve — to the seller,
+while `alice.simplex` belongs to the buyer.
+
+This cannot be prevented on-chain. Registry authority over a subnode belongs to
+the parent's owner by construction, and the registrar's soulbinding works only
+because the registrar happens to own the nodes it created; a 2LD owner can pull
+even a *tracked* subname back out the same way.
+
+What makes it a disclosure problem rather than a theft one is that it is always
+recoverable: `setSubnodeOwner` is authorised against the **parent**, so the new
+holder can overwrite any subnode under their name unilaterally, and the previous
+owner is then locked out. Both directions are pinned in
+`TestShadowSubnames.test.ts`.
+
+So the requirement lands on the buyer, and on whatever surfaces a name for sale:
+
+- **Before buying, enumerate the name's subnodes** — the registrar's index shows
+  only the ones it created, so completeness needs `NewOwner` logs on the registry
+  filtered by the 2LD node, not `getChildren`.
+- **After buying, overwrite anything unexpected.** One `setSubnodeOwner` per
+  label; no cooperation from the seller is needed.
+- A subname's records survive the overwrite, so re-point or clear them too.
+
+### Client and relayer version coupling
+
+`TRANSFER_TYPEHASH` gained `ephemeralPubKey` and `viewTag`, and the transfer
+announcement is now ERC-5564's `Announcement` rather than a bespoke event. Both
+are consensus between the contract and everything that signs for or watches it,
+and `BaseRegistrarImplementation` is **not** upgradeable — so the two shapes
+cannot coexist in one deployment and cannot be migrated after the fact.
+
+- Signers, relayers and scanners must ship in lockstep with the deployment they
+  talk to.
+- The live `.testing` registrar keeps the **old** typehash and the old event
+  permanently. A client must key both off the deployment it is addressing, not
+  off its own build. `.testing` is not being upgraded, so this is a fork in the
+  client, not a migration.
+
+### Deployment opsec
+
+The deploy runner is as much a part of the security boundary as the contracts,
+because a mis-run is unrecoverable in the same way a bad constructor argument is.
+What it now refuses to do:
+
+- **Run against the wrong chain.** `chainId` is asserted to be 1 before any
+  spend, so an `MAINNET_RPC_URL` pointing at a testnet stops the run instead of
+  deploying a full stack to the wrong place and journalling it as a success.
+- **Accept a mistyped address.** Every address input is EIP-55 checked, which is
+  the only automatic protection against a transposed character in the variable
+  that ends up owning the namespace.
+- **Deploy against a dead price feed.** `latestAnswer()` is probed up front; a
+  feed returning zero or negative makes every quote revert and the payable path
+  unusable from the first block.
+- **Deploy stale bytecode.** The run compiles before it starts. Freshness is not
+  inferred from timestamps — Hardhat caches on content, so an mtime heuristic
+  both misses real staleness and blocks on touched-but-unchanged files. This is
+  also the check that would have caught the branch that did not compile.
+- **Pay without limit.** The stall bump compounds 20% per stalled interval and
+  had no ceiling; it now stops at `ABSOLUTE_MAX_BASE_FEE_GWEI` (4× the configured
+  cap by default) rather than paying whatever a congested week demands.
+- **Build on a block that might not survive.** Each step waits three
+  confirmations before the next one depends on it, and a receipt that a reorg
+  removes returns the step to waiting rather than being journalled.
+- **Overwrite the record of a live deployment.** An addresses file with no
+  journal beside it aborts the run.
+- **Leak the provider key.** The fork URL reaches the child process through the
+  environment; `--fork <url>` put it in argv, where any local user could read it
+  from `ps`.
+
+And what it now proves rather than assumes: a **post-deploy read-back** checks
+the TLD node's owner, the controller's registration, `maxLabelLength`, the
+subname hook, the metadata renderer, the default resolver, the beneficiary, the
+NFT gate, `minCharLength`, the freeze and sales flags, the subname registrar's
+resolver, and that a six-character name quotes a non-zero price. A journal proves
+each transaction was mined; only the read-back proves the stack is wired the way
+the script intended. It runs while the deploy key still owns everything, and the
+run then prints the `acceptOwnership()` calls the admin must make — until those
+land, `Ownable2Step` leaves the deploy key in control and it must be treated as
+hot.
+
 ### The invariant everything rests on
 
 `BaseRegistrarImplementation._register` opens with `require(available(id))`, and
@@ -377,6 +463,21 @@ to**:
   outside the signed struct, so a relayer could fabricate a stealth derivation on
   a genuine transfer. They are now part of `TRANSFER_TYPEHASH`, and the event
   itself is ERC-5564's `Announcement` verbatim rather than a bespoke one.
+
+A third pass over those fixes found two more, both fixed here:
+
+- **Record retirement was scoped to the *current* default resolver**, so the
+  first `setDefaultResolver` rotation would have silently stopped retiring
+  records for every name still pointing at the old one — reopening the leak
+  without any code changing. The controller now remembers every resolver it has
+  ever made the default (`wasDefaultResolver`) and retires against that set. The
+  set is deliberately not "any resolver": each entry is one we deployed and that
+  trusts the controller, so the call can neither revert nor burn the
+  registrant's gas on a hostile resolver.
+- **The deploy runner treated inclusion as success.** A transaction that reverted
+  at inclusion still produced a receipt, and the step was journalled as done and
+  skipped on every later resume. `recordSuccess` now refuses a non-success
+  receipt and stops the run.
 
 Accepted, and new to this ledger:
 

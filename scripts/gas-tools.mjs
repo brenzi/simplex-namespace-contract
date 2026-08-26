@@ -54,6 +54,11 @@ const POLL_RECEIPT_INTERVAL_MS = 10_000  // poll inclusion every 10s
 const FORK_BOOT_TIMEOUT_MS = 90_000      // hardhat node has slow first boot
 const DEFAULT_BUMP_PCT = 20n
 const DEFAULT_BUMP_AFTER_HOURS = 24
+/// Depth a receipt must reach before the next dependent step is built on it.
+const DEFAULT_CONFIRMATIONS = 3
+/// How far the stall bump may compound above the configured cap before the run
+/// gives up. 4× is roughly seven 20% bumps, i.e. a week of sustained stalling.
+const DEFAULT_ABSOLUTE_CAP_MULTIPLE = 4n
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const fmtGwei = (wei) => Number(formatGwei(wei)).toFixed(4)
@@ -175,10 +180,19 @@ export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContract
   // `detached: true` puts the child in its own process group so we can
   // signal the whole tree (npx + node + hardhat) at once. Without it,
   // `proc.kill()` only signals npx, leaving hardhat running.
+  // The fork URL goes through the environment, not argv: `--fork <url>` puts
+  // the provider key in the child's command line, where any local user can read
+  // it out of `ps`. hardhat.config.ts's `mainnetFork` network reads
+  // MAINNET_RPC_URL for exactly this.
   const proc = spawn(
     'npx',
-    ['hardhat', 'node', '--fork', mainnetRpcUrl, '--port', String(port), '--hostname', '127.0.0.1'],
-    { cwd: ensContractsDir, stdio: ['ignore', 'pipe', 'pipe'], detached: true },
+    ['hardhat', 'node', '--network', 'mainnetFork', '--port', String(port), '--hostname', '127.0.0.1'],
+    {
+      cwd: ensContractsDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+      env: { ...process.env, MAINNET_RPC_URL: mainnetRpcUrl },
+    },
   )
   proc.on('error', (e) => console.error('hardhat node spawn error:', e))
   let stderr = ''
@@ -321,7 +335,12 @@ export function createWaitForBaseRunner({
   publicClient, walletClient, account,
   maxBaseFeeWei, bumpAfterMs, bumpPct,
   journalPath, attemptsLogPath,
+  absoluteMaxBaseFeeWei, confirmations = DEFAULT_CONFIRMATIONS,
 }) {
+  // L25: the stall bump is unbounded on its own — 20% every 24h compounds past
+  // any budget if the chain simply stays expensive. The run stops rather than
+  // quietly paying whatever it takes.
+  const hardCap = absoluteMaxBaseFeeWei ?? maxBaseFeeWei * DEFAULT_ABSOLUTE_CAP_MULTIPLE
   const journal = loadJournal(journalPath)
   const completed = new Map(journal.map((e) => [e.step, e]))
   let spent = sumSpent(journal)
@@ -348,6 +367,17 @@ export function createWaitForBaseRunner({
   }
 
   function recordSuccess(step, receipt, digest) {
+    // Inclusion is not success. A tx that reverts at inclusion still yields a
+    // receipt and still costs gas, and journalling it would mark the step done
+    // and skip it on every later resume.
+    if (receipt.status !== 'success') {
+      logAttempt({ ts: nowIso(), step, txHash: receipt.transactionHash,
+        outcome: 'reverted', gasUsed: receipt.gasUsed.toString() })
+      throw new Error(
+        `[${step}] tx ${receipt.transactionHash} was included but REVERTED — not journalled.\n` +
+          `  Investigate before rerunning; the gas is spent either way.`,
+      )
+    }
     const cost = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice)
     spent += cost
     const entry = {
@@ -385,11 +415,39 @@ export function createWaitForBaseRunner({
     }
   }
 
+  /// Every step here feeds the next — an address from a deploy, a permission
+  /// from a write — so a one-confirmation read that a reorg then unwinds would
+  /// have the rest of the run building on state that no longer exists.
+  async function awaitConfirmations(step, receipt) {
+    if (confirmations <= 1) return receipt
+    while (true) {
+      const head = await publicClient.getBlockNumber()
+      const depth = head - BigInt(receipt.blockNumber) + 1n
+      if (depth >= BigInt(confirmations)) return receipt
+      await sleep(POLL_RECEIPT_INTERVAL_MS)
+      // Re-read: a reorg can drop the tx entirely, in which case the caller
+      // must go back to waiting rather than journal it.
+      const again = await publicClient
+        .getTransactionReceipt({ hash: receipt.transactionHash })
+        .catch(() => null)
+      if (!again) {
+        logAttempt({ ts: nowIso(), step, txHash: receipt.transactionHash,
+          outcome: 'reorged-out' })
+        return null
+      }
+      receipt = again
+    }
+  }
+
   async function waitForInclusion(step, hash, deadline) {
     while (Date.now() < deadline) {
       await sleep(POLL_RECEIPT_INTERVAL_MS)
       const receipt = await publicClient.getTransactionReceipt({ hash }).catch(() => null)
-      if (receipt) return { status: 'mined', receipt }
+      if (receipt) {
+        const settled = await awaitConfirmations(step, receipt)
+        if (settled) return { status: 'mined', receipt: settled }
+        continue // reorged out — keep waiting on the same hash
+      }
     }
     return { status: 'stall', reason: `tx ${hash} not included within ${bumpAfterMs / 3600000}h` }
   }
@@ -500,7 +558,18 @@ export function createWaitForBaseRunner({
         if (r) return recordSuccess(step, r, digest)
       }
       bumps += 1
-      cap = (cap * (100n + bumpPct)) / 100n
+      const nextCap = (cap * (100n + bumpPct)) / 100n
+      if (nextCap > hardCap) {
+        logAttempt({ ts: nowIso(), step, txHash: hash, outcome: 'cap-exhausted',
+          cap: cap.toString(), wouldBe: nextCap.toString(), hardCap: hardCap.toString() })
+        throw new Error(
+          `[${step}] bumping past the absolute ceiling (${fmtGwei(nextCap)} > ${fmtGwei(hardCap)} gwei) — stopping.\n` +
+            `  tx ${hash} is still pending at ${fmtGwei(cap)} gwei and may yet be mined; do NOT\n` +
+            `  resend by hand. Wait, or raise ABSOLUTE_MAX_BASE_FEE_GWEI and resume — the journal\n` +
+            `  and attempts log will adopt it if it lands.`,
+        )
+      }
+      cap = nextCap
       logAttempt({ ts: nowIso(), step, txHash: hash, outcome: 'stalled',
         reason: result.reason, bumps, newCap: cap.toString() })
       console.warn(`  [${step}] stalled — bumping cap to ${fmtGwei(cap)} gwei (bump ${bumps})`)
@@ -591,6 +660,8 @@ export async function analyzeAndConfirm({
 export const DEFAULTS = {
   BUMP_AFTER_MS: DEFAULT_BUMP_AFTER_HOURS * 60 * 60 * 1000,
   BUMP_PCT: DEFAULT_BUMP_PCT,
+  CONFIRMATIONS: DEFAULT_CONFIRMATIONS,
+  ABSOLUTE_CAP_MULTIPLE: DEFAULT_ABSOLUTE_CAP_MULTIPLE,
   POLL_BASE_INTERVAL_MS,
   POLL_RECEIPT_INTERVAL_MS,
 }

@@ -43,10 +43,11 @@
  * Commit the addresses file AND the journal to the repo.
  * See docs/deployment.md → Mainnet.
  */
-import { createPublicClient, createWalletClient, encodeFunctionData, http, labelhash, namehash, parseGwei, parseEther, zeroHash, zeroAddress } from 'viem'
+import { createPublicClient, createWalletClient, encodeFunctionData, getAddress, http, labelhash, namehash, parseGwei, parseEther, zeroHash, zeroAddress } from 'viem'
 import { mainnet } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
-import { readFileSync, writeFileSync } from 'fs'
+import { execFileSync } from 'child_process'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import {
@@ -77,14 +78,28 @@ if (!tld || !KNOWN_TLDS.includes(tld)) {
 const nftGateEnabled = tld === 'testing'
 const maxBaseFeeGwei = process.env.MAX_BASE_FEE_GWEI
 
-const chainlinkEthUsd = process.env.ETHUSD_FEED || '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
-const smpxNftAddr = process.env.SMPXNFT_ADDR || '0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291'
-const ownerAddress = process.env.OWNER_ADDRESS || '0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340'
+// EIP-55 checksums every address the run will bake in permanently. `getAddress`
+// rejects a wrong-length or mistyped address and a bad checksum, which is the
+// only automatic protection against a transposed character in an env var that
+// ends up owning the namespace.
+function requireAddress(label, value) {
+  try {
+    return getAddress(value)
+  } catch {
+    console.error(`${label} is not a valid checksummed address: ${JSON.stringify(value)}`)
+    process.exit(1)
+  }
+}
+const chainlinkEthUsd = requireAddress('ETHUSD_FEED', process.env.ETHUSD_FEED || '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419')
+const smpxNftAddr = requireAddress('SMPXNFT_ADDR', process.env.SMPXNFT_ADDR || '0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291')
+const ownerAddress = requireAddress('OWNER_ADDRESS', process.env.OWNER_ADDRESS || '0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340')
 // The guardian holds the restrictive, no-delay powers: setRegistrarAllowance (the
 // money kill switch), setPublicSalesOpen (the pause), addReservedNames, and it is
 // `withdraw`'s payee. It must differ from the admin owner — that separation is the
 // point. See docs/plans/names-v2-launch-to-freeze-plan.md.
 const guardianAddress = process.env.GUARDIAN_ADDRESS
+  ? requireAddress('GUARDIAN_ADDRESS', process.env.GUARDIAN_ADDRESS)
+  : undefined
 if (!guardianAddress || guardianAddress.toLowerCase() === ownerAddress.toLowerCase()) {
   console.error(
     'GUARDIAN_ADDRESS must be set and must differ from OWNER_ADDRESS.\n' +
@@ -306,6 +321,113 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   }
 }
 
+/// L29: the journal proves each transaction was mined, not that the stack is
+/// wired the way the script intended — a mis-ordered or silently-reverted step
+/// leaves a deployment that looks complete and is not. Read the important state
+/// back off-chain and fail loudly while the deploy key can still fix it.
+async function verifyWiring(publicClient, addresses) {
+  console.log(`\n--- Post-deploy read-back ---`)
+  const failures = []
+  const check = async (what, expected, read) => {
+    try {
+      const got = await read()
+      const ok = String(got).toLowerCase() === String(expected).toLowerCase()
+      console.log(`  ${ok ? '✓' : '✗'} ${what}: ${got}${ok ? '' : `  (expected ${expected})`}`)
+      if (!ok) failures.push(what)
+    } catch (e) {
+      console.log(`  ✗ ${what}: read failed — ${e.shortMessage || e.message}`)
+      failures.push(what)
+    }
+  }
+  const read = (address, sig, outputs, functionName, args = []) =>
+    publicClient.readContract({
+      address,
+      abi: [{ type: 'function', name: functionName, inputs: sig, outputs, stateMutability: 'view' }],
+      functionName,
+      args,
+    })
+  const ADDR = [{ type: 'address' }]
+  const registry = addresses.ENSRegistry
+  const controller = addresses.ETHRegistrarController
+  const registrar = addresses.BaseRegistrarImplementation
+
+  await check('registry owner of the TLD node is the base registrar', registrar,
+    () => read(registry, [{ type: 'bytes32' }], ADDR, 'owner', [namehash(tld)]))
+  await check('controller is a controller on the registrar', 'true',
+    () => read(registrar, ADDR, [{ type: 'bool' }], 'controllers', [controller]))
+  await check('registrar maxLabelLength', '63',
+    () => read(registrar, [], [{ type: 'uint256' }], 'maxLabelLength'))
+  await check('registrar subnameHook', addresses.SubnameRegistrar,
+    () => read(registrar, [], ADDR, 'subnameHook'))
+  await check('registrar metadataRenderer', addresses.MetadataRenderer,
+    () => read(registrar, [], ADDR, 'metadataRenderer'))
+  await check('controller defaultResolver', addresses.PublicResolver,
+    () => read(controller, [], ADDR, 'defaultResolver'))
+  await check('controller beneficiary is the guardian', guardianAddress,
+    () => read(controller, [], ADDR, 'beneficiary'))
+  await check('controller nftGateEnabled', String(nftGateEnabled),
+    () => read(controller, [], [{ type: 'bool' }], 'nftGateEnabled'))
+  await check('controller minCharLength', '6',
+    () => read(controller, [], [{ type: 'uint8' }], 'minCharLength'))
+  await check('controller is not frozen', 'false',
+    () => read(controller, [], [{ type: 'bool' }], 'frozen'))
+  await check('public sales are still closed', 'false',
+    () => read(controller, [], [{ type: 'bool' }], 'publicSalesOpen'))
+  await check('subname registrar resolver', addresses.PublicResolver,
+    () => read(addresses.SubnameRegistrar, [], ADDR, 'resolver'))
+  // A six-character name must quote the cheapest rung. `.testing` is priced at
+  // zero on purpose, so only a paid TLD can assert non-zero — for that one, zero
+  // means the oracle is misconfigured and every name would be free.
+  const expectPaid = tld !== 'testing'
+  try {
+    const p = await publicClient.readContract({
+      address: controller,
+      abi: [{ type: 'function', name: 'rentPrice', inputs: [{ type: 'string' }, { type: 'uint256' }],
+        outputs: [{ type: 'tuple', components: [{ name: 'base', type: 'uint256' }, { name: 'premium', type: 'uint256' }] }],
+        stateMutability: 'view' }],
+      functionName: 'rentPrice', args: ['abcdef', 31536000n],
+    })
+    const ok = !expectPaid || p.base > 0n
+    console.log(`  ${ok ? '✓' : '✗'} one-year price for a 6-char name: ${Number(p.base) / 1e18} ETH${expectPaid ? '' : '  (.testing is free by design)'}`)
+    if (!ok) failures.push('rentPrice is zero on a paid TLD')
+  } catch (e) {
+    console.log(`  ✗ rentPrice read failed — ${e.shortMessage || e.message}`)
+    failures.push('rentPrice')
+  }
+
+  if (failures.length) {
+    console.error(`\n  ${failures.length} read-back check(s) FAILED: ${failures.join(', ')}`)
+    console.error(`  The deploy key still owns everything — fix the wiring before handing over.`)
+    process.exitCode = 1
+  } else {
+    console.log(`  all read-back checks passed`)
+  }
+}
+
+/// L33: the deploy reads compiled artifacts, never sources, so an edit made
+/// after the last compile would deploy the previous bytecode and the journal
+/// would record it as a success. Rather than guess freshness from mtimes —
+/// Hardhat caches on content, so a touched-but-unchanged file would block the
+/// run forever — just compile. It is idempotent, it is the only thing that
+/// actually guarantees the artifacts match the sources, and it fails the run on
+/// a branch that does not build at all.
+function assertBuildFresh() {
+  console.log('Compiling contracts (artifacts must match sources) …')
+  try {
+    execFileSync('npx', ['hardhat', 'compile'], {
+      cwd: ENS_CONTRACTS_DIR,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+    })
+  } catch (e) {
+    console.error('`npx hardhat compile` failed — refusing to deploy.\n')
+    console.error(e.stdout || '')
+    console.error(e.stderr || '')
+    process.exit(1)
+  }
+  console.log('  build is current')
+}
+
 // Track the spawned fork at module scope so cleanup handlers can reach it.
 let activeFork = null
 function cleanupFork() {
@@ -319,6 +441,23 @@ process.on('SIGTERM', () => { cleanupFork(); process.exit(143) })
 process.on('exit',    () => { cleanupFork() })
 
 async function main() {
+  // Cheap and first: a stale build must not cost a fork spawn, let alone a
+  // transaction.
+  assertBuildFresh()
+
+  // A populated addresses file with no journal beside it means a previous
+  // deployment completed and its journal was moved or lost. Overwriting it
+  // would erase the only record of what is live.
+  if (existsSync(addressesPath) && loadJournal(journalPath).length === 0) {
+    console.error(
+      `${addressesPath} already exists but ${journalPath} is empty or missing.\n` +
+        `  That pairing means a completed deployment whose journal is gone — this run would\n` +
+        `  overwrite the record of live addresses. Move the file aside deliberately if you\n` +
+        `  really are starting over.`,
+    )
+    process.exit(1)
+  }
+
   console.log(`SNRC mainnet deploy for .${tld} (chainId ${mainnet.id})`)
   console.log(`  Deployer:          ${account.address}`)
   console.log(`  Cold owner:        ${ownerAddress}`)
@@ -359,6 +498,31 @@ async function main() {
   const publicClient = createPublicClient({ chain: mainnet, transport })
   const walletClient = createWalletClient({ chain: mainnet, transport, account })
 
+  // MAINNET_RPC_URL pointing at a testnet would deploy the whole stack to the
+  // wrong chain and journal it as a success. viem only asserts the chain id on
+  // some paths, so assert it here, once, before any spend.
+  const liveChainId = await publicClient.getChainId()
+  if (liveChainId !== mainnet.id) {
+    console.error(`MAINNET_RPC_URL is chainId ${liveChainId}, expected ${mainnet.id}. Refusing to deploy.`)
+    process.exit(1)
+  }
+
+  // A dead or misconfigured feed makes every price quote revert
+  // (InvalidPriceFeed) and the payable path unusable from the first block.
+  // Cheaper to find out now than after the oracle is wired in.
+  try {
+    const answer = await publicClient.readContract({
+      address: chainlinkEthUsd,
+      abi: [{ type: 'function', name: 'latestAnswer', inputs: [], outputs: [{ type: 'int256' }], stateMutability: 'view' }],
+      functionName: 'latestAnswer',
+    })
+    if (answer <= 0n) throw new Error(`latestAnswer() = ${answer}`)
+    console.log(`  ETH/USD feed:      ${(Number(answer) / 1e8).toFixed(2)} USD  (live)`)
+  } catch (e) {
+    console.error(`ETH/USD feed ${chainlinkEthUsd} is not answering usably: ${e.shortMessage || e.message}`)
+    process.exit(1)
+  }
+
   await analyzeAndConfirm({
     publicClient, account,
     maxBaseFeeWei, dryRunTotals: dryTotals,
@@ -395,6 +559,19 @@ async function main() {
   })
   writeFileSync(verificationPath, JSON.stringify(verificationMeta, null, 2))
   console.log(`Wrote ${verificationPath}`)
+
+  await verifyWiring(publicClient, addresses)
+
+  console.log(`\n--- Handover still outstanding ---`)
+  console.log(`  Ownership was transferred with Ownable2Step, so the admin does NOT hold these`)
+  console.log(`  contracts until it accepts. From ${ownerAddress}, call:`)
+  for (const c of ['Root', 'BaseRegistrarImplementation', 'ETHRegistrarController']) {
+    if (addresses[c] && addresses[c] !== zeroAddress) {
+      console.log(`    acceptOwnership()   on ${c}  ${addresses[c]}`)
+    }
+  }
+  console.log(`  Until then the deploy key ${account.address} still controls them — treat it as hot.`)
+  console.log(`  Guardian ${guardianAddress} is already the beneficiary and needs no acceptance.`)
 
   console.log(`\nCommit ${addressesPath} AND ${journalPath} AND ${verificationPath} to the repo.`)
   console.log(`See docs/deployment.md → Mainnet → Step 3.`)
