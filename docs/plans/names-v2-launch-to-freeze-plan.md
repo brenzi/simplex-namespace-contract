@@ -20,7 +20,7 @@ Who controls the contracts, from deployment to the freeze. Dates match
 |---|---|
 | 30 Oct 2026 | `.simplex` deployed and the ~3000 a-priori names reserved, both by the deploy key. Public sales closed. |
 | 2 Nov 2026 | Handover starts. `setBeneficiary` and two of three ownership transfers. |
-| 2–3 Nov 2026 | Guardian Safe funds the registrar. First real use of the new setup. |
+| 2–3 Nov 2026 | Guardian Safe funds the registrar's spending limit. First real use of the new setup. |
 | 4 Nov 2026 | Contracts, registrar, app and codes all live. |
 | 9 Nov 2026 | Timelock accepts the controller. The deploy key owns nothing and is destroyed. |
 | 12 Nov 2026 | Investor window opens. **Hard deadline for handover** — first names owned by third parties. |
@@ -49,7 +49,7 @@ by 12 Dec 2026. Signers geographically distributed.
 the timelock.
 
 **Registrar hot wallet** — owns nothing. Held in KMS by the names service. Pays gas, spends
-registrar credits, submits relayed user signatures.
+its registrar allowance, submits relayed user signatures.
 
 ## 4. Powers, before and after the freeze
 
@@ -58,12 +58,20 @@ registrar credits, submits relayed user signatures.
 | Deploy key | nothing | nothing |
 | Admin timelock (7 days) | upgrade the controller; `removeReservedNames`; `registerReserved`; `setMinCharLength`; `setDefaultResolver`; `setPriceOracle`; `recoverFunds`; `addController`; `removeController`; `setMetadataRenderer`; `setMaxLabelLength`; `setSubnameHook`; `baseRegistrar.setResolver`; `Root.setResolver`; `Root.setController`; `Root.lock`; `freeze()` | same, minus upgrade and minus `freeze()`, which are spent |
 | Admin Safe | proposes and executes timelock actions; adds and removes its own signers | same |
-| Guardian Safe (instant) | `addReservedNames`; `setPublicSalesOpen`; `setRegistrarCredits`; `setBeneficiary`; receives `withdraw()`; cancels timelock actions | same, minus `setPublicSalesOpen` |
-| Registrar hot wallet | `registerWithCredit`; `renewWithCredit`; `topUpEditCredits`; relaying signed user intents | same |
+| Guardian Safe (instant) | `addReservedNames`; `setPublicSalesOpen`; `setRegistrarAllowance`; `setBeneficiary`; receives `withdraw()`; cancels timelock actions | same, minus `setPublicSalesOpen` |
+| Registrar hot wallet | `registerWithCredit`; `renewWithCredit`; and relaying signed user intents — `transferWithSig`, `setTextWithSig`, `clearRecordsWithSig`, `setApprovalForAllWithSig`, `createSubnameWithSig`, `deleteSubnameWithSig` | same |
 | Anyone | `commit`; payable `register` and `renew`; `withdraw`; all signed-intent paths; own-name record writes; `reclaim`; subname create and delete; `purge` | same |
 
 `disableNftGate` is the one owner function not listed. `.simplex` deploys with the gate
 already off and the function reverts when it is, so it is inert from day one.
+
+No reverse registrar is deployed and there is no reverse resolution: `.simplex` maps names
+to SimpleX links in one direction only. A registration carrying a `reverseRecord` bit
+reverts `ReverseRecordNotSupported`, and the controller's two former slots are reserved
+rather than deleted, so the feature could be reintroduced in an upgrade without a storage
+migration. There are also no on-chain edit credits — metering relayed writes is the
+relayer's job, since it is the only caller of those paths and the only party that can
+refuse before paying.
 
 Three powers exist after the freeze because losing them would be worse than keeping them.
 `registerReserved` and `addReservedNames` keep brand outreach open with no end date.
@@ -77,7 +85,9 @@ No key can take, transfer or re-point a name that someone owns. `_register` requ
 `available(id)`, which is false until 90 days past expiry, and that check is in the
 immutable registrar. `reclaim` needs the token holder. `transferWithSig` needs the owner's
 signature. After the freeze, no key can change the controller's code, so no key can
-write records on a name it does not own.
+write records on a name it does not own — which matters because the controller is
+`trustedETHController` on the resolver, and that authority is exactly what a hostile
+upgrade would abuse.
 
 One indirect path exists and is not closed: the admin can set a hostile price oracle,
 price renewals out of reach, and take names as they lapse. It needs a public 7-day
@@ -88,7 +98,7 @@ permissionless throughout — anyone can renew anyone's name at the old price me
 
 **Two keys, not one.** A power sits on the instant key only when the harm it answers
 happens faster than 7 days. A compromised registrar mints junk names every block, so
-zeroing its credits must be instant. An exploit in the payable path accrues per block, so
+zeroing its allowance must be instant. An exploit in the payable path accrues per block, so
 pausing must be instant. Fixing a dead price feed is an outage, not a loss — 90 days of
 grace means nobody loses a name while the repair is scheduled — so it can wait.
 
@@ -102,11 +112,13 @@ does not affect a registered name, and `renew` never checks the reserved list.
 **Safes rather than hardware wallets.** Every signer holds a hardware wallet either way;
 the choice is one device or several behind a Safe. One device is a single point of failure
 in both directions: lose it and admin is gone, steal it and admin is taken. It also cannot
-be rotated safely here — `BaseRegistrar` uses single-step `Ownable` and `Root` uses a
-version with no zero-address check, both immutable, so rotating a device key means an
-unverified one-shot `transferOwnership` where a wrong address is permanent. With a Safe the
-owner address never changes and signers rotate inside it. A Safe also survives a signer
-leaving, and gives per-signer attribution on chain.
+be rotated cleanly here — `BaseRegistrar` and `Root` both use OpenZeppelin's single-step
+`Ownable`, and both are immutable, so rotating a device key means a one-shot
+`transferOwnership` that the recipient never has to accept. (OZ does reject the zero
+address, so a null transfer is caught; a transfer to a wrong but valid address is not.)
+With a Safe the owner address never changes and signers rotate inside it, which is
+reversible. A Safe also survives a signer leaving, and gives per-signer attribution on
+chain.
 
 **A timelock behind the admin Safe.** The known Safe failure mode is signers approving what
 they cannot verify. The timelock means a bad transaction is scheduled, not executed, and the
@@ -120,10 +132,16 @@ urgent.
 **The price oracle stays changeable.** `StablePriceOracle.usdOracle` is `immutable`, so
 changing the Chainlink feed needs a new oracle. Chainlink has retired feeds before. A frozen
 oracle with a retired feed would break registration and renewal permanently, with no
-recovery on any key.
+recovery on any key. The oracle now rejects a zero or negative answer outright
+(`InvalidPriceFeed`) rather than dividing by zero or wrapping the cast and quoting names at
+nothing — and the sponsored path no longer reads the feed at all, since the allowance is
+denominated in attoUSD via `priceUSD()`. So a dead feed costs the payable path and leaves
+the app-store flow running.
 
 **The sales switch does not stay changeable.** A permanently paused payable path could never
-be reopened, so `freeze()` closes the switch in whatever position it holds.
+be reopened, so `freeze()` closes the switch in whatever position it holds. Because that
+makes the switch's position at freeze-time permanent, `freeze()` refuses while sales are
+closed — the ordering below is enforced on-chain, not just by runbook.
 
 **The freeze date is a floor, not a deadline.** It removes the only repair path for a bug in
 the controller, and `Root.lock` removes the only cheap redeploy path, so it should happen
@@ -150,10 +168,23 @@ Caller: **deploy key**, alone.
 4. `subnameRegistrar.setResolver(simplexResolver)`.
 5. `controller.setDefaultResolver(simplexResolver)`.
 6. `controller.addReservedNames([...])` for the ~3000 a-priori names, in batches of about
-   300. Roughly 24k gas per name, so about 7M gas per batch and 70M in total — run it at a
-   low base fee, which `deploy-mainnet.mjs` already supports through `MAX_BASE_FEE_GWEI`.
-   The list is final from 15 Oct, so it is ready.
+   300. Measured cost is 25.4k gas per name — 7.6M per batch, 76M in total — so at the
+   base fee this deployment expects the whole set is single-digit dollars. Run it at a low
+   base fee, which `deploy-mainnet.mjs` supports through `MAX_BASE_FEE_GWEI`. Note that gas
+   *estimators* run roughly 3× over actual on this loop, so the submitted limit will look
+   far larger than the gas the batch really burns; size the batches by measured cost, not by
+   what the estimator reports. The list is final from 15 Oct, so it is ready.
 7. Leave `publicSalesOpen == false` and `Root.locked("simplex") == false`.
+
+No reverse registrar is deployed. That is possible because `PublicResolver` and
+`UniversalResolver` no longer inherit `ReverseClaimer`, whose constructor called `claim` on
+whatever owned `addr.reverse` — a hard dependency on a deployed reverse registrar that
+could not be short-circuited from a subclass.
+
+The price oracle takes a **six**-entry curve (attoUSD per second, label lengths 1/2/3/4/5/6+):
+$10 a year at six characters and above, ten times more for each character lost. A
+five-entry array is still accepted and keeps the upstream behaviour, where `price5Letter`
+applies to everything five characters and up — so 5 and 6+ are priced alike. Pass six.
 
 Reserving here rather than after the handover is not closing an open hole — `publicSalesOpen`
 is false and the registrar has no credits, so nothing can be registered before 12 Nov
@@ -170,7 +201,7 @@ Order matters. `setBeneficiary` is owner-callable only while unset.
 
 | # | Caller | Call |
 |---|---|---|
-| 1 | deploy key | `controller.setBeneficiary(guardianSafe)` |
+| 1 | deploy key | `controller.setBeneficiary(guardianSafe)` — rejects the zero address; `deploy-mainnet.mjs` does this and warns if the guardian equals the admin owner |
 | 2 | deploy key | `controller.transferOwnership(adminTimelock)` |
 | 3 | admin Safe → timelock | schedule and execute `controller.acceptOwnership()` |
 | 4 | deploy key | `baseRegistrar.transferOwnership(adminTimelock)` |
@@ -189,10 +220,17 @@ Safe; every former deploy-key call reverts.
 
 Caller: **guardian Safe**, 2 signatures.
 
-1. `controller.setRegistrarCredits(registrarHotWallet, N)` — sized to expected demand plus
-   headroom.
+1. `controller.setRegistrarAllowance(registrarHotWallet, N)` — `N` in **attoUSD**, sized to
+   expected sales plus headroom. A sponsored registration or renewal deducts that name's own
+   list price, so the limit bounds exposure in money rather than counting transactions; at
+   the launch curve, $100,000 buys 10,000 one-year six-character names — or 100
+   four-character ones, or ten three-character ones.
 
-This works even though A2 step 3 is still pending, because `setRegistrarCredits` is
+There is no separate registration step for a registrar: any address with a non-zero
+allowance is one, and zero means it is not. The hot wallet also needs its own ETH for gas —
+the allowance authorises, it does not pay.
+
+This works even though A2 step 3 is still pending, because `setRegistrarAllowance` is
 beneficiary-only and does not depend on who currently owns the controller.
 
 ### A4. Open public sales — 12 Dec 2026
@@ -211,8 +249,8 @@ later rotation, on either Safe, at any time.
 |---|---|---|
 | Reserve a brand name under threat | guardian Safe, 2 sigs | `controller.addReservedNames([name])` |
 | Give a brand its name | admin Safe → timelock, 7 days | `controller.registerReserved(label, brandAddr, duration)` |
-| Refill registrar credits | guardian Safe, 2 sigs | `controller.setRegistrarCredits(registrar, N)` |
-| Cut off a compromised registrar | guardian Safe, 2 sigs | `controller.setRegistrarCredits(registrar, 0)` |
+| Refill a registrar's allowance | guardian Safe, 2 sigs | `controller.setRegistrarAllowance(registrar, N)` — attoUSD; replaces, never adds |
+| Cut off a compromised registrar | guardian Safe, 2 sigs | `controller.setRegistrarAllowance(registrar, 0)` |
 | Pause payable sales | guardian Safe, 2 sigs | `controller.setPublicSalesOpen(false)` |
 | Replace the price oracle | admin Safe → timelock, 7 days | `controller.setPriceOracle(newOracle)` |
 | Update NFT artwork | admin Safe → timelock, 7 days | `baseRegistrar.setMetadataRenderer(newRenderer)` |
@@ -237,6 +275,12 @@ If any fails, move the date out. Do not move it in.
 **Seven days later.** Before executing, read `controller.publicSalesOpen()`. If false, the
 guardian Safe sets it true first — this is the last moment it can. Then execute both
 operations in order. Executor is open, so anyone can submit them.
+
+This ordering is enforced on-chain: `freeze()` reverts `PublicSalesClosed` while sales are
+closed. That matters because the race is real — the pause is the guardian's and immediate,
+the freeze is the admin's and delayed, so a pause answering an incident can land between
+the schedule and the execution. With the guard the queued freeze simply reverts and is
+re-queued, instead of sealing the payable path shut forever.
 
 Verify: `root.locked(labelhash("simplex")) == true`; `controller.frozen() == true`;
 simulated `upgradeTo`, `upgradeToAndCall` and `setPublicSalesOpen` all revert; simulated
