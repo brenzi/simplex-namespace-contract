@@ -80,8 +80,6 @@ export function assembleVerification({
       addresses.ExponentialPremiumPriceOracle,
       minCommitmentAge,
       maxCommitmentAge,
-      addresses.ReverseRegistrar,
-      addresses.DefaultReverseRegistrar,
       addresses.ENSRegistry,
       {
         tldNode,
@@ -95,9 +93,19 @@ export function assembleVerification({
   })
 
   // Price oracle uses the production array for .simplex; .testing is free.
+  // MUST stay byte-identical to deploy-mainnet.mjs — a mismatch here does not
+  // fail loudly, it produces constructorArgs Etherscan rejects.
+  // attoUSD per second, label lengths [1, 2, 3, 4, 5, 6+].
   const priceArray = tld === 'testing'
-    ? [0n, 0n, 0n, 0n, 0n]
-    : [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n]
+    ? [0n, 0n, 0n, 0n, 0n, 0n]
+    : [
+        31709791983700000n, // 1 char    $1,000,000 / yr
+        3170979198370000n,  // 2 chars     $100,000 / yr
+        317097919837000n,   // 3 chars      $10,000 / yr
+        31709791983700n,    // 4 chars       $1,000 / yr
+        3170979198370n,     // 5 chars         $100 / yr
+        317097919837n,      // 6+ chars         $10 / yr
+      ]
 
   // The dummy gateway provider address from the deploy: we don't have it
   // directly (the deployments JSON doesn't include mock-only contracts).
@@ -117,24 +125,8 @@ export function assembleVerification({
         [addresses.ENSRegistry, tldNode],
       ),
     },
-    ReverseRegistrar: {
-      address: addresses.ReverseRegistrar,
-      artifact: 'contracts/reverseRegistrar/ReverseRegistrar.sol/ReverseRegistrar.json',
-      constructorArgs: encodeAbiParameters([{ type: 'address' }], [addresses.ENSRegistry]),
-    },
-    DefaultReverseRegistrar: {
-      address: addresses.DefaultReverseRegistrar,
-      artifact: 'contracts/reverseRegistrar/DefaultReverseRegistrar.sol/DefaultReverseRegistrar.json',
-      constructorArgs: '0x',
-    },
-    NameWrapper: {
-      address: addresses.NameWrapper,
-      artifact: 'contracts/wrapper/NameWrapper.sol/NameWrapper.json',
-      constructorArgs: encodeAbiParameters(
-        [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
-        [addresses.ENSRegistry, addresses.BaseRegistrarImplementation, deployer],
-      ),
-    },
+    // No ReverseRegistrar, DefaultReverseRegistrar or NameWrapper: none of the
+    // three is deployed. Their keys in the addresses file are address(0).
     ExponentialPremiumPriceOracle: {
       address: addresses.ExponentialPremiumPriceOracle,
       artifact: 'contracts/ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
@@ -157,19 +149,43 @@ export function assembleVerification({
         [getImplAddress(addresses), proxyInitData],
       ),
     },
-    PublicResolver: {
+    // The deployment resolver is SimplexResolver (PublicResolver + signed record
+    // writes). It is recorded under the `PublicResolver` key for dApp
+    // compatibility, but it is a different artifact and different bytecode.
+    SimplexResolver: {
       address: addresses.PublicResolver,
-      artifact: 'contracts/resolvers/PublicResolver.sol/PublicResolver.json',
+      artifact: 'contracts/simplex/SimplexResolver.sol/SimplexResolver.json',
       constructorArgs: encodeAbiParameters(
         [{ type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'address' }],
         [
           addresses.ENSRegistry,
-          addresses.NameWrapper,
+          addresses.SubnameRegistrar, // nameWrapper slot: subname authorisation
           addresses.ETHRegistrarController,
-          addresses.ReverseRegistrar,
+          zeroAddress, // trustedReverseRegistrar: unused and inert
         ],
       ),
     },
+    SubnameRegistrar: {
+      address: addresses.SubnameRegistrar,
+      artifact: 'contracts/simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
+      constructorArgs: encodeAbiParameters(
+        [{ type: 'address' }, { type: 'address' }],
+        [addresses.ENSRegistry, addresses.BaseRegistrarImplementation],
+      ),
+    },
+    MetadataRenderer: {
+      address: addresses.MetadataRenderer,
+      artifact: 'contracts/simplex/MetadataRenderer.sol/MetadataRenderer.json',
+      constructorArgs: encodeAbiParameters([{ type: 'string' }], [`.${tld}`]),
+    },
+  }
+
+  if (addresses.DummyGatewayProvider) {
+    targets.DummyGatewayProvider = {
+      address: addresses.DummyGatewayProvider,
+      artifact: 'contracts/mocks/DummyGatewayProvider.sol/DummyGatewayProvider.json',
+      constructorArgs: '0x',
+    }
   }
 
   if (addresses.UniversalResolver && addresses.DummyGatewayProvider) {

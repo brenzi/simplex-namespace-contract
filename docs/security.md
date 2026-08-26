@@ -311,6 +311,35 @@ resolution and, in an earlier revision, an on-chain edit-credit system.
 | `registerWithCredit`, `renewWithCredit` | any address with allowance | Deducts the name's own list price in attoUSD. No value attached. |
 | `transferWithSig`, `setTextWithSig`, `clearRecordsWithSig`, `setApprovalForAllWithSig`, `createSubnameWithSig`, `deleteSubnameWithSig` | anyone holding the owner's signature | The relayer pays gas and chooses nothing else. Each contract keeps its own per-signer nonce. |
 
+### What `freeze()` does not stop
+
+`freeze()` fixes the implementation and seals the sales switch. It does **not**
+end issuance, and the plan should not be read as saying it does:
+
+- the guardian can still fund a registrar (`setRegistrarAllowance`) and that
+  registrar can still mint names through `registerWithCredit`;
+- the owner can still `addReservedNames` and `registerReserved`.
+
+That is deliberate — brand reservation and outreach have to continue for the
+life of the namespace, which is why the owner is never renounced. The guarantee
+a freeze gives is narrower and worth stating exactly: **no key can change the
+code, and no key can take a name that someone already holds.** Names that are
+unregistered remain issuable by the two governance keys forever.
+
+### Bounds that are the registrar's job, not the contract's
+
+`SubnameRegistrar` supports arbitrary depth, and `ownerOf` walks the parent chain
+on every authorisation, so a subname nested D levels deep costs O(D) per read and
+a subtree built to depth D costs O(D²) to create. Nothing on-chain caps D.
+
+This is left off-chain on purpose. The relayer is the only sponsored caller: it
+sees the full call before it pays for it, so it can refuse an abusive depth for
+free, whereas a constant compiled into an immutable contract is a guess at a
+limit that can never be revised. A user paying their own gas is only ever
+grieving themselves. **Relayer operators must enforce a depth limit** (5 is
+ample for the SimpleX UX) along with the payload and gas bounds they already
+apply.
+
 ### The invariant everything rests on
 
 `BaseRegistrarImplementation._register` opens with `require(available(id))`, and
@@ -327,6 +356,27 @@ edit-credit faucet and an overflow that could brick renewals (both removed with
 the credit system itself); `freeze()`'s missing `publicSalesOpen` guard;
 `StablePriceOracle`'s unchecked `latestAnswer()` cast; the sponsored path's
 needless dependency on the ETH/USD feed; and the reverse-record subject bug.
+
+A second round against the branch found, and this revision fixes, four issues
+that all shared one root — **state that outlives the registration it belongs
+to**:
+
+- **Stale records on re-registration.** A name that lapsed kept its previous
+  owner's text records, so a squatter's SimpleX address resolved under the new
+  owner's name. `_registerCore` and `registerReserved` now retire records on the
+  default resolver before writing anything new.
+- **Revived subnames.** The same leak one level down: re-creating a label left
+  behind by a previous 2LD owner resurfaced their records. Creating over a
+  generation-dead subname is now refused outright — `purge` first — and both
+  `purge` and `deleteSubname` retire the records they drop.
+- **Expired 2LDs kept their subtree.** Registry ownership of a 2LD survives
+  expiry, so its former holder retained subname authority indefinitely. The
+  registrar now mirrors each registration's expiry (`onExpiryChanged`) and gates
+  authority on it.
+- **Unauthenticated announcement fields.** `ephemeralPubKey` and `viewTag` sat
+  outside the signed struct, so a relayer could fabricate a stealth derivation on
+  a genuine transfer. They are now part of `TRANSFER_TYPEHASH`, and the event
+  itself is ERC-5564's `Announcement` verbatim rather than a bespoke one.
 
 Accepted, and new to this ledger:
 

@@ -13,6 +13,7 @@ Target: `.simplex` deployed on mainnet 30 Oct 2026, governance handover 2 Nov, a
 4. Work items
 5. Design decisions
 5b. Adversarial review outcomes
+5c. Second review round (PR #26)
 6. Storage layout
 7. Deployment, handover and freeze
 8. Redeploy contingency
@@ -57,7 +58,8 @@ Already implemented, 19 tests passing:
 - `BaseRegistrarImplementation.transferWithSig(from, to, tokenId, nonce, deadline, sig,
   ephemeralPubKey, viewTag)` — EIP-712 domain `SimplexNames`, per-signer nonces,
   grace-aware ownership check, self-transfer rejected, `_transfer` so auto-reclaim fires,
-  `StealthNameTransfer` emitted only when an ephemeral key is supplied.
+  and an announcement emitted only when an ephemeral key is supplied. (The announcement's
+  shape and signing changed in the second review round — see §5c.)
 - `SimplexResolver` — `PublicResolver` subclass with `setTextWithSig`, per-signer nonces,
   and `relayedSigner`.
 - `Root.sol` compiles but is deployed nowhere.
@@ -525,6 +527,71 @@ record would touch a third party's namespace without consent; and inert in pract
 because reverse records are self-asserted (`ReverseRegistrar.setName` takes an arbitrary
 string) and mean nothing until forward-verified. W11 removes the question.
 
+## 5c. Second review round (PR #26)
+
+A second adversarial pass over the branch found four issues sharing one root — **state that
+outlives the registration it belongs to** — plus a set of deploy-tooling and documentation
+defects. All are fixed on the branch.
+
+**Stale records survived re-registration.** A lapsed name kept its previous owner's text
+records, so after the grace period a new registrant received a name that already resolved to
+a stranger's SimpleX address, invisibly. `_registerCore` and `registerReserved` now retire
+records on the default resolver before writing anything new — before, because the version
+bump would otherwise wipe the records the same call is about to set. The clear is scoped to
+the default resolver: calling into a caller-supplied resolver could revert and brick the
+registration.
+
+**Reviving a subname inherited the previous owner's records.** The same leak one level down.
+Creating over a generation-dead subname is now refused (`StaleSubnameMustBePurged`) — the new
+owner runs the permissionless `purge` first — and both `purge` and `deleteSubname` retire the
+records they drop. Retirement needs a path the registrar can actually use: the resolver's
+`authorised` check resolves a subname's owner to the *2LD holder*, never the registrar, so
+`SimplexResolver` gained `clearSubnameRecords`, callable only by the registrar and only for
+nodes the registrar itself owns in the registry. That is a narrower grant than
+`trustedETHController`, which can write any record on any node.
+
+**An expired 2LD kept authority over its subtree.** Registry ownership of a 2LD is never
+cleared, so its former holder could keep creating and editing subnames indefinitely after
+expiry. The registrar cannot derive the expiry — it holds the node hash, and `expiries` is
+keyed by a label hash it cannot invert — so `BaseRegistrar` now pushes it: `ISubnameHook`
+gained `onExpiryChanged`, called on registration and renewal, and `ownerOf` / `_controller`
+gate on the mirror. The threshold is expiry, not expiry-plus-grace, matching the registrar's
+own `ownerOf`.
+
+**The stealth announcement was unauthenticated and non-canonical.** `ephemeralPubKey` and
+`viewTag` sat outside the signed struct, so a relayer could attach a fabricated derivation to
+a genuine transfer or suppress the real one. Both are now inside `TRANSFER_TYPEHASH`. The
+event is ERC-5564's `Announcement` verbatim — `schemeId`, `stealthAddress`, `caller`,
+`ephemeralPubKey`, `metadata` — so any indexer that knows the standard decodes ours by topic,
+with the ERC-721 metadata layout (view tag, `transferFrom` selector, token contract, token
+id). It is still emitted by the registrar rather than the canonical singleton announcer,
+which is the deliberate choice that keeps a recovery scan scoped to SimpleX name transfers.
+
+**Accepted as documentation, not code.** Subname depth stays uncapped on-chain: the relayer
+is the only sponsored caller, it sees the call before it pays for it, and a constant compiled
+into an immutable contract would be a guess at a limit that can never be revised. Relayer
+operators enforce it (see `docs/security.md`). And `freeze()` was never a freeze on
+*issuance* — the guardian can still fund a registrar and the owner can still reserve and
+register — which is deliberate but was not stated plainly enough to survive a careless
+reading.
+
+**Deploy tooling.** `SIMPLEX_TLD` must now be given explicitly and must be a known TLD; an
+unset or typo'd value silently re-targeted the entire run, including which journal it
+resumed. `GUARDIAN_ADDRESS` now hard-fails when unset or equal to `OWNER_ADDRESS` instead of
+warning: `setBeneficiary` is owner-callable only while the beneficiary is unset, so the
+mistake is permanent. Journal step keys name the operation (`write:setBeneficiary#2`) rather
+than its ordinal, since a positional key silently remaps every later step when one is
+inserted; each entry records a digest of the call it made, and a resume that would send
+something different aborts rather than skipping. A step submitted but not yet journalled —
+the window is up to `BUMP_AFTER_HOURS` — is now recovered from the attempts log instead of
+being sent a second time. Journals written under the old positional scheme are refused
+outright rather than mis-resumed.
+
+**Build verification.** `scripts/build-verification.mjs` had drifted out of the branch
+entirely: a 9-argument `initialize`, the pre-names-v2 five-entry price array, `PublicResolver`
+where the deploy uses `SimplexResolver`, and no targets for `SubnameRegistrar`,
+`MetadataRenderer` or the gateway provider. Realigned and exercised end to end.
+
 ## 6. Storage layout
 
 Appended after `_reentrancyStatus`, before `__gap`, per
@@ -661,6 +728,22 @@ New files under `ens-contracts/test/simplex/`, following the existing fixture id
   thirteen characters down to three — asserting the deduction matches that length's price,
   that an allowance covering a long name refuses a short one, and that the deduction is
   unchanged when the ETH price moves.
+- `TestStaleRecords.test.ts` — the squatter scenario end to end (register, set records, let
+  the name lapse past grace, re-register to someone else, confirm every key reads empty),
+  that a fresh registration's own records are not wiped by the clear, that `registerReserved`
+  and the payable path clear too, and that a first registration is a no-op. Four of its
+  assertions fail with the fix reverted.
+- `TestSubnameLapse.test.ts` — reviving a subname left behind by a previous 2LD owner is
+  refused; after `purge` the label is free and carries no records; `deleteSubname` retires
+  records too; `clearSubnameRecords` rejects everyone but the registrar; a lapsed 2LD loses
+  `ownerOf` and cannot create subnames; a renewal restores both; only the base registrar may
+  move the mirror. Reverting each of the three guards fails 1, 2 and 2 of them respectively.
+- `TestTransferWithSig.test.ts` pins the extended `TRANSFER_TYPEHASH` and the exact ERC-5564
+  metadata layout, so a client that stops matching the standard fails here rather than in the
+  field.
+- `scripts/` resume behaviour is covered by a stub-client harness: named keys survive an
+  inserted step, a changed call to a journalled step aborts, an orphaned submitted tx is
+  recovered rather than resent, and an old positional journal is refused.
 - A mainnet fork test of registration → edit → transfer → accept. **Not run** — it needs an
   `INFURA_API_KEY`.
 

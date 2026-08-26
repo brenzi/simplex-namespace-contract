@@ -62,7 +62,18 @@ const ENS_CONTRACTS_DIR = join(REPO_ROOT, 'ens-contracts')
 
 const rpcUrl = process.env.MAINNET_RPC_URL
 const deployerKey = process.env.DEPLOYER_KEY
-const tld = process.env.SIMPLEX_TLD || 'testing'
+// No default. An unset or typo'd SIMPLEX_TLD silently re-targets the whole run —
+// gate logic, price array, journal, addresses file and verification metadata all
+// follow it, and a `.testing`-defaulted run would resume against the committed
+// `.testing` journal and then overwrite it with a mismatched schema.
+const KNOWN_TLDS = ['testing', 'simplex']
+const tld = process.env.SIMPLEX_TLD
+if (!tld || !KNOWN_TLDS.includes(tld)) {
+  console.error(
+    `SIMPLEX_TLD must be set explicitly to one of: ${KNOWN_TLDS.join(', ')} (got ${JSON.stringify(tld)})`,
+  )
+  process.exit(1)
+}
 const nftGateEnabled = tld === 'testing'
 const maxBaseFeeGwei = process.env.MAX_BASE_FEE_GWEI
 
@@ -73,7 +84,16 @@ const ownerAddress = process.env.OWNER_ADDRESS || '0xDa064C4567fAD2c9Da7b6DD08b5
 // money kill switch), setPublicSalesOpen (the pause), addReservedNames, and it is
 // `withdraw`'s payee. It must differ from the admin owner — that separation is the
 // point. See docs/plans/names-v2-launch-to-freeze-plan.md.
-const guardianAddress = process.env.GUARDIAN_ADDRESS || ownerAddress
+const guardianAddress = process.env.GUARDIAN_ADDRESS
+if (!guardianAddress || guardianAddress.toLowerCase() === ownerAddress.toLowerCase()) {
+  console.error(
+    'GUARDIAN_ADDRESS must be set and must differ from OWNER_ADDRESS.\n' +
+      '  `setBeneficiary` is owner-callable only while the beneficiary is unset, so a\n' +
+      '  guardian equal to the admin owner is burned in permanently at deploy time and\n' +
+      '  collapses the two-key split the admin model is built on.',
+  )
+  process.exit(1)
+}
 
 const bumpAfterMs = (parseFloat(process.env.BUMP_AFTER_HOURS) || (DEFAULTS.BUMP_AFTER_MS / 3600000)) * 3600 * 1000
 const bumpPct = BigInt(process.env.BUMP_PCT || DEFAULTS.BUMP_PCT)
@@ -239,9 +259,6 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   // owner-callable only while it is unset and beneficiary-callable thereafter, so
   // doing it here is what makes revenue and the registrar kill switch independent
   // of the admin key from the first block. Skipping it leaves `withdraw` reverting.
-  if (guardianAddress.toLowerCase() === ownerAddress.toLowerCase()) {
-    console.warn('  ! GUARDIAN_ADDRESS is unset: guardian == admin owner, which defeats the two-key split')
-  }
   await write(controller, 'setBeneficiary', [guardianAddress])
 
   if (ownerAddress.toLowerCase() !== account.address.toLowerCase()) {
