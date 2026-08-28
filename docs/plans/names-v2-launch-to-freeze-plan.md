@@ -12,6 +12,7 @@ Who controls the contracts, from deployment to the freeze. Dates match
 4. Powers, before and after the freeze
 5. What no key can ever do
 6. Why it is built this way
+6a. The accepted fallback: snapshot and redeploy
 7. Appendix A — transition recipes
 
 ## 2. Timeline
@@ -19,46 +20,52 @@ Who controls the contracts, from deployment to the freeze. Dates match
 | Date | Change |
 |---|---|
 | 30 Oct 2026 | `.simplex` deployed and the ~3000 a-priori names reserved, both by the deploy key. Public sales closed. |
-| 2 Nov 2026 | Handover starts. `setBeneficiary` and two of three ownership transfers. |
-| 2–3 Nov 2026 | Guardian Safe funds the registrar's spending limit. First real use of the new setup. |
+| 2 Nov 2026 | Handover. `setBeneficiary`, then all three ownership transfers. Same day, no delay. |
+| 2–3 Nov 2026 | Guardian funds the registrar's spending limit. First real use of the new setup. |
 | 4 Nov 2026 | Contracts, registrar, app and codes all live. |
-| 9 Nov 2026 | Timelock accepts the controller. The deploy key owns nothing and is destroyed. |
+| 5 Nov 2026 | Handover verified; the deploy key is destroyed. |
 | 12 Nov 2026 | Investor window opens. **Hard deadline for handover** — first names owned by third parties. |
-| 12 Dec 2026 | Public sales open. Admin Safe at 3-of-5 by this date. |
-| 22 Feb 2027 *(earliest)* | Admin Safe schedules `Root.lock` and `freeze()` in the timelock. |
-| 1 Mar 2027 *(earliest)* | Both executed. Contracts frozen. |
+| 12 Dec 2026 | Public sales open. |
+| *no fixed date* | **Governance hardening**: admin and guardian move to Safes behind a timelock (§7, A5). Gated on adoption, not on a date. |
+| *earliest, after hardening* | `Root.lock` and `freeze()` scheduled, then executed. Contracts frozen. |
 
-The freeze dates are the earliest, not a commitment. Every other date in the table is
-binding. The freeze happens when the gate in §7, A7 is met; if it is not met, the date
-moves out.
+Dates through 12 Dec are binding. Hardening and the freeze have none: both are gated
+on the namespace being big enough to be worth the operational weight, and the freeze
+additionally on the gate in §7, A7. **Hardening comes before the freeze**, because the
+freeze removes the upgrade path and should not be the moment a single device is still
+the only key.
 
 ## 3. The keys
 
-**Deploy key** — one hot EOA. Exists 30 Oct to 2 Nov only. Owns everything in that window,
+**Deploy key** — one hot EOA. Exists 30 Oct to 5 Nov only. Owns everything in that window,
 then nothing. Never used again.
 
-**Admin timelock** — an OpenZeppelin `TimelockController`, 7-day delay. Owns `Root`,
-`BaseRegistrarImplementation` and `SimplexController` from 2 Nov onwards, permanently.
-Every admin action is scheduled publicly and executes a week later.
+**Admin key** — one hardware wallet. Owns `Root`, `BaseRegistrarImplementation` and
+`SimplexController` from 2 Nov. No timelock: actions take effect when signed.
 
-**Admin Safe** — proposes to the timelock. One hardware wallet minimum at handover, 3-of-5
-by 12 Dec 2026. Signers geographically distributed.
-
-**Guardian Safe** — 2-of-4, called directly, no delay. It is the controller's
-`beneficiary`. Holds the incident-response powers and receives revenue. Also a canceller on
-the timelock.
+**Guardian key** — a second hardware wallet, held by a different person in a different
+place. It is the controller's `beneficiary`: it holds the incident-response powers and
+receives revenue. Also no delay.
 
 **Registrar hot wallet** — owns nothing. Held in KMS by the names service. Pays gas, spends
 its registrar allowance, submits relayed user signatures.
+
+**Two devices, not one, and not four.** The split between them is the design's load-bearing
+part and survives the simplification: the guardian can stop things instantly, the admin can
+change things. Collapsing both onto one device would mean a stolen device can upgrade the
+controller *and* take the treasury with nothing in the way. Keeping them apart costs one
+extra device and one extra person.
+
+What is deferred, not abandoned: the timelock, the Safes, and the multi-signer rotation.
+Those arrive at hardening (§7, A5), before the freeze.
 
 ## 4. Powers, before and after the freeze
 
 | Key | 2 Nov 2026 to the freeze | After the freeze |
 |---|---|---|
 | Deploy key | nothing | nothing |
-| Admin timelock (7 days) | upgrade the controller; `removeReservedNames`; `registerReserved`; `setMinCharLength`; `setDefaultResolver`; `setPriceOracle`; `recoverFunds`; `addController`; `removeController`; `setMetadataRenderer`; `setMaxLabelLength`; `setSubnameHook`; `baseRegistrar.setResolver`; `Root.setResolver`; `Root.setController`; `Root.lock`; `freeze()` | same, minus upgrade and minus `freeze()`, which are spent |
-| Admin Safe | proposes and executes timelock actions; adds and removes its own signers | same |
-| Guardian Safe (instant) | `addReservedNames`; `setPublicSalesOpen`; `setRegistrarAllowance`; `setBeneficiary`; receives `withdraw()`; cancels timelock actions | same, minus `setPublicSalesOpen` |
+| Admin key (instant; a timelock at hardening) | upgrade the controller; `removeReservedNames`; `registerReserved`; `setMinCharLength`; `setDefaultResolver`; `setPriceOracle`; `recoverFunds`; `addController`; `removeController`; `setMetadataRenderer`; `setMaxLabelLength`; `setSubnameHook`; `baseRegistrar.setResolver`; `Root.setResolver`; `Root.setController`; `Root.lock`; `freeze()` | same, minus upgrade and minus `freeze()`, which are spent |
+| Guardian key (instant) | `addReservedNames`; `setPublicSalesOpen`; `setRegistrarAllowance`; `setBeneficiary`; receives `withdraw()` | same, minus `setPublicSalesOpen` |
 | Registrar hot wallet | `registerWithCredit`; `renewWithCredit`; and relaying signed user intents — `transferWithSig`, `setTextWithSig`, `clearRecordsWithSig`, `setApprovalForAllWithSig`, `createSubnameWithSig`, `deleteSubnameWithSig` | same |
 | Anyone | `commit`; payable `register` and `renew`; `withdraw`; all signed-intent paths; own-name record writes; `reclaim`; subname create and delete; `purge` | same |
 
@@ -90,44 +97,62 @@ write records on a name it does not own — which matters because the controller
 upgrade would abuse.
 
 One indirect path exists and is not closed: the admin can set a hostile price oracle,
-price renewals out of reach, and take names as they lapse. It needs a public 7-day
-schedule, then each name's remaining term plus 90 days of grace, and renewal is
-permissionless throughout — anyone can renew anyone's name at the old price meanwhile.
+price renewals out of reach, and take names as they lapse. **Without a timelock there is
+no warning period** — the change takes effect when signed. What still bounds it is slow
+and public: each name's remaining term plus 90 days of grace, and renewal is
+permissionless throughout, so anyone can renew anyone's name at the old price the moment
+the change is noticed. The bound is therefore months of visible behaviour rather than
+seven days of scheduled notice. Restoring the notice is what hardening buys.
 
 ## 6. Why it is built this way
 
-**Two keys, not one.** A power sits on the instant key only when the harm it answers
-happens faster than 7 days. A compromised registrar mints junk names every block, so
-zeroing its allowance must be instant. An exploit in the payable path accrues per block, so
-pausing must be instant. Fixing a dead price feed is an outage, not a loss — 90 days of
-grace means nobody loses a name while the repair is scheduled — so it can wait.
+**Two keys, not one.** The split is by *direction*, not by delay: the guardian can stop
+things, the admin can change them. The guardian reserves a name, pauses sales and cuts the
+registrar's allowance; the admin releases reserved names, hands names to brands, funds
+registrars and opens sales.
 
-**Restrictive powers are instant, permissive ones are delayed.** The guardian can reserve a
-name, pause sales and cut credits. The admin releases reserved names, hands names to
-brands, funds registrars and opens sales. Reserving in particular cannot be delayed: a
-scheduled `addReservedNames(["nike"])` tells a squatter which name is valuable and how long
-it stays unprotected. Reserving is also safe in the wrong hands — it acquires nothing,
-does not affect a registered name, and `renew` never checks the reserved list.
+While neither key has a delay this reads as a formality, and it is not. It keeps revenue
+off the upgrade key, so a stolen admin device cannot also take the treasury. It means the
+two most dangerous actions — upgrading the controller and moving the money — need two
+devices held by two people. And it puts the emergency stops on the key that is not being
+used for routine changes, which is the one more likely to be sitting in a drawer.
 
-**Safes rather than hardware wallets.** Every signer holds a hardware wallet either way;
-the choice is one device or several behind a Safe. One device is a single point of failure
-in both directions: lose it and admin is gone, steal it and admin is taken. It also cannot
-be rotated cleanly here — `BaseRegistrar` and `Root` both use OpenZeppelin's single-step
-`Ownable`, and both are immutable, so rotating a device key means a one-shot
-`transferOwnership` that the recipient never has to accept. (OZ does reject the zero
-address, so a null transfer is caught; a transfer to a wrong but valid address is not.)
-With a Safe the owner address never changes and signers rotate inside it, which is
-reversible. A Safe also survives a signer leaving, and gives per-signer attribution on
-chain.
+The direction rule is also what the delay attaches to at hardening: powers already on the
+guardian are the ones that must stay instant, because the harm they answer accrues per
+block. A compromised registrar mints junk names every block. An exploit in the payable path
+accrues per block. Reserving in particular can never be scheduled — a queued
+`addReservedNames(["nike"])` tells a squatter which name is valuable and for how long it
+stays unprotected. Fixing a dead price feed, by contrast, is an outage and not a loss, and
+90 days of grace means nobody loses a name while the repair waits.
 
-**A timelock behind the admin Safe.** The known Safe failure mode is signers approving what
-they cannot verify. The timelock means a bad transaction is scheduled, not executed, and the
-guardian Safe can cancel it — so the people who were tricked are not the only ones who can
-undo it.
+**Two hardware wallets now, Safes and a timelock later.** The end state is unchanged —
+a timelock behind Safes, for reasons that have not stopped being true. What changed is
+when. Until the namespace has enough names and enough turnover to be worth the
+operational weight, the cost of that setup is paid every week in coordination and the
+benefit is theoretical.
 
-**7 days, not 48 hours.** The bound on hostile pricing is that people see it coming and
-renew. Longer is better for that. It costs patience on brand registrations, which are never
-urgent.
+So the first months run on two devices, and the accepted fallback is **snapshot and
+redeploy** (§6a). That is only an acceptable fallback while the namespace is small, which
+is exactly the same condition — so the strategy expires on its own terms rather than by
+someone remembering to end it.
+
+What the deferral costs, stated plainly:
+
+- **No warning period.** A hostile or mistaken admin action takes effect when signed. The
+  timelock existed so that a bad transaction is scheduled rather than executed and the
+  guardian can cancel it; there is no cancel now.
+- **A single device per role.** Lose the admin device and the admin powers are gone; steal
+  it and they are taken. Neither is recoverable by any other key.
+- **Rotation is one-shot and unverified.** `BaseRegistrar` and `Root` use OpenZeppelin's
+  single-step `Ownable`, and both are immutable, so replacing a device means a
+  `transferOwnership` the recipient never has to accept. OZ rejects the zero address; it
+  does not reject a wrong but valid one. `SimplexController` is `Ownable2Step` and does
+  require acceptance, so of the three only the controller is safe to rotate carelessly.
+- **No signer attribution and no survivability.** One person's device is one person's
+  device: nothing on chain says who signed, and a signer leaving is an incident rather than
+  a membership change.
+
+Each of those is answered by hardening, and none of them is answered by waiting.
 
 **The price oracle stays changeable.** `StablePriceOracle.usdOracle` is `immutable`, so
 changing the Chainlink feed needs a new oracle. Chainlink has retired feeds before. A frozen
@@ -143,13 +168,58 @@ be reopened, so `freeze()` closes the switch in whatever position it holds. Beca
 makes the switch's position at freeze-time permanent, `freeze()` refuses while sales are
 closed — the ordering below is enforced on-chain, not just by runbook.
 
-**The freeze date is a floor, not a deadline.** It removes the only repair path for a bug in
-the controller, and `Root.lock` removes the only cheap redeploy path, so it should happen
-only after enough production use to be confident in both. 1 Mar 2027 is about eleven weeks
-of public operation after 12 Dec. Slipping costs nothing operationally — brand reservation,
-`registerReserved` and everything else survive the freeze — but it keeps the upgrade power
-alive, and that is the one unbounded power in the system. So: not before the gate is met,
-and not long after.
+**The freeze has no date, and now depends on hardening.** It removes the only repair path
+for a bug in the controller, and `Root.lock` removes the redeploy path this plan leans on,
+so it should happen only after enough production use to be confident in both — and only
+after the keys have moved to Safes behind a timelock. Freezing while a single device is
+still the only admin key would fix the code permanently and leave the weakest custody in
+place forever.
+
+Slipping costs nothing operationally: brand reservation, `registerReserved` and everything
+else survive the freeze. It does keep the upgrade power alive, which is the one unbounded
+power in the system. So: after hardening, after the gate in A7 is met, and not long after
+that.
+
+## 6a. The accepted fallback: snapshot and redeploy
+
+This is what makes the simplification acceptable, so it is worth being precise about what
+it can and cannot save.
+
+**Why it is possible.** `Root.lock` is deliberately *not* called at deployment. While the
+`.simplex` label is unlocked, the root owner can re-point the TLD node at a freshly deployed
+registrar and controller, keeping the same `ENSRegistry`. Every SimpleX client reads the
+contract addresses from configuration we ship, so switching them is a release, not a
+migration users have to perform. `Root.lock` at the freeze is what ends this.
+
+**What has to be carried over**, or someone loses something: each name's owner, its
+remaining expiry, its `simplex.contact` and `simplex.channel` records, and any subnames.
+`registerReserved` is owner-callable forever and takes an arbitrary owner and duration, so
+the new deployment can re-mint the snapshot directly — no user action, no signature.
+
+**The order that makes it safe.**
+
+1. `setPublicSalesOpen(false)` — guardian, instant. The set of names stops growing. This is
+   the switch's real purpose.
+2. Snapshot at a stated block: owner, expiry, records, subnames.
+3. Deploy the new registrar and controller. `addReservedNames` the whole set, then
+   `registerReserved` each name to its snapshot owner for its remaining term, writing the
+   records in the same call.
+4. Re-snapshot and apply the diff — transfers do not stop when sales do.
+5. Re-point the TLD, ship the client release, announce the old addresses as dead.
+
+**What can still be lost, and must be said out loud.** A redeploy voids the old NFTs: they
+remain in wallets, and stop meaning anything. Anyone who *buys* a `.simplex` NFT on a
+secondary market between the snapshot and the switch has bought a dead asset, and step 4
+is the only thing that catches it. Names held by a contract — a marketplace escrow — are
+re-minted to that contract, which may have no idea what to do with them. Neither risk is
+zero, and both grow with the number of names and the depth of any secondary market.
+
+**This is why the strategy expires.** Step 3 costs roughly a full registration per name;
+3000 names is already several hundred million gas, and the exposure in step 4 scales with
+trading volume. The point at which redeploy stops being a credible fallback is the point at
+which the operational weight of Safes and a timelock is worth carrying — the same threshold,
+approached from two directions. **Hardening is due when redeploy stops being believable**,
+not on a date.
 
 ## 7. Appendix A — transition recipes
 
@@ -191,34 +261,41 @@ is false and the registrar has no credits, so nothing can be registered before 1
 anyway. It removes a task that could slip, and it makes the reserved set part of the
 deployment's acceptance check rather than a separate errand.
 
-Prerequisite, before this date: both Safes deployed and each has executed one rehearsal
-transaction; the `TimelockController` deployed with proposer = admin Safe, cancellers =
-admin Safe and guardian Safe, executor = open, delay = 7 days.
+Prerequisite, before this date: both hardware wallets initialised, their addresses recorded,
+and **each has executed one rehearsal transaction on mainnet** from the device itself. Steps
+4 and 6 of the handover are single-step and irreversible, so an address nobody can sign for
+is unrecoverable — the rehearsal is what proves the device, not the address.
 
 ### A2. Handover — 2 Nov 2026
 
-Order matters. `setBeneficiary` is owner-callable only while unset.
+Order matters. `setBeneficiary` is owner-callable only while unset — after that only the
+beneficiary can move it, so the guardian is chosen here or not at all.
 
 | # | Caller | Call |
 |---|---|---|
-| 1 | deploy key | `controller.setBeneficiary(guardianSafe)` — rejects the zero address; `deploy-mainnet.mjs` does this and warns if the guardian equals the admin owner |
-| 2 | deploy key | `controller.transferOwnership(adminTimelock)` |
-| 3 | admin Safe → timelock | schedule and execute `controller.acceptOwnership()` |
-| 4 | deploy key | `baseRegistrar.transferOwnership(adminTimelock)` |
-| 5 | deploy key | `root.setController(adminTimelock, true)` and `root.setController(deployKey, false)` |
-| 6 | deploy key | `root.transferOwnership(adminTimelock)` |
+| 1 | deploy key | `controller.setBeneficiary(guardianKey)` — rejects the zero address; `deploy-mainnet.mjs` refuses to run if `GUARDIAN_ADDRESS` is unset or equals `OWNER_ADDRESS` |
+| 2 | deploy key | `controller.transferOwnership(adminKey)` |
+| 3 | admin key | `controller.acceptOwnership()` — `Ownable2Step`, so this is required |
+| 4 | deploy key | `baseRegistrar.transferOwnership(adminKey)` |
+| 5 | deploy key | `root.setController(adminKey, true)` and `root.setController(deployKey, false)` |
+| 6 | deploy key | `root.transferOwnership(adminKey)` |
 
-Step 3 sits in the timelock for 7 days, so schedule it on 2 Nov and execute on 9 Nov;
-steps 4–6 can complete on 2 Nov. Between step 2 and step 3 the deploy key can still cancel
-by transferring ownership elsewhere, so the deploy key is destroyed only after step 3
-executes and the checks below pass.
+All six complete on 2 Nov; there is no delay to wait out. Steps 4 and 6 are single-step
+`Ownable` and take effect immediately with no acceptance — so the admin address must be
+correct, because there is no second chance and no way to tell from the transaction whether
+anyone holds the key. Confirm the admin device can sign *before* step 4, by having it
+execute step 3.
 
-Verify: `owner()` is the timelock on all three contracts; `beneficiary()` is the guardian
-Safe; every former deploy-key call reverts.
+Between step 2 and step 3 the deploy key can still redirect the controller elsewhere, so it
+is destroyed only after all six land and the checks below pass — 5 Nov, allowing time to
+verify.
+
+Verify: `owner()` is the admin key on all three contracts; `beneficiary()` is the guardian
+key; `pendingOwner()` is empty on the controller; every former deploy-key call reverts.
 
 ### A3. Guardian's first use — 2–3 Nov 2026
 
-Caller: **guardian Safe**, 2 signatures.
+Caller: **guardian key**.
 
 1. `controller.setRegistrarAllowance(registrarHotWallet, N)` — `N` in **attoUSD**, sized to
    expected sales plus headroom. A sponsored registration or renewal deducts that name's own
@@ -230,42 +307,67 @@ There is no separate registration step for a registrar: any address with a non-z
 allowance is one, and zero means it is not. The hot wallet also needs its own ETH for gas —
 the allowance authorises, it does not pay.
 
-This works even though A2 step 3 is still pending, because `setRegistrarAllowance` is
-beneficiary-only and does not depend on who currently owns the controller.
+`setRegistrarAllowance` is beneficiary-only and does not depend on who owns the controller,
+so this works regardless of where the handover has reached.
 
 ### A4. Open public sales — 12 Dec 2026
 
-Caller: **guardian Safe**, 2 signatures. `controller.setPublicSalesOpen(true)`.
+Caller: **guardian key**. `controller.setPublicSalesOpen(true)`.
 
-### A5. Admin Safe to 3-of-5 — by 12 Dec 2026
+### A5. Governance hardening — no fixed date, before the freeze
 
-Caller: **admin Safe**, current threshold. Safe transactions, not contract calls: add
-owners, then `changeThreshold(3)`. No contract ownership moves. Same procedure for any
-later rotation, on either Safe, at any time.
+Due when snapshot-and-redeploy stops being a believable fallback (§6a). Moves both roles
+from single devices to the end state: Safes, and a timelock in front of the admin.
+
+| # | Caller | Call |
+|---|---|---|
+| 1 | — | Deploy a 3-of-5 admin Safe and a 2-of-4 guardian Safe. Signers on hardware wallets, geographically distributed. |
+| 2 | — | Deploy an OpenZeppelin `TimelockController`, 7-day delay: proposer and executor the admin Safe, canceller the guardian Safe. |
+| 3 | guardian key | `controller.setBeneficiary(guardianSafe)` — beneficiary-only once set, so the guardian moves its own role. Do this **first**: it is the only step the admin key cannot perform. |
+| 4 | admin key | `controller.transferOwnership(timelock)`, then admin Safe → timelock schedules and executes `controller.acceptOwnership()`. |
+| 5 | admin key | `root.setController(timelock, true)`, then `root.setController(adminKey, false)`. |
+| 6 | admin key | `baseRegistrar.transferOwnership(timelock)` and `root.transferOwnership(timelock)` — single-step, immediate, unverifiable. Prove the timelock can act first, via step 4. |
+
+Order matters twice. **Step 3 before step 4**: once ownership moves, the admin key can no
+longer do anything, and `setBeneficiary` was never its call to make anyway. **Step 4 before
+step 6**: step 4 is the only one that proves the new owner can actually execute, and steps 5
+and 6 are irreversible without it.
+
+Verify: `owner()` is the timelock on all three; `beneficiary()` is the guardian Safe; the
+old devices revert on every admin and guardian call; a scheduled no-op executes after 7 days
+and the guardian Safe can cancel one.
+
+Retire the two devices only after that. Same procedure for any later signer rotation, which
+is then a Safe transaction and not a contract call.
 
 ### A6. Routine operations — ongoing
 
+Before hardening the callers are the two devices, and there is no delay on anything.
+After hardening, read the parenthesised form.
+
 | Action | Caller | Call |
 |---|---|---|
-| Reserve a brand name under threat | guardian Safe, 2 sigs | `controller.addReservedNames([name])` |
-| Give a brand its name | admin Safe → timelock, 7 days | `controller.registerReserved(label, brandAddr, duration)` |
-| Refill a registrar's allowance | guardian Safe, 2 sigs | `controller.setRegistrarAllowance(registrar, N)` — attoUSD; replaces, never adds |
-| Cut off a compromised registrar | guardian Safe, 2 sigs | `controller.setRegistrarAllowance(registrar, 0)` |
-| Pause payable sales | guardian Safe, 2 sigs | `controller.setPublicSalesOpen(false)` |
-| Replace the price oracle | admin Safe → timelock, 7 days | `controller.setPriceOracle(newOracle)` |
-| Update NFT artwork | admin Safe → timelock, 7 days | `baseRegistrar.setMetadataRenderer(newRenderer)` |
-| Cancel a scheduled admin action | guardian Safe, 2 sigs | `timelock.cancel(id)` |
+| Reserve a brand name under threat | guardian key *(guardian Safe, 2 sigs)* | `controller.addReservedNames([name])` |
+| Give a brand its name | admin key *(admin Safe → timelock, 7 days)* | `controller.registerReserved(label, brandAddr, duration)` |
+| Refill a registrar's allowance | guardian key *(guardian Safe, 2 sigs)* | `controller.setRegistrarAllowance(registrar, N)` — attoUSD; replaces, never adds |
+| Cut off a compromised registrar | guardian key *(guardian Safe, 2 sigs)* | `controller.setRegistrarAllowance(registrar, 0)` |
+| Pause payable sales | guardian key *(guardian Safe, 2 sigs)* | `controller.setPublicSalesOpen(false)` |
+| Replace the price oracle | admin key *(admin Safe → timelock, 7 days)* | `controller.setPriceOracle(newOracle)` |
+| Update NFT artwork | admin key *(admin Safe → timelock, 7 days)* | `baseRegistrar.setMetadataRenderer(newRenderer)` |
+| Cancel a scheduled admin action | — *(guardian Safe, 2 sigs)* | `timelock.cancel(id)` — exists only after hardening |
 
-### A7. Freeze — 22 Feb 2027 at the earliest, executed 7 days later
+### A7. Freeze — no date; after hardening, executed 7 days after scheduling
 
-Gate, all three required before scheduling:
+Gate, all four required before scheduling:
 
+- **Hardening (A5) is complete.** Freezing while a single device is still the admin key
+  would make the code permanent and the custody permanent with it.
 - No open bug or unexplained behaviour against the controller implementation.
 - The full sponsored journey has run in production since 12 Dec with no defect that needed
   an upgrade to fix.
-- No redeploy under consideration, since `Root.lock` ends that option.
+- No redeploy under consideration, since `Root.lock` ends that option — see §6a.
 
-If any fails, move the date out. Do not move it in.
+If any fails, wait. There is no date to move.
 
 **Scheduling day.** Caller: **admin Safe**, 3 of 5. Schedule two timelock operations:
 
@@ -287,4 +389,5 @@ simulated `upgradeTo`, `upgradeToAndCall` and `setPublicSalesOpen` all revert; s
 `setPriceOracle` still succeeds; `owner()` is still the timelock and not `address(0)`.
 
 Then confirm live: a sponsored registration, a relayed record edit, a signed transfer,
-`registerReserved`, and `withdraw()` paying the guardian Safe.
+`registerReserved`, and `withdraw()` paying the guardian Safe — which by then is the
+beneficiary, since the freeze happens after hardening.
