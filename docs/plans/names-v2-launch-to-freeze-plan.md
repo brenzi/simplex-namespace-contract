@@ -20,7 +20,7 @@ Who controls the contracts, from deployment to the freeze. Dates match
 | Date | Change |
 |---|---|
 | 30 Oct 2026 | `.simplex` deployed and the ~3000 a-priori names reserved, both by the deploy key. Public sales closed. |
-| 2 Nov 2026 | Handover. `setBeneficiary`, then all three ownership transfers. Same day, no delay. |
+| 2 Nov 2026 | Handover. `setBeneficiary`, then all four ownership transfers. Same day, no delay. |
 | 2–3 Nov 2026 | Guardian funds the registrar's spending limit. First real use of the new setup. |
 | 4 Nov 2026 | Contracts, registrar, app and codes all live. |
 | 5 Nov 2026 | Handover verified; the deploy key is destroyed. |
@@ -40,8 +40,11 @@ the only key.
 **Deploy key** — one hot EOA. Exists 30 Oct to 5 Nov only. Owns everything in that window,
 then nothing. Never used again.
 
-**Admin key** — one hardware wallet. Owns `Root`, `BaseRegistrarImplementation` and
-`SimplexController` from 2 Nov. No timelock: actions take effect when signed.
+**Admin key** — one hardware wallet. Owns `Root`, `BaseRegistrarImplementation`,
+`SimplexController` and `SimplexPriceOracle` from 2 Nov. No timelock: actions take effect
+when signed. The oracle is a separate `Ownable2Step` handover from the controller's: it
+owns the price curve, the ETH/USD feed pointer and the Dutch auction, none of which the
+controller owns.
 
 **Guardian key** — a second hardware wallet, held by a different person in a different
 place. It is the controller's `beneficiary`: it holds the incident-response powers and
@@ -64,7 +67,7 @@ Those arrive at hardening (§7, A5), before the freeze.
 | Key | 2 Nov 2026 to the freeze | After the freeze |
 |---|---|---|
 | Deploy key | nothing | nothing |
-| Admin key (instant; a timelock at hardening) | upgrade the controller; `removeReservedNames`; `registerReserved`; `setMinCharLength`; `setDefaultResolver`; `setPriceOracle`; `recoverFunds`; `addController`; `removeController`; `setMetadataRenderer`; `setMaxLabelLength`; `setSubnameHook`; `baseRegistrar.setResolver`; `Root.setResolver`; `Root.setController`; `Root.lock`; `freeze()` | same, minus upgrade and minus `freeze()`, which are spent |
+| Admin key (instant; a timelock at hardening) | upgrade the controller; `removeReservedNames`; `registerReserved`; `setMinCharLength`; `setDefaultResolver`; `setPriceOracle`; `priceOracle.setPrices`; `priceOracle.setUsdOracle`; `priceOracle.setPremium`; `recoverFunds`; `addController`; `removeController`; `setMetadataRenderer`; `setMaxLabelLength`; `setSubnameHook`; `baseRegistrar.setResolver`; `Root.setResolver`; `Root.setController`; `Root.lock`; `freeze()` | same, minus upgrade and minus `freeze()`, which are spent |
 | Guardian key (instant) | `addReservedNames`; `setPublicSalesOpen`; `setRegistrarAllowance`; `setBeneficiary`; receives `withdraw()` | same, minus `setPublicSalesOpen` |
 | Registrar hot wallet | `registerWithCredit`; `renewWithCredit`; and relaying signed user intents — `transferWithSig`, `setTextWithSig`, `clearRecordsWithSig`, `setApprovalForAllWithSig`, `createSubnameWithSig`, `deleteSubnameWithSig` | same |
 | Anyone | `commit`; payable `register` and `renew`; `withdraw`; all signed-intent paths; own-name record writes; `reclaim`; subname create and delete; `purge` | same |
@@ -96,8 +99,11 @@ write records on a name it does not own — which matters because the controller
 `trustedETHController` on the resolver, and that authority is exactly what a hostile
 upgrade would abuse.
 
-One indirect path exists and is not closed: the admin can set a hostile price oracle,
-price renewals out of reach, and take names as they lapse. **Without a timelock there is
+One indirect path exists and is not closed: the admin can price renewals out of reach and
+take names as they lapse, either by `setPriceOracle` to a hostile oracle or, since the curve
+became configurable, by a single `priceOracle.setPrices`. The second is strictly weaker
+than the first (an arbitrary oracle can do anything a curve change can), so it widens
+nothing; it only makes the move cheaper to execute. **Without a timelock there is
 no warning period** — the change takes effect when signed. What still bounds it is slow
 and public: each name's remaining term plus 90 days of grace, and renewal is
 permissionless throughout, so anyone can renew anyone's name at the old price the moment
@@ -123,7 +129,9 @@ block. A compromised registrar mints junk names every block. An exploit in the p
 accrues per block. Reserving in particular can never be scheduled — a queued
 `addReservedNames(["nike"])` tells a squatter which name is valuable and for how long it
 stays unprotected. Fixing a dead price feed, by contrast, is an outage and not a loss, and
-90 days of grace means nobody loses a name while the repair waits.
+90 days of grace means nobody loses a name while the repair waits. It is now a single
+`priceOracle.setUsdOracle` rather than a redeploy, which shortens the outage but does not
+change which key it belongs to.
 
 **Two hardware wallets now, Safes and a timelock later.** The end state is unchanged —
 a timelock behind Safes, for reasons that have not stopped being true. What changed is
@@ -154,12 +162,21 @@ What the deferral costs, stated plainly:
 
 Each of those is answered by hardening, and none of them is answered by waiting.
 
-**The price oracle stays changeable.** `StablePriceOracle.usdOracle` is `immutable`, so
-changing the Chainlink feed needs a new oracle. Chainlink has retired feeds before. A frozen
-oracle with a retired feed would break registration and renewal permanently, with no
-recovery on any key. The oracle now rejects a zero or negative answer outright
-(`InvalidPriceFeed`) rather than dividing by zero or wrapping the cast and quoting names at
-nothing — and the sponsored path no longer reads the feed at all, since the allowance is
+**The price oracle stays changeable, and so does the price.** `.simplex` deploys
+`SimplexPriceOracle`, which holds the curve, the feed pointer and the auction in storage
+rather than in `immutable`s, so all three move by owner call. Chainlink has retired feeds
+before; on the vendored `StablePriceOracle` that `.testing` runs, `usdOracle` is
+`immutable`, so a retired feed there means a fresh oracle and a `setPriceOracle`. Either
+way a frozen oracle with a retired feed would break registration and renewal permanently,
+with no recovery on any key. That is why `setPriceOracle` survives `freeze()` even now that
+it is rarely the tool reached for.
+
+The oracle rejects a zero or negative answer outright (`InvalidPriceFeed`) rather than
+dividing by zero or wrapping the cast and quoting names at nothing, and it refuses to
+*install* a feed that is already dead. Because `AggregatorInterface` exposes no
+`decimals()`, `setUsdOracle` takes the replacement feed's scale as an explicit argument: a
+feed on a different scale would otherwise misprice every name by orders of magnitude
+without reverting. The sponsored path reads no feed at all, since the allowance is
 denominated in attoUSD via `priceUSD()`. So a dead feed costs the payable path and leaves
 the app-store flow running.
 
@@ -229,7 +246,7 @@ Every on-chain call, in order, with who signs it.
 
 Caller: **deploy key**, alone.
 
-1. Deploy `ENSRegistry`, `Root`, `BaseRegistrarImplementation`, price oracle,
+1. Deploy `ENSRegistry`, `Root`, `BaseRegistrarImplementation`, `SimplexPriceOracle`,
    `SimplexController` implementation and proxy, `SubnameRegistrar`, `SimplexResolver`,
    `MetadataRenderer`, `UniversalResolver`.
 2. `Root.setController(deployKey, true)`; `Root.setSubnodeOwner(labelhash("simplex"), baseRegistrar)`.
@@ -251,10 +268,24 @@ No reverse registrar is deployed. That is possible because `PublicResolver` and
 whatever owned `addr.reverse` — a hard dependency on a deployed reverse registrar that
 could not be short-circuited from a subclass.
 
-The price oracle takes a **six**-entry curve (attoUSD per second, label lengths 1/2/3/4/5/6+):
-$10 a year at six characters and above, ten times more for each character lost. A
-five-entry array is still accepted and keeps the upstream behaviour, where `price5Letter`
-applies to everything five characters and up — so 5 and 6+ are priced alike. Pass six.
+`SimplexPriceOracle` takes a **base price per year** plus a sparse list of **rungs**
+`(maxLength, priceUSDPerYear)`, where a rung at `K` covers every length up to `K` and
+everything above the tallest rung pays the base. $10 a year at six characters and above,
+ten times more for each character lost:
+
+```
+setPrices(10e18, [(1, 1000000e18), (2, 100000e18), (3, 10000e18),
+                  (4, 1000e18), (5, 100e18)])
+```
+
+The rungs run down to one character so that lowering `minCharLength` later never hands out
+free names. `deploy-mainnet.mjs` reads these from `scripts/simplex-price-curve.mjs`, the one
+place the curve is written down, and the post-deploy read-back asserts every rung and the
+feed scale on chain before the handover.
+
+Mind the unit. These are attoUSD **per year**. The vendored oracle that `.testing` runs
+takes attoUSD **per second**, so the two lists are not interchangeable: pasting one into
+the other is off by a factor of 31,536,000 and neither contract rejects it.
 
 Reserving here rather than after the handover is not closing an open hole — `publicSalesOpen`
 is false and the registrar has no credits, so nothing can be registered before 12 Nov
@@ -279,19 +310,24 @@ beneficiary can move it, so the guardian is chosen here or not at all.
 | 4 | deploy key | `baseRegistrar.transferOwnership(adminKey)` |
 | 5 | deploy key | `root.setController(adminKey, true)` and `root.setController(deployKey, false)` |
 | 6 | deploy key | `root.transferOwnership(adminKey)` |
+| 7 | deploy key | `priceOracle.transferOwnership(adminKey)` |
+| 8 | admin key | `priceOracle.acceptOwnership()`, required by `Ownable2Step` |
 
-All six complete on 2 Nov; there is no delay to wait out. Steps 4 and 6 are single-step
+All eight complete on 2 Nov; there is no delay to wait out. Steps 4 and 6 are single-step
 `Ownable` and take effect immediately with no acceptance — so the admin address must be
 correct, because there is no second chance and no way to tell from the transaction whether
 anyone holds the key. Confirm the admin device can sign *before* step 4, by having it
 execute step 3.
 
 Between step 2 and step 3 the deploy key can still redirect the controller elsewhere, so it
-is destroyed only after all six land and the checks below pass — 5 Nov, allowing time to
+is destroyed only after all eight land and the checks below pass — 5 Nov, allowing time to
 verify.
 
-Verify: `owner()` is the admin key on all three contracts; `beneficiary()` is the guardian
-key; `pendingOwner()` is empty on the controller; every former deploy-key call reverts.
+Verify: `owner()` is the admin key on all four contracts; `beneficiary()` is the guardian
+key; `pendingOwner()` is empty on both the controller and the price oracle; every former
+deploy-key call reverts. The oracle is the one most easily missed. It is not reachable from
+the controller, so a handover that checks only the controller looks complete while the whole
+price curve is still held by a deploy key that is destroyed on 5 Nov.
 
 ### A3. Guardian's first use — 2–3 Nov 2026
 
@@ -327,13 +363,14 @@ from single devices to the end state: Safes, and a timelock in front of the admi
 | 4 | admin key | `controller.transferOwnership(timelock)`, then admin Safe → timelock schedules and executes `controller.acceptOwnership()`. |
 | 5 | admin key | `root.setController(timelock, true)`, then `root.setController(adminKey, false)`. |
 | 6 | admin key | `baseRegistrar.transferOwnership(timelock)` and `root.transferOwnership(timelock)` — single-step, immediate, unverifiable. Prove the timelock can act first, via step 4. |
+| 7 | admin key | `priceOracle.transferOwnership(timelock)`, then admin Safe → timelock schedules and executes `priceOracle.acceptOwnership()`. Two-step like step 4, so a wrong address is recoverable; it goes last for that reason. |
 
 Order matters twice. **Step 3 before step 4**: once ownership moves, the admin key can no
 longer do anything, and `setBeneficiary` was never its call to make anyway. **Step 4 before
 step 6**: step 4 is the only one that proves the new owner can actually execute, and steps 5
 and 6 are irreversible without it.
 
-Verify: `owner()` is the timelock on all three; `beneficiary()` is the guardian Safe; the
+Verify: `owner()` is the timelock on all four; `beneficiary()` is the guardian Safe; the
 old devices revert on every admin and guardian call; a scheduled no-op executes after 7 days
 and the guardian Safe can cancel one.
 
@@ -352,7 +389,10 @@ After hardening, read the parenthesised form.
 | Refill a registrar's allowance | guardian key *(guardian Safe, 2 sigs)* | `controller.setRegistrarAllowance(registrar, N)` — attoUSD; replaces, never adds |
 | Cut off a compromised registrar | guardian key *(guardian Safe, 2 sigs)* | `controller.setRegistrarAllowance(registrar, 0)` |
 | Pause payable sales | guardian key *(guardian Safe, 2 sigs)* | `controller.setPublicSalesOpen(false)` |
-| Replace the price oracle | admin key *(admin Safe → timelock, 7 days)* | `controller.setPriceOracle(newOracle)` |
+| Change prices | admin key *(admin Safe → timelock, 7 days)* | `priceOracle.setPrices(base, rungs)`; replaces base and rungs together, and rejects a curve where a shorter name is cheaper than a longer one |
+| Replace a retired ETH/USD feed | admin key *(admin Safe → timelock, 7 days)* | `priceOracle.setUsdOracle(feed, decimals)`; the scale is explicit, since the interface has no `decimals()` to read |
+| Retune the expired-name auction | admin key *(admin Safe → timelock, 7 days)* | `priceOracle.setPremium(startPremium, totalDays)`; `totalDays = 0` switches it off |
+| Replace the price oracle wholesale | admin key *(admin Safe → timelock, 7 days)* | `controller.setPriceOracle(newOracle)`; the escape hatch if the oracle itself is defective |
 | Update NFT artwork | admin key *(admin Safe → timelock, 7 days)* | `baseRegistrar.setMetadataRenderer(newRenderer)` |
 | Cancel a scheduled admin action | — *(guardian Safe, 2 sigs)* | `timelock.cancel(id)` — exists only after hardening |
 
@@ -386,7 +426,9 @@ re-queued, instead of sealing the payable path shut forever.
 
 Verify: `root.locked(labelhash("simplex")) == true`; `controller.frozen() == true`;
 simulated `upgradeTo`, `upgradeToAndCall` and `setPublicSalesOpen` all revert; simulated
-`setPriceOracle` still succeeds; `owner()` is still the timelock and not `address(0)`.
+`setPriceOracle` still succeeds; the oracle's own `setPrices`, `setUsdOracle` and
+`setPremium` still succeed, since the freeze is the controller's and the oracle is a
+separate contract; `owner()` is still the timelock and not `address(0)` on both.
 
 Then confirm live: a sponsored registration, a relayed record edit, a signed transfer,
 `registerReserved`, and `withdraw()` paying the guardian Safe — which by then is the
