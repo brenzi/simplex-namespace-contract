@@ -64,8 +64,10 @@ addresses file); its current implementation is `0x281ca41311c2aa808c917c4674639d
    `localhostWithEns` chain does not recognise.
 2. `node scripts/deploy-local.mjs` — deploys the wrapper-free stack for the TLD
    selected by `SIMPLEX_TLD` (default `testing`):
-   - `ENSRegistry`, `BaseRegistrarImplementation` (v3), `ReverseRegistrar`
-   - `DummyOracle` (fixed ETH/USD = $1) + `ExponentialPremiumPriceOracle`
+   - `ENSRegistry`, `BaseRegistrarImplementation` (v3)
+   - `DummyOracle` (fixed ETH/USD = $1) + the price oracle
+     (`SimplexPriceOracle` for `.simplex`, `ExponentialPremiumPriceOracle` for
+     `.testing`)
    - `MockSMPXNFT`, with token #0 minted to the deployer (the NFT gate is on
      for `.testing`, off for `.simplex`)
    - `SimplexController` + ERC-1967 proxy (deployed **before** `PublicResolver`
@@ -164,7 +166,8 @@ Pass `CONFIRM=yes` to skip the prompt. The dry run is read-only against mainnet
 ### What the deploy does
 
 1. Deploys the full wrapper-free stack: `ENSRegistry`, `BaseRegistrarImplementation`
-   (v3), `ReverseRegistrar`, `ExponentialPremiumPriceOracle`,
+   (v3), the price oracle (`SimplexPriceOracle` for `.simplex`,
+   `ExponentialPremiumPriceOracle` for `.testing`),
    `SimplexController` + UUPS proxy, `SubnameRegistrar`, `PublicResolver`,
    `MetadataRenderer`, `UniversalResolver`.
 2. Wires the controller into the `BaseRegistrar`, pre-loads the reserved labels
@@ -253,15 +256,70 @@ once to reconstruct the file first.
 
 ### Changing prices
 
-`SimplexController.setPriceOracle(IPriceOracle)` (owner-only) swaps the active
-oracle without a controller redeploy — useful for `.simplex`, or to move
-`.testing` off its all-zero (free) curve. Deploy a fresh
-`ExponentialPremiumPriceOracle` pointed at the mainnet Chainlink feed
-(`0x5f4eC3Df…`) with the desired `PRICES` (five USD/sec rates for label lengths
-1/2/3/4/5+; the production curve is $1 / $8 / $32 / $128 per year, `"0,0,0,0,0"` =
-free), then submit `SimplexController.setPriceOracle(<new oracle>)`. To lock
-pricing forever, submit `SimplexController.freezePriceOracle()` (one-way —
-`setPriceOracle` reverts thereafter with `PriceOracleAlreadyFrozen`).
+On `.simplex` this is a plain owner call. `SimplexPriceOracle.setPrices(base,
+rungs)` replaces the whole curve atomically, with no deployment and no
+`setPriceOracle`. `base` is attoUSD per year for every length above the tallest
+rung; each rung is `(maxLength, priceUSDPerYear)` and covers every length up to
+`maxLength`, so lengths between two rungs need no entry of their own:
+
+| length | per year | rung |
+|---|---|---|
+| 6+ | $10 | base price |
+| 5 | $100 | `(5, 100e18)` |
+| 4 | $1,000 | `(4, 1000e18)` |
+| 3 | $10,000 | `(3, 10000e18)` |
+| 2 | $100,000 | `(2, 100000e18)` |
+| 1 | $1,000,000 | `(1, 1000000e18)` |
+
+That is `setPrices(10e18, [(1, 1000000e18), (2, 100000e18), (3, 10000e18),
+(4, 1000e18), (5, 100e18)])`. Rungs go in ascending length order with
+non-increasing prices, each `maxLength` in 1..64, and the base must not exceed the
+lowest rung; the setter reverts otherwise, so no length can ever be cheaper than a
+longer one. A free TLD is `setPrices(0, [])`. `setUsdOracle` moves the Chainlink
+feed. The oracle has its own `Ownable2Step` owner, handed over separately from the
+controller's.
+
+`setPremium(startPremium, totalDays)` retunes the Dutch auction on lapsed names.
+It takes the starting premium in attoUSD and the number of days it takes to decay
+to nothing, so $1,024 over 10 days is `setPremium(1024e18, 10)`, giving
+`endValue = 1024e18 >> 10 = 1e18`. The premium is charged on top of the rent from
+the moment the name becomes registrable (its expiry plus the registrar's 90-day
+grace period) and halves every day, with `endValue` subtracted throughout so the
+curve lands exactly on zero at `totalDays` rather than stepping off a cliff:
+
+| days past grace | premium |
+|---|---|
+| 0 | $1,023 |
+| 1 | $511 |
+| 2 | $255 |
+| 5 | $31 |
+| 9 | $1 |
+| 10 and after | $0 |
+
+ENS's mainnet auction is `setPremium(100000000e18, 21)`, which is what `.testing`
+inherited. `setPremium(x, 0)` makes `endValue` equal `startPremium`, zeroing the
+premium at every elapsed time, and is how the auction is switched off.
+
+`.testing` predates this and runs the vendored `StablePriceOracle`, whose prices
+are `immutable`. Changing them there means deploying a fresh oracle pointed at the
+mainnet Chainlink feed (`0x5f4eC3Df…`) with the desired `PRICES` — **six**
+attoUSD/sec rates for label lengths 1/2/3/4/5/6+ — and submitting
+`SimplexController.setPriceOracle(<new oracle>)`. A **five**-entry array is still
+accepted and keeps the old behaviour, where `price5Letter` applies to every name of
+five characters or more, so 5 and 6+ are priced alike; pass six entries to split
+them. Deploying a `SimplexPriceOracle` as the replacement is the better move, since
+every later change is then a call.
+
+The oracle must implement `IPriceOracleUSD`, i.e. `priceUSD()` alongside
+`price()`. `price()` converts to wei through the Chainlink feed for the payable
+path; `priceUSD()` returns the same quote in attoUSD before conversion, and is
+what the registrar allowance is denominated and deducted in. That is why the
+sponsored path keeps working when the feed does not.
+
+There is **no** `freezePriceOracle`. Pricing must stay changeable: the feed
+address is `immutable` inside the oracle, so a frozen oracle whose feed was
+retired would end registration and renewal permanently, with no recovery on any
+key. `setPriceOracle` deliberately survives `freeze()`.
 
 > ⚠ The helper `scripts/deploy-oracle.mjs` is currently **Sepolia-wired** — it
 > reads `SEPOLIA_RPC_URL` and defaults to the Sepolia ETH/USD feed. Generalise it
@@ -274,15 +332,49 @@ pricing forever, submit `SimplexController.freezePriceOracle()` (one-way —
   registration gate. Once called, the dApp's gate UI clears automatically (it
   reads `nftGateEnabled` on-chain).
 - `setMinCharLength(uint8)` — monotonic decrease only (6 → 5 → 4 → 3).
-- `addReservedNames(string[])` / `removeReservedNames(string[])` — bulk,
-  ~1000 names/tx. `registerReserved(string,address,uint256)` — bypasses gates.
-- `setTreasury(address)` — where ETH fees go.
+- `addReservedNames(string[])` — owner **or beneficiary**, so a name under threat
+  can be reserved immediately rather than at the timelock's pace. Bulk; about 25k
+  gas per name, so batch ~300 per transaction (gas *estimators* run roughly 3×
+  over actual on this loop, so the submitted limit looks far larger than the gas
+  really burned). `removeReservedNames(string[])` is owner-only — releasing a
+  reserved name is the direction that should be visible before it lands.
+- `registerReserved(string,address,uint256)` — owner-only; bypasses the gates and
+  the commit/reveal. Sets `defaultResolver` on the node and transfers the token,
+  so a brand's name resolves immediately without the brand ever holding ETH.
+- `setDefaultResolver(address)` — the resolver `registerReserved` points names at.
+- `setPublicSalesOpen(bool)` — owner **or beneficiary**; gates the payable
+  `register()` only. The credited path, `registerReserved` and both renew paths
+  are exempt, so pausing never blocks the app-store flow or a renewal. Two-way
+  until `freeze()`, then sealed in its current position.
+- `setRegistrarAllowance(address,uint256)` — **beneficiary only**. The registrar's
+  spending limit in attoUSD; a sponsored registration or renewal deducts the
+  name's own list price. Replaces rather than adds, so zeroing it is a
+  one-transaction kill switch for a compromised registrar.
+- `setBeneficiary(address)` — owner while unset, beneficiary thereafter. Set it
+  **before** transferring ownership, or the deploy key controls revenue.
+- `freeze()` — owner-only, one-way. Makes the implementation permanent and seals
+  the sales switch. Refuses while sales are closed. There is no `setTreasury`;
+  `withdraw()` is permissionless and pays `beneficiary`.
+
+### Registering a registrar service
+
+There is no separate registration step: any address with a non-zero allowance is
+a registrar, and zero means it is not one. From the guardian key:
+
+```
+controller.setRegistrarAllowance(0xREGISTRAR_HOT_WALLET, 100000000000000000000000)  // $100,000
+```
+
+The hot wallet also needs its own ETH for gas — the allowance authorises, it does
+not pay. Kill switch, same key, no delay:
+`controller.setRegistrarAllowance(0xREGISTRAR_HOT_WALLET, 0)`.
 
 ### Upgrading the controller (UUPS)
 
 Deploy a fresh implementation, then have the owner submit `upgradeTo(newImpl)`
-(or `upgradeToAndCall`) on the proxy. **Every upgrade must preserve storage
-layout** — see [`../ens-contracts/docs/upgrades.md`](../ens-contracts/docs/upgrades.md)
+(or `upgradeToAndCall`) on the proxy. This is possible only until `freeze()`,
+which makes `_authorizeUpgrade` revert `Frozen` permanently. **Every upgrade must
+preserve storage layout** — see [`../ens-contracts/docs/upgrades.md`](../ens-contracts/docs/upgrades.md)
 for the `__gap` / append-only invariants and the pre-upgrade checklist.
 
 > ⚠ `scripts/deploy-controller-impl.mjs` (which records the new impl in

@@ -57,10 +57,19 @@ Subname labels are capped the same way: `SubnameRegistrar.MAX_LABEL_LENGTH = 63`
 `SimplexController` is `Ownable2StepUpgradeable`. The deploy script calls
 `transferOwnership(coldOwner)`, which only sets `pendingOwner`; the cold owner
 must then call `acceptOwnership()`. Until it does, the **ephemeral deployer key**
-still owns the controller — including `_authorizeUpgrade` (UUPS), `setPriceOracle`,
-`disableNftGate`, `setMinCharLength`, and `withdraw` (which pays `owner()`; there
-is no `setTreasury`). (The registrar and reverse registrars are 1-step `Ownable`
-and transfer immediately; only the controller has this window.)
+still owns the controller — including `_authorizeUpgrade` (UUPS), `setPriceOracle`
+(and, on `.simplex`, the price oracle's own `setPrices` / `setUsdOracle` /
+`setPremium`, which have a second, separate `Ownable2Step` handover),
+`disableNftGate`, `setMinCharLength`, `setDefaultResolver`, `registerReserved`,
+`addReservedNames` / `removeReservedNames`, `setPublicSalesOpen` and `freeze()`.
+(The registrar is 1-step `Ownable` and transfers immediately; only the controller
+has this window. There is no reverse registrar — removed in names-v2.)
+
+Two names-v2 changes narrow this window. `withdraw()` now pays `beneficiary`,
+not `owner()`, and the beneficiary is set *before* the ownership transfer and can
+afterwards only be changed by itself — so revenue is out of the deployer's reach
+from the first block. And `setRegistrarAllowance` is beneficiary-only, so the
+deployer cannot fund a registrar even while it still owns everything else.
 
 **Accepted because** it is inherent to the ephemeral-deployer + 2-step pattern
 and cannot be closed from the deploy script (only the cold owner can accept).
@@ -89,6 +98,18 @@ only because of two properties that an auditor must re-verify on any change:
 NameWrapper). Users can revoke at any time with
 `setApprovalForAll(subnameRegistrar, false)`. A `SubnameRegistrar` redeploy
 requires users to re-approve the new address and re-create subnames.
+
+**names-v2 extension.** `ENSRegistry.setApprovalForAllWithSig` makes this grant
+obtainable by signature as well as by transaction, so a user with no ETH can make
+it via a relayer. The state written is byte-for-byte what `setApprovalForAll`
+writes, and the signed struct binds `owner`, `operator`, `approved`, a per-signer
+nonce and a deadline, so a relayer cannot substitute the operator or replay. The
+grant's *scope* is unchanged and still registry-wide, so the two properties above
+remain load-bearing. What is new is the phishing surface: signing is cheaper to
+solicit than transacting. Two mitigations, both required: the client must never
+sign an approval it did not construct itself, and the UI must name the operator
+and state the scope before signing. Revocation is also signable, so a mistaken
+grant is undone without ETH.
 
 ### L2 — Subnames are soulbound to the 2LD NFT (by design)
 A subname has no independent owner: in the registry it is owned by the
@@ -213,10 +234,10 @@ above as "the cold owner."
 | N1 | Medium (operational) | NFT gate now disabled + zero pricing ⇒ open, free `.testing` registration |
 | N2 | Low | A revived subname inherits the previous owner's resolver records |
 | N3 | Low | Deleting a middle subname strands its descendants (records keep resolving) |
-| N4 | Low / info | Reverse-record registrations always revert on mainnet (reverse registrars are `address(0)`) |
+| N4 | Low / info — **FIXED** | Reverse-record registrations always revert on mainnet (reverse registrars are `address(0)`) |
 | N5 | Low / info | Unrestricted on-chain charset ⇒ display spoofing (homoglyph/bidi), not injection |
 | N6 | Info | `purge`/`delete` linear-scan children — quadratic on large sets; purge front-first |
-| N7 | Info | `withdraw()` pays `owner()` (the deployer during the H1 window); `renounceOwnership` not disabled |
+| N7 | Info — **partly FIXED** | `withdraw()` pays `owner()` (the deployer during the H1 window); `renounceOwnership` not disabled |
 | N8 | Info | Documentation drift (some fixed with this review) |
 
 - **N1** — `nftGateEnabled()` is now `false` (disabled on-chain 2026-07-09,
@@ -232,10 +253,16 @@ above as "the cold owner."
   a dangling `parentOf`; their records keep resolving and `purge` skips them while
   their generation still matches. Mitigation: delete leaf-first in the dApp, or
   accept as self-inflicted within a single owner.
-- **N4** — `register()` still calls the reverse registrars when the reverse bits
-  are set, but both are `address(0)` on mainnet, so such a call reverts after the
-  60 s commit is spent. Mitigation: early-revert when a reverse bit is set with no
-  reverse registrar, or ensure the dApp never sets the bits.
+- **N4 — FIXED (names-v2).** `register()` used to call the reverse registrars when
+  the reverse bits were set, but both are `address(0)` on mainnet, so such a call
+  reverted after the 60 s commit was already spent. The recommended mitigation
+  (early-revert) is implemented, and then some: reverse resolution is removed from
+  the deployment altogether. `makeCommitment` rejects any non-zero `reverseRecord`
+  with `ReverseRecordNotSupported`, so the commit is never spent; the two registrars
+  are no longer deployed; and `PublicResolver` no longer inherits `ReverseClaimer`,
+  which was the last thing forcing one to exist. A related defect found on the way:
+  the branch passed `msg.sender` as the reverse subject, so a *sponsored*
+  registration would have named the registrar's hot wallet rather than the buyer.
 - **N5** — only min length (≥ 6 codepoints) and max bytes (≤ 63) are enforced;
   labels may contain homoglyph/bidi/zero-width characters. The renderer escaping
   blocks JSON/SVG injection, but lookalike names can be minted for
@@ -244,19 +271,247 @@ above as "the cold owner."
 - **N6** — `_removeChild` linear-scans `_children`; deleting/purging a large dead
   set naively is O(n·m). A front-of-array-first purge is O(1) per item.
   Self-inflicted; document the ordering.
-- **N7** — permissionless `withdraw()` pays `owner()` (the deployer during the H1
-  window; no funds at risk today with zero pricing, relevant once `.simplex`
-  charges). The inherited one-step `renounceOwnership` is not disabled — an owner
-  slip permanently orphans admin/upgrades. Consider overriding it to revert.
-- **N8** — doc fixes applied with this review: H1 no longer claims a `setTreasury`
-  (none exists; `withdraw` pays `owner()`) and clarifies "multisig" = the cold
-  EOA. Still open **outside `docs/`** (flagged, not changed): `CLAUDE.md` line 95
-  ("keeps upstream `register(uint256,…)`" — that function was removed) and
-  `ens-contracts/docs/upgrades.md` (`__gap[49]` vs the code's `_reentrancyStatus`
-  + `__gap[48]`).
+- **N7 — partly FIXED (names-v2).** `withdraw()` no longer pays `owner()`: it pays
+  `beneficiary`, a role set once by the owner while unset and thereafter only by
+  itself, so the deploy key never controls revenue and the H1 window does not
+  cover it. Still open: the inherited one-step `renounceOwnership` is not
+  disabled, and an owner slip would permanently orphan admin and upgrades. That
+  now matters *more*, not less — the plan deliberately keeps the owner alive
+  forever so brand reservation can continue, so there is no point at which
+  renouncing is the intended move. Consider overriding it to revert.
+- **N8 — FIXED.** The two items this left open outside `docs/` are now corrected:
+  `CLAUDE.md`'s claim about keeping upstream `register(uint256,…)`, and
+  `ens-contracts/docs/upgrades.md`'s stale `__gap[49]`. `upgrades.md` now
+  documents the real layout (`__gap[45]`, the names-v2 block, and the reserved
+  placeholder slots) and the fact that `freeze()` ends upgradeability entirely.
 
 **Verdict:** no new critical/high in the contracts themselves. The dominant risk
 remains operational — the ownership handoff is still open with a hot deployer key
 whose upgrade authority transitively controls every name's resolver records, and
 that same key one-way-disabled the NFT gate (with zero pricing ⇒ open, free
 registration).
+
+---
+
+## names-v2 — new surface and adversarial review
+
+names-v2 adds sponsored registration (a registrar spends a money allowance, the
+user never holds ETH), one-shot EIP-712 intents relayed on the user's behalf, a
+two-key governance split, and a one-way `freeze()`. It removes reverse
+resolution and, in an earlier revision, an on-chain edit-credit system.
+
+### New privileged surface
+
+| Function | Who | Notes |
+|---|---|---|
+| `setRegistrarAllowance(registrar, attoUSD)` | beneficiary only | Replaces, not adds. Zeroing it is the kill switch for a compromised registrar and must take one transaction. |
+| `setBeneficiary(address)` | owner while unset, beneficiary thereafter | Set before the ownership handover, so revenue is independent of the deploy key from the first block. |
+| `setPublicSalesOpen(bool)` | owner **or** beneficiary | Restrictive direction on the fast key: an exploit in the payable path accrues harm per block. Dies at `freeze()`. |
+| `addReservedNames(string[])` | owner **or** beneficiary | Also fast, and for a sharper reason: a scheduled reservation would tell a squatter which name is valuable and how long it stays unprotected. |
+| `removeReservedNames`, `registerReserved`, `setDefaultResolver`, `setMinCharLength`, `setPriceOracle` | owner only | Permissive directions stay behind the timelock. |
+| `freeze()` | owner only | One-way. Makes the implementation permanent and seals `setPublicSalesOpen`. Refuses while sales are closed, so a mis-ordered freeze cannot shut the payable path forever. |
+| `registerWithCredit`, `renewWithCredit` | any address with allowance | Deducts the name's own list price in attoUSD. No value attached. |
+| `transferWithSig`, `setTextWithSig`, `clearRecordsWithSig`, `setApprovalForAllWithSig`, `createSubnameWithSig`, `deleteSubnameWithSig` | anyone holding the owner's signature | The relayer pays gas and chooses nothing else. Each contract keeps its own per-signer nonce. |
+
+### What `freeze()` does not stop
+
+`freeze()` fixes the implementation and seals the sales switch. It does **not**
+end issuance, and the plan should not be read as saying it does:
+
+- the guardian can still fund a registrar (`setRegistrarAllowance`) and that
+  registrar can still mint names through `registerWithCredit`;
+- the owner can still `addReservedNames` and `registerReserved`.
+
+That is deliberate — brand reservation and outreach have to continue for the
+life of the namespace, which is why the owner is never renounced. The guarantee
+a freeze gives is narrower and worth stating exactly: **no key can change the
+code, and no key can take a name that someone already holds.** Names that are
+unregistered remain issuable by the two governance keys forever.
+
+### Bounds that are the registrar's job, not the contract's
+
+`SubnameRegistrar` supports arbitrary depth, and `ownerOf` walks the parent chain
+on every authorisation, so a subname nested D levels deep costs O(D) per read and
+a subtree built to depth D costs O(D²) to create. Nothing on-chain caps D.
+
+This is left off-chain on purpose. The relayer is the only sponsored caller: it
+sees the full call before it pays for it, so it can refuse an abusive depth for
+free, whereas a constant compiled into an immutable contract is a guess at a
+limit that can never be revised. A user paying their own gas is only ever
+grieving themselves. **Relayer operators must enforce a depth limit** (5 is
+ample for the SimpleX UX) along with the payload and gas bounds they already
+apply.
+
+### Shadow subnames, and what a buyer must check
+
+A 2LD's holder owns its registry node, so they can call
+`ENSRegistry.setSubnodeOwner` directly and create a subname the
+`SubnameRegistrar` never sees. Such a node is not soulbound, is not indexed, and
+has no generation, so **selling the 2LD does not move it**: after the sale
+`pay.alice.simplex` can still be owned — and still resolve — to the seller,
+while `alice.simplex` belongs to the buyer.
+
+This cannot be prevented on-chain. Registry authority over a subnode belongs to
+the parent's owner by construction, and the registrar's soulbinding works only
+because the registrar happens to own the nodes it created; a 2LD owner can pull
+even a *tracked* subname back out the same way.
+
+What makes it a disclosure problem rather than a theft one is that it is always
+recoverable: `setSubnodeOwner` is authorised against the **parent**, so the new
+holder can overwrite any subnode under their name unilaterally, and the previous
+owner is then locked out. Both directions are pinned in
+`TestShadowSubnames.test.ts`.
+
+So the requirement lands on the buyer, and on whatever surfaces a name for sale:
+
+- **Before buying, enumerate the name's subnodes** — the registrar's index shows
+  only the ones it created, so completeness needs `NewOwner` logs on the registry
+  filtered by the 2LD node, not `getChildren`.
+- **After buying, overwrite anything unexpected.** One `setSubnodeOwner` per
+  label; no cooperation from the seller is needed.
+- A subname's records survive the overwrite, so re-point or clear them too.
+
+### Client and relayer version coupling
+
+`TRANSFER_TYPEHASH` gained `ephemeralPubKey` and `viewTag`, and the transfer
+announcement is now ERC-5564's `Announcement` rather than a bespoke event. Both
+are consensus between the contract and everything that signs for or watches it,
+and `BaseRegistrarImplementation` is **not** upgradeable — so the two shapes
+cannot coexist in one deployment and cannot be migrated after the fact.
+
+- Signers, relayers and scanners must ship in lockstep with the deployment they
+  talk to.
+- The live `.testing` registrar keeps the **old** typehash and the old event
+  permanently. A client must key both off the deployment it is addressing, not
+  off its own build. `.testing` is not being upgraded, so this is a fork in the
+  client, not a migration.
+
+### Deployment opsec
+
+The deploy runner is as much a part of the security boundary as the contracts,
+because a mis-run is unrecoverable in the same way a bad constructor argument is.
+What it now refuses to do:
+
+- **Run against the wrong chain.** `chainId` is asserted to be 1 before any
+  spend, so an `MAINNET_RPC_URL` pointing at a testnet stops the run instead of
+  deploying a full stack to the wrong place and journalling it as a success.
+- **Accept a mistyped address.** Every address input is EIP-55 checked, which is
+  the only automatic protection against a transposed character in the variable
+  that ends up owning the namespace.
+- **Deploy against a dead price feed.** `latestAnswer()` is probed up front; a
+  feed returning zero or negative makes every quote revert and the payable path
+  unusable from the first block.
+- **Deploy stale bytecode.** The run compiles before it starts. Freshness is not
+  inferred from timestamps — Hardhat caches on content, so an mtime heuristic
+  both misses real staleness and blocks on touched-but-unchanged files. This is
+  also the check that would have caught the branch that did not compile.
+- **Pay without limit.** The stall bump compounds 20% per stalled interval and
+  had no ceiling; it now stops at `ABSOLUTE_MAX_BASE_FEE_GWEI` (4× the configured
+  cap by default) rather than paying whatever a congested week demands.
+- **Build on a block that might not survive.** Each step waits three
+  confirmations before the next one depends on it, and a receipt that a reorg
+  removes returns the step to waiting rather than being journalled.
+- **Overwrite the record of a live deployment.** An addresses file with no
+  journal beside it aborts the run.
+- **Leak the provider key.** The fork URL reaches the child process through the
+  environment; `--fork <url>` put it in argv, where any local user could read it
+  from `ps`.
+
+And what it now proves rather than assumes: a **post-deploy read-back** checks
+the TLD node's owner, the controller's registration, `maxLabelLength`, the
+subname hook, the metadata renderer, the default resolver, the beneficiary, the
+NFT gate, `minCharLength`, the freeze and sales flags, the subname registrar's
+resolver, and that a six-character name quotes a non-zero price. A journal proves
+each transaction was mined; only the read-back proves the stack is wired the way
+the script intended. It runs while the deploy key still owns everything, and the
+run then prints the `acceptOwnership()` calls the admin must make — until those
+land, `Ownable2Step` leaves the deploy key in control and it must be treated as
+hot.
+
+### The invariant everything rests on
+
+`BaseRegistrarImplementation._register` opens with `require(available(id))`, and
+`available(id)` is `expiries[id] + GRACE_PERIOD < block.timestamp`. That check is
+in the **immutable** registrar, so no owner power on any contract — including an
+arbitrary controller upgrade before the freeze — can seize, transfer or re-point
+a name someone holds. `reclaim` requires `_isApprovedOrOwner`; `transferWithSig`
+requires the owner's signature and a grace-aware `ownerOf`.
+
+### Adversarial review (three expert personas + independent refutation)
+
+No critical, high or medium finding survived. Fixed as a result: a permissionless
+edit-credit faucet and an overflow that could brick renewals (both removed with
+the credit system itself); `freeze()`'s missing `publicSalesOpen` guard;
+`StablePriceOracle`'s unchecked `latestAnswer()` cast; the sponsored path's
+needless dependency on the ETH/USD feed; and the reverse-record subject bug.
+
+A second round against the branch found, and this revision fixes, four issues
+that all shared one root — **state that outlives the registration it belongs
+to**:
+
+- **Stale records on re-registration.** A name that lapsed kept its previous
+  owner's text records, so a squatter's SimpleX address resolved under the new
+  owner's name. `_registerCore` and `registerReserved` now retire records on the
+  default resolver before writing anything new.
+- **Revived subnames.** The same leak one level down: re-creating a label left
+  behind by a previous 2LD owner resurfaced their records. Creating over a
+  generation-dead subname is now refused outright — `purge` first — and both
+  `purge` and `deleteSubname` retire the records they drop.
+- **Expired 2LDs kept their subtree.** Registry ownership of a 2LD survives
+  expiry, so its former holder retained subname authority indefinitely. The
+  registrar now mirrors each registration's expiry (`onExpiryChanged`) and gates
+  authority on it.
+- **Unauthenticated announcement fields.** `ephemeralPubKey` and `viewTag` sat
+  outside the signed struct, so a relayer could fabricate a stealth derivation on
+  a genuine transfer. They are now part of `TRANSFER_TYPEHASH`, and the event
+  itself is ERC-5564's `Announcement` verbatim rather than a bespoke one.
+
+A third pass over those fixes found two more, both fixed here:
+
+- **Record retirement was scoped to the *current* default resolver**, so the
+  first `setDefaultResolver` rotation would have silently stopped retiring
+  records for every name still pointing at the old one — reopening the leak
+  without any code changing. The controller now remembers every resolver it has
+  ever made the default (`wasDefaultResolver`) and retires against that set. The
+  set is deliberately not "any resolver": each entry is one we deployed and that
+  trusts the controller, so the call can neither revert nor burn the
+  registrant's gas on a hostile resolver.
+- **The deploy runner treated inclusion as success.** A transaction that reverted
+  at inclusion still produced a receipt, and the step was journalled as done and
+  skipped on every later resume. `recordSuccess` now refuses a non-success
+  receipt and stops the run.
+
+Accepted, and new to this ledger:
+
+- **V1 — a compromised guardian is unrecoverable after the freeze.** Only the
+  beneficiary may rotate itself, and the post-freeze upgrade escape is closed, so
+  a compromised guardian permanently holds `withdraw` and `setRegistrarAllowance`.
+  Names are untouched. Accepted on the basis that the guardian is a Safe:
+  compromise requires the multisig threshold, and the alternative — letting the
+  slow owner replace the beneficiary — would put the treasury back under the key
+  the split exists to keep it away from.
+- **V2 — relayed gas is bounded off-chain, not on-chain.** Several sponsored
+  entry points take unbounded arguments, and OZ `SignatureChecker` falls through
+  to an ERC-1271 `staticcall` when recovery fails. A contract-level cap would be
+  a guess at a future limit baked into a contract that is immutable or frozen at
+  lockdown. The relayer is the only caller of these paths and the only party that
+  can judge abuse, so it must pre-flight simulate every relayed transaction and
+  refuse above a gas threshold, and validate payload sizes before submitting.
+  This is a security property carried by the service, not the contracts.
+- **V3 — hostile pricing is the one path from a retained key to a held name.**
+  `setPriceOracle` survives the freeze by necessity: the Chainlink feed is
+  `immutable` inside the oracle, so freezing pricing would let a retired feed end
+  registration and renewal forever. The cost is that an admin could price
+  renewals out of reach and take names as they lapse. It is the slowest and
+  loudest attack available — public for the timelock delay, then each name's
+  remaining term plus 90 days of grace, with renewal permissionless throughout.
+
+### Closed, not a finding
+
+*Reserving is front-run-proof.* `addReservedNames` is a single atomic call with
+no commit/reveal, while both registration paths must present a commitment already
+aged `minCommitmentAge` (60 s in the deployment). An attacker who first learns a
+name from the guardian's pending transaction cannot register it — the reservation
+mines in the next block, long before their commitment matures. A pre-aged
+speculative commitment does not help either, since the reserved check runs at
+registration time. Pinned by `test/simplex/TestReservationRace.test.ts`.

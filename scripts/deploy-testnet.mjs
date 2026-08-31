@@ -21,6 +21,14 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { readFileSync, writeFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import {
+  SIMPLEX_PRICE_BASE,
+  SIMPLEX_PRICE_RUNGS,
+  SIMPLEX_PRICE_ORACLE_ARTIFACT,
+  SIMPLEX_START_PREMIUM,
+  SIMPLEX_TOTAL_DAYS,
+  USD_FEED_DECIMALS,
+} from './simplex-price-curve.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ARTIFACTS = join(__dirname, '..', 'ens-contracts', 'artifacts', 'contracts')
@@ -98,31 +106,28 @@ async function main() {
     'ethregistrar/BaseRegistrarImplementation.sol/BaseRegistrarImplementation.json',
     [ensRegistry.address, tldNode])
 
-  const reverseRegistrar = await deploy('ReverseRegistrar',
-    'reverseRegistrar/ReverseRegistrar.sol/ReverseRegistrar.json',
-    [ensRegistry.address])
-
-  const defaultReverseRegistrar = await deploy('DefaultReverseRegistrar',
-    'reverseRegistrar/DefaultReverseRegistrar.sol/DefaultReverseRegistrar.json')
-
-  await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash('reverse'), account.address])
-  await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
+  // No reverse registrar: SNRC resolves names to SimpleX links in one direction
+  // only. PublicResolver and UniversalResolver no longer inherit ReverseClaimer,
+  // so nothing needs to own addr.reverse for them to deploy.
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
 
   // Use the real Chainlink feed as the oracle. The ENS pricing contracts call
   // `latestAnswer()` on it; ChainlinkAggregator and our DummyOracle share that
   // method, so the feed slots in directly.
   //
-  // .testing is free during the testing phase — gas-only registration. Zero
-  // out every price-per-length slot. .simplex (and any future TLD) keeps the
-  // production pricing curve: $1 / $8 / $32 / $128 per year for 6+ / 5 / 4 / 3
-  // chars, with an exponential premium ramp on expired names.
-  const priceArray = tld === 'testing'
-    ? [0n, 0n, 0n, 0n, 0n]
-    : [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n]
-  const priceOracle = await deploy('ExponentialPremiumPriceOracle',
-    'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
-    [chainlinkEthUsd, priceArray, 100000000000000000000000000n, 21n])
+  // `.testing` is live on the vendored ExponentialPremiumPriceOracle with an
+  // all-zero curve (gas-only registration) and keeps it: swapping a deployed
+  // TLD's oracle is a separate change. `.simplex` gets SimplexPriceOracle,
+  // whose curve, feed and auction are all settable by call afterwards, so it
+  // never has to be redeployed to change what a name costs.
+  const isTesting = tld === 'testing'
+  const priceOracle = isTesting
+    ? await deploy('ExponentialPremiumPriceOracle',
+        'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
+        [chainlinkEthUsd, [0n, 0n, 0n, 0n, 0n, 0n], 100000000000000000000000000n, 21n])
+    : await deploy('SimplexPriceOracle', SIMPLEX_PRICE_ORACLE_ARTIFACT,
+        [chainlinkEthUsd, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS,
+         SIMPLEX_START_PREMIUM, SIMPLEX_TOTAL_DAYS])
 
   // Sepolia has no SMPXNFT, so deploy a MockSMPXNFT for the testing-phase gate.
   // Token #0 goes straight to the cold owner so the deployer never holds an
@@ -144,8 +149,6 @@ async function main() {
       priceOracle.address,
       60n,
       86400n,
-      reverseRegistrar.address,
-      defaultReverseRegistrar.address,
       ensRegistry.address,
       {
         tldNode,
@@ -166,8 +169,6 @@ async function main() {
   const controller = { address: controllerProxy.address, abi: controllerImpl.abi }
 
   await write(baseRegistrar, 'addController', [controller.address])
-  await write(reverseRegistrar, 'setController', [controller.address, true])
-  await write(defaultReverseRegistrar, 'setController', [controller.address, true])
   console.log('Controller wired up')
 
   const reservedAtDeploy = ['simplex', 'simplex-chat']
@@ -182,16 +183,19 @@ async function main() {
     'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
     [ensRegistry.address, baseRegistrar.address])
 
-  const publicResolver = await deploy('PublicResolver',
-    'resolvers/PublicResolver.sol/PublicResolver.json',
-    // wrapper-free v3: the resolver's NameWrapper slot is repurposed for the
-    // SubnameRegistrar (the 2LD itself is never wrapped).
-    [ensRegistry.address, subnameRegistrar.address, controller.address, reverseRegistrar.address])
+  // SimplexResolver = PublicResolver + signed record writes. wrapper-free v3: the
+  // NameWrapper slot is repurposed for the SubnameRegistrar (the 2LD itself is
+  // never wrapped). trustedReverseRegistrar is address(0) and inert.
+  const publicResolver = await deploy('SimplexResolver',
+    'simplex/SimplexResolver.sol/SimplexResolver.json',
+    [ensRegistry.address, subnameRegistrar.address, controller.address, zeroAddress])
 
   await write(subnameRegistrar, 'setResolver', [publicResolver.address])
   await write(baseRegistrar, 'setSubnameHook', [subnameRegistrar.address])
-
-  await write(reverseRegistrar, 'setDefaultResolver', [publicResolver.address])
+  await write(baseRegistrar, 'setMaxLabelLength', [63n])
+  await write(controller, 'setDefaultResolver', [publicResolver.address])
+  await write(controller, 'setBeneficiary', [account.address])
+  await write(controller, 'setPublicSalesOpen', [true])
 
   // UniversalResolver — needed by the frontend for name lookups
   const dummyGateway = await deploy('DummyGatewayProvider',
@@ -241,7 +245,6 @@ async function main() {
     console.log(`  BaseRegistrar owner -> cold`)
     await write(mockNft, 'transferOwnership', [ownerAddress])
     console.log(`  MockSMPXNFT owner -> cold`)
-    await write(reverseRegistrar, 'transferOwnership', [ownerAddress])
     console.log(`  ReverseRegistrar owner -> cold`)
     await write(defaultReverseRegistrar, 'transferOwnership', [ownerAddress])
     console.log(`  DefaultReverseRegistrar owner -> cold`)
@@ -261,11 +264,20 @@ async function main() {
     console.log(`  ENS root -> cold`)
 
     // SimplexController uses Ownable2Step — this sets pendingOwner but
-    // does NOT transfer admin until the cold owner accepts.
+    // does NOT transfer admin until the cold owner accepts. SimplexPriceOracle
+    // is a second, separate Ownable2Step handover: it owns the price curve, the
+    // feed pointer and the auction, none of which the controller owns.
     await write(controller, 'transferOwnership', [ownerAddress])
     console.log(`\n  SimplexController pendingOwner -> ${ownerAddress}`)
+    if (!isTesting) {
+      await write(priceOracle, 'transferOwnership', [ownerAddress])
+      console.log(`  SimplexPriceOracle pendingOwner -> ${ownerAddress}`)
+    }
     console.log(`  To complete the handover, the cold owner must submit:`)
     console.log(`      controller.acceptOwnership()  at ${controller.address}`)
+    if (!isTesting) {
+      console.log(`      priceOracle.acceptOwnership() at ${priceOracle.address}`)
+    }
     console.log(`  Until then the deployer EOA (${account.address}) still has`)
     console.log(`  SimplexController admin rights (and nothing else).`)
   } else {
@@ -275,14 +287,15 @@ async function main() {
   const addresses = {
     ENSRegistry: ensRegistry.address,
     BaseRegistrarImplementation: baseRegistrar.address,
-    ReverseRegistrar: reverseRegistrar.address,
+    ReverseRegistrar: zeroAddress,
     DefaultReverseRegistrar: defaultReverseRegistrar.address,
     NameWrapper: zeroAddress, // wrapper-free v3
     MetadataRenderer: metadataRenderer.address,
     SubnameRegistrar: subnameRegistrar.address,
     PublicResolver: publicResolver.address,
     ETHRegistrarController: controller.address,
-    ExponentialPremiumPriceOracle: priceOracle.address,
+    [isTesting ? 'ExponentialPremiumPriceOracle' : 'SimplexPriceOracle']:
+      priceOracle.address,
     // ChainLink feed (used in place of DummyOracle on Sepolia).
     DummyOracle: chainlinkEthUsd,
     MockSMPXNFT: mockNft.address,
@@ -322,12 +335,27 @@ async function main() {
     // Etherscan AND so the admin has the constructor args handy if they
     // ever want to redeploy via scripts/deploy-oracle.mjs.
     PriceOracle: priceOracle.address,
-    priceOracleConstructorArgs: {
-      usdOracle: chainlinkEthUsd,
-      rentPrices: priceArray.map(String),
-      startPremium: '100000000000000000000000000',
-      totalDays: '21',
-    },
+    priceOracleContract: isTesting
+      ? 'ExponentialPremiumPriceOracle'
+      : 'SimplexPriceOracle',
+    priceOracleConstructorArgs: isTesting
+      ? {
+          usdOracle: chainlinkEthUsd,
+          rentPrices: ['0', '0', '0', '0', '0', '0'],
+          startPremium: '100000000000000000000000000',
+          totalDays: '21',
+        }
+      : {
+          usdOracle: chainlinkEthUsd,
+          usdOracleDecimals: String(USD_FEED_DECIMALS),
+          basePriceUSDPerYear: String(SIMPLEX_PRICE_BASE),
+          rungs: SIMPLEX_PRICE_RUNGS.map(({ maxLength, priceUSDPerYear }) => ({
+            maxLength: String(maxLength),
+            priceUSDPerYear: String(priceUSDPerYear),
+          })),
+          startPremium: String(SIMPLEX_START_PREMIUM),
+          totalDays: String(SIMPLEX_TOTAL_DAYS),
+        },
   }, null, 2))
   console.log(`Verification metadata saved to ${verificationPath}`)
   console.log(`Run: ETHERSCAN_API_KEY=... node scripts/verify-etherscan.mjs`)

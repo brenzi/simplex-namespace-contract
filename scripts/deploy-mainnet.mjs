@@ -43,10 +43,11 @@
  * Commit the addresses file AND the journal to the repo.
  * See docs/deployment.md → Mainnet.
  */
-import { createPublicClient, createWalletClient, encodeFunctionData, http, labelhash, namehash, parseGwei, parseEther, zeroHash, zeroAddress } from 'viem'
+import { createPublicClient, createWalletClient, encodeFunctionData, getAddress, http, labelhash, namehash, parseGwei, parseEther, zeroHash, zeroAddress } from 'viem'
 import { mainnet } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
-import { readFileSync, writeFileSync } from 'fs'
+import { execFileSync } from 'child_process'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import {
@@ -54,6 +55,14 @@ import {
   fundOnFork, loadJournal, spawnHardhatFork, DEFAULTS,
 } from './gas-tools.mjs'
 import { assembleVerification } from './build-verification.mjs'
+import {
+  SIMPLEX_PRICE_BASE,
+  SIMPLEX_PRICE_RUNGS,
+  SIMPLEX_PRICE_ORACLE_ARTIFACT,
+  SIMPLEX_START_PREMIUM,
+  SIMPLEX_TOTAL_DAYS,
+  USD_FEED_DECIMALS,
+} from './simplex-price-curve.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(__dirname, '..')
@@ -62,13 +71,52 @@ const ENS_CONTRACTS_DIR = join(REPO_ROOT, 'ens-contracts')
 
 const rpcUrl = process.env.MAINNET_RPC_URL
 const deployerKey = process.env.DEPLOYER_KEY
-const tld = process.env.SIMPLEX_TLD || 'testing'
+// No default. An unset or typo'd SIMPLEX_TLD silently re-targets the whole run —
+// gate logic, price array, journal, addresses file and verification metadata all
+// follow it, and a `.testing`-defaulted run would resume against the committed
+// `.testing` journal and then overwrite it with a mismatched schema.
+const KNOWN_TLDS = ['testing', 'simplex']
+const tld = process.env.SIMPLEX_TLD
+if (!tld || !KNOWN_TLDS.includes(tld)) {
+  console.error(
+    `SIMPLEX_TLD must be set explicitly to one of: ${KNOWN_TLDS.join(', ')} (got ${JSON.stringify(tld)})`,
+  )
+  process.exit(1)
+}
 const nftGateEnabled = tld === 'testing'
 const maxBaseFeeGwei = process.env.MAX_BASE_FEE_GWEI
 
-const chainlinkEthUsd = process.env.ETHUSD_FEED || '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
-const smpxNftAddr = process.env.SMPXNFT_ADDR || '0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291'
-const ownerAddress = process.env.OWNER_ADDRESS || '0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340'
+// EIP-55 checksums every address the run will bake in permanently. `getAddress`
+// rejects a wrong-length or mistyped address and a bad checksum, which is the
+// only automatic protection against a transposed character in an env var that
+// ends up owning the namespace.
+function requireAddress(label, value) {
+  try {
+    return getAddress(value)
+  } catch {
+    console.error(`${label} is not a valid checksummed address: ${JSON.stringify(value)}`)
+    process.exit(1)
+  }
+}
+const chainlinkEthUsd = requireAddress('ETHUSD_FEED', process.env.ETHUSD_FEED || '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419')
+const smpxNftAddr = requireAddress('SMPXNFT_ADDR', process.env.SMPXNFT_ADDR || '0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291')
+const ownerAddress = requireAddress('OWNER_ADDRESS', process.env.OWNER_ADDRESS || '0xDa064C4567fAD2c9Da7b6DD08b5C2B2607960340')
+// The guardian holds the restrictive, no-delay powers: setRegistrarAllowance (the
+// money kill switch), setPublicSalesOpen (the pause), addReservedNames, and it is
+// `withdraw`'s payee. It must differ from the admin owner — that separation is the
+// point. See docs/plans/names-v2-launch-to-freeze-plan.md.
+const guardianAddress = process.env.GUARDIAN_ADDRESS
+  ? requireAddress('GUARDIAN_ADDRESS', process.env.GUARDIAN_ADDRESS)
+  : undefined
+if (!guardianAddress || guardianAddress.toLowerCase() === ownerAddress.toLowerCase()) {
+  console.error(
+    'GUARDIAN_ADDRESS must be set and must differ from OWNER_ADDRESS.\n' +
+      '  `setBeneficiary` is owner-callable only while the beneficiary is unset, so a\n' +
+      '  guardian equal to the admin owner is burned in permanently at deploy time and\n' +
+      '  collapses the two-key split the admin model is built on.',
+  )
+  process.exit(1)
+}
 
 const bumpAfterMs = (parseFloat(process.env.BUMP_AFTER_HOURS) || (DEFAULTS.BUMP_AFTER_MS / 3600000)) * 3600 * 1000
 const bumpPct = BigInt(process.env.BUMP_PCT || DEFAULTS.BUMP_PCT)
@@ -119,24 +167,25 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
     'ethregistrar/BaseRegistrarImplementation.sol/BaseRegistrarImplementation.json',
     [ensRegistry.address, tldNode])
 
-  const reverseRegistrar = await deploy('ReverseRegistrar',
-    'reverseRegistrar/ReverseRegistrar.sol/ReverseRegistrar.json',
-    [ensRegistry.address])
-
-  // addr.reverse must be owned by a ReverseRegistrar so the verbatim PublicResolver's
-  // ReverseClaimer constructor succeeds. Reverse resolution is otherwise disabled:
-  // there is no DefaultReverseRegistrar and the controller gets address(0) for both
-  // reverse args, so this registrar is never wired to the controller.
-  await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash('reverse'), account.address])
-  await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
+  // No reverse registrar: SNRC maps names to SimpleX links in one direction and
+  // nothing resolves an address back to a name. PublicResolver no longer inherits
+  // ReverseClaimer, so nothing needs to own addr.reverse for the resolver to deploy.
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
 
-  const priceArray = tld === 'testing'
-    ? [0n, 0n, 0n, 0n, 0n]
-    : [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n]
-  const priceOracle = await deploy('ExponentialPremiumPriceOracle',
-    'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
-    [chainlinkEthUsd, priceArray, 100000000000000000000000000n, 21n])
+  // `.testing` is live on the vendored ExponentialPremiumPriceOracle with an
+  // all-zero curve (gas-only registration) and keeps it: swapping a deployed
+  // TLD's oracle is a separate change. `.simplex` gets SimplexPriceOracle,
+  // whose curve, feed and auction are all settable by call afterwards, so it
+  // never has to be redeployed to change what a name costs. Its rungs run down
+  // to one character, so lowering minCharLength never hands out free names.
+  const isTesting = tld === 'testing'
+  const priceOracle = isTesting
+    ? await deploy('ExponentialPremiumPriceOracle',
+        'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
+        [chainlinkEthUsd, [0n, 0n, 0n, 0n, 0n, 0n], 100000000000000000000000000n, 21n])
+    : await deploy('SimplexPriceOracle', SIMPLEX_PRICE_ORACLE_ARTIFACT,
+        [chainlinkEthUsd, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS,
+         SIMPLEX_START_PREMIUM, SIMPLEX_TOTAL_DAYS])
 
   const smpxNft = { address: smpxNftAddr }
 
@@ -151,8 +200,6 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
       priceOracle.address,
       60n,
       86400n,
-      zeroAddress, // reverse resolution disabled — no ReverseRegistrar wiring
-      zeroAddress, // no DefaultReverseRegistrar
       ensRegistry.address,
       {
         tldNode,
@@ -183,17 +230,22 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
     'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
     [ensRegistry.address, baseRegistrar.address])
 
-  const publicResolver = await deploy('PublicResolver',
-    'resolvers/PublicResolver.sol/PublicResolver.json',
-    // wrapper-free v3: the verbatim resolver's NameWrapper slot is repurposed for
-    // the SubnameRegistrar (the 2LD itself is never wrapped — its node is owned
-    // directly by the NFT holder via auto-reclaim).
-    [ensRegistry.address, subnameRegistrar.address, controller.address, reverseRegistrar.address])
+  // SimplexResolver = PublicResolver + signed record writes (setTextWithSig,
+  // clearRecordsWithSig), so a user with no ETH can have records relayed.
+  // wrapper-free v3: the NameWrapper slot is repurposed for the SubnameRegistrar
+  // (the 2LD itself is never wrapped — its node is owned directly by the NFT
+  // holder via auto-reclaim). trustedReverseRegistrar is address(0) and inert.
+  const publicResolver = await deploy('SimplexResolver',
+    'simplex/SimplexResolver.sol/SimplexResolver.json',
+    [ensRegistry.address, subnameRegistrar.address, controller.address, zeroAddress])
 
   // One-time wiring now that the resolver exists, while the deployer still owns
   // the registrar (before the ownership handover below).
   await write(subnameRegistrar, 'setResolver', [publicResolver.address])
   await write(baseRegistrar, 'setSubnameHook', [subnameRegistrar.address])
+  // registerReserved points a brand's name here, so it resolves without the brand
+  // ever holding ETH.
+  await write(controller, 'setDefaultResolver', [publicResolver.address])
 
   const dummyGateway = await deploy('DummyGatewayProvider',
     'mocks/DummyGatewayProvider.sol/DummyGatewayProvider.json')
@@ -222,10 +274,19 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   // and on-chain SVG/JSON render size. (security.md L4)
   await write(baseRegistrar, 'setMaxLabelLength', [63n])
 
+  // Set the beneficiary BEFORE handing ownership over. `setBeneficiary` is
+  // owner-callable only while it is unset and beneficiary-callable thereafter, so
+  // doing it here is what makes revenue and the registrar kill switch independent
+  // of the admin key from the first block. Skipping it leaves `withdraw` reverting.
+  await write(controller, 'setBeneficiary', [guardianAddress])
+
   if (ownerAddress.toLowerCase() !== account.address.toLowerCase()) {
     await write(baseRegistrar, 'transferOwnership', [ownerAddress])
-    await write(reverseRegistrar, 'transferOwnership', [ownerAddress])
-    await write(ensRegistry, 'setOwner', [namehash('reverse'), ownerAddress])
+    // SimplexPriceOracle carries its own Ownable2Step owner, separate from the
+    // controller's. Forgetting it would leave the whole price curve, the feed
+    // pointer and the auction on the deploy key, which is destroyed after the
+    // handover. The vendored oracle `.testing` runs has no owner at all.
+    if (!isTesting) await write(priceOracle, 'transferOwnership', [ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('eth-usd.data.eth'), ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('data.eth'), ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('eth'), ownerAddress])
@@ -236,7 +297,7 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   return {
     ENSRegistry: ensRegistry.address,
     BaseRegistrarImplementation: baseRegistrar.address,
-    ReverseRegistrar: reverseRegistrar.address,
+    ReverseRegistrar: zeroAddress,
     DefaultReverseRegistrar: zeroAddress,
     NameWrapper: zeroAddress, // wrapper-free v3
     MetadataRenderer: metadataRenderer.address,
@@ -247,7 +308,8 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
     // ETHRegistrarController proxy. Surfaced so Etherscan source
     // verification can target both impl + proxy.
     SimplexControllerImpl: controllerImpl.address,
-    ExponentialPremiumPriceOracle: priceOracle.address,
+    [isTesting ? 'ExponentialPremiumPriceOracle' : 'SimplexPriceOracle']:
+      priceOracle.address,
     // 3rd constructor arg of UniversalResolver — kept so verification
     // can reconstruct that contract's calldata.
     DummyGatewayProvider: dummyGateway.address,
@@ -269,6 +331,139 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   }
 }
 
+/// L29: the journal proves each transaction was mined, not that the stack is
+/// wired the way the script intended — a mis-ordered or silently-reverted step
+/// leaves a deployment that looks complete and is not. Read the important state
+/// back off-chain and fail loudly while the deploy key can still fix it.
+async function verifyWiring(publicClient, addresses) {
+  console.log(`\n--- Post-deploy read-back ---`)
+  const failures = []
+  const check = async (what, expected, read) => {
+    try {
+      const got = await read()
+      const ok = String(got).toLowerCase() === String(expected).toLowerCase()
+      console.log(`  ${ok ? '✓' : '✗'} ${what}: ${got}${ok ? '' : `  (expected ${expected})`}`)
+      if (!ok) failures.push(what)
+    } catch (e) {
+      console.log(`  ✗ ${what}: read failed — ${e.shortMessage || e.message}`)
+      failures.push(what)
+    }
+  }
+  const read = (address, sig, outputs, functionName, args = []) =>
+    publicClient.readContract({
+      address,
+      abi: [{ type: 'function', name: functionName, inputs: sig, outputs, stateMutability: 'view' }],
+      functionName,
+      args,
+    })
+  const ADDR = [{ type: 'address' }]
+  const registry = addresses.ENSRegistry
+  const controller = addresses.ETHRegistrarController
+  const registrar = addresses.BaseRegistrarImplementation
+
+  await check('registry owner of the TLD node is the base registrar', registrar,
+    () => read(registry, [{ type: 'bytes32' }], ADDR, 'owner', [namehash(tld)]))
+  await check('controller is a controller on the registrar', 'true',
+    () => read(registrar, ADDR, [{ type: 'bool' }], 'controllers', [controller]))
+  await check('registrar maxLabelLength', '63',
+    () => read(registrar, [], [{ type: 'uint256' }], 'maxLabelLength'))
+  await check('registrar subnameHook', addresses.SubnameRegistrar,
+    () => read(registrar, [], ADDR, 'subnameHook'))
+  await check('registrar metadataRenderer', addresses.MetadataRenderer,
+    () => read(registrar, [], ADDR, 'metadataRenderer'))
+  await check('controller defaultResolver', addresses.PublicResolver,
+    () => read(controller, [], ADDR, 'defaultResolver'))
+  await check('controller beneficiary is the guardian', guardianAddress,
+    () => read(controller, [], ADDR, 'beneficiary'))
+  await check('controller nftGateEnabled', String(nftGateEnabled),
+    () => read(controller, [], [{ type: 'bool' }], 'nftGateEnabled'))
+  await check('controller minCharLength', '6',
+    () => read(controller, [], [{ type: 'uint8' }], 'minCharLength'))
+  await check('controller is not frozen', 'false',
+    () => read(controller, [], [{ type: 'bool' }], 'frozen'))
+  await check('public sales are still closed', 'false',
+    () => read(controller, [], [{ type: 'bool' }], 'publicSalesOpen'))
+  await check('subname registrar resolver', addresses.PublicResolver,
+    () => read(addresses.SubnameRegistrar, [], ADDR, 'resolver'))
+  // A six-character name must quote the cheapest rung. `.testing` is priced at
+  // zero on purpose, so only a paid TLD can assert non-zero — for that one, zero
+  // means the oracle is misconfigured and every name would be free.
+  const expectPaid = tld !== 'testing'
+  try {
+    const p = await publicClient.readContract({
+      address: controller,
+      abi: [{ type: 'function', name: 'rentPrice', inputs: [{ type: 'string' }, { type: 'uint256' }],
+        outputs: [{ type: 'tuple', components: [{ name: 'base', type: 'uint256' }, { name: 'premium', type: 'uint256' }] }],
+        stateMutability: 'view' }],
+      functionName: 'rentPrice', args: ['abcdef', 31536000n],
+    })
+    const ok = !expectPaid || p.base > 0n
+    console.log(`  ${ok ? '✓' : '✗'} one-year price for a 6-char name: ${Number(p.base) / 1e18} ETH${expectPaid ? '' : '  (.testing is free by design)'}`)
+    if (!ok) failures.push('rentPrice is zero on a paid TLD')
+  } catch (e) {
+    console.log(`  ✗ rentPrice read failed — ${e.shortMessage || e.message}`)
+    failures.push('rentPrice')
+  }
+
+  // The curve itself, rung by rung, and the feed scale. `rentPrice` above only
+  // proves a 6-char name is not free; a curve off by a factor (per-second args
+  // pasted into a per-year contract, say) would sail past it.
+  if (addresses.SimplexPriceOracle) {
+    const oracle = addresses.SimplexPriceOracle
+    const U256 = [{ type: 'uint256' }]
+    await check('oracle feed scale matches the Chainlink feed decimals', String(10 ** USD_FEED_DECIMALS),
+      () => read(oracle, [], U256, 'usdOracleScale'))
+    await check('oracle base price per year', String(SIMPLEX_PRICE_BASE),
+      () => read(oracle, [], U256, 'basePriceUSDPerYear'))
+    for (const { maxLength, priceUSDPerYear } of SIMPLEX_PRICE_RUNGS) {
+      await check(`oracle price at ${maxLength} char(s)`, String(priceUSDPerYear),
+        () => read(oracle, U256, U256, 'priceUSDPerYear', [maxLength]))
+    }
+    // Ownable2Step: after the handover the deploy key still owns it and the cold
+    // owner is only pending, exactly as for the controller. If no handover ran
+    // (deployer is the cold owner) there is nothing pending.
+    const handedOver = ownerAddress.toLowerCase() !== account.address.toLowerCase()
+    await check(
+      handedOver
+        ? 'oracle pendingOwner is the cold owner (awaiting acceptOwnership)'
+        : 'oracle owner is the deployer (no handover configured)',
+      handedOver ? ownerAddress : account.address,
+      () => read(oracle, [], ADDR, handedOver ? 'pendingOwner' : 'owner'))
+  }
+
+  if (failures.length) {
+    console.error(`\n  ${failures.length} read-back check(s) FAILED: ${failures.join(', ')}`)
+    console.error(`  The deploy key still owns everything — fix the wiring before handing over.`)
+    process.exitCode = 1
+  } else {
+    console.log(`  all read-back checks passed`)
+  }
+}
+
+/// L33: the deploy reads compiled artifacts, never sources, so an edit made
+/// after the last compile would deploy the previous bytecode and the journal
+/// would record it as a success. Rather than guess freshness from mtimes —
+/// Hardhat caches on content, so a touched-but-unchanged file would block the
+/// run forever — just compile. It is idempotent, it is the only thing that
+/// actually guarantees the artifacts match the sources, and it fails the run on
+/// a branch that does not build at all.
+function assertBuildFresh() {
+  console.log('Compiling contracts (artifacts must match sources) …')
+  try {
+    execFileSync('npx', ['hardhat', 'compile'], {
+      cwd: ENS_CONTRACTS_DIR,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+    })
+  } catch (e) {
+    console.error('`npx hardhat compile` failed — refusing to deploy.\n')
+    console.error(e.stdout || '')
+    console.error(e.stderr || '')
+    process.exit(1)
+  }
+  console.log('  build is current')
+}
+
 // Track the spawned fork at module scope so cleanup handlers can reach it.
 let activeFork = null
 function cleanupFork() {
@@ -282,6 +477,23 @@ process.on('SIGTERM', () => { cleanupFork(); process.exit(143) })
 process.on('exit',    () => { cleanupFork() })
 
 async function main() {
+  // Cheap and first: a stale build must not cost a fork spawn, let alone a
+  // transaction.
+  assertBuildFresh()
+
+  // A populated addresses file with no journal beside it means a previous
+  // deployment completed and its journal was moved or lost. Overwriting it
+  // would erase the only record of what is live.
+  if (existsSync(addressesPath) && loadJournal(journalPath).length === 0) {
+    console.error(
+      `${addressesPath} already exists but ${journalPath} is empty or missing.\n` +
+        `  That pairing means a completed deployment whose journal is gone — this run would\n` +
+        `  overwrite the record of live addresses. Move the file aside deliberately if you\n` +
+        `  really are starting over.`,
+    )
+    process.exit(1)
+  }
+
   console.log(`SNRC mainnet deploy for .${tld} (chainId ${mainnet.id})`)
   console.log(`  Deployer:          ${account.address}`)
   console.log(`  Cold owner:        ${ownerAddress}`)
@@ -322,6 +534,31 @@ async function main() {
   const publicClient = createPublicClient({ chain: mainnet, transport })
   const walletClient = createWalletClient({ chain: mainnet, transport, account })
 
+  // MAINNET_RPC_URL pointing at a testnet would deploy the whole stack to the
+  // wrong chain and journal it as a success. viem only asserts the chain id on
+  // some paths, so assert it here, once, before any spend.
+  const liveChainId = await publicClient.getChainId()
+  if (liveChainId !== mainnet.id) {
+    console.error(`MAINNET_RPC_URL is chainId ${liveChainId}, expected ${mainnet.id}. Refusing to deploy.`)
+    process.exit(1)
+  }
+
+  // A dead or misconfigured feed makes every price quote revert
+  // (InvalidPriceFeed) and the payable path unusable from the first block.
+  // Cheaper to find out now than after the oracle is wired in.
+  try {
+    const answer = await publicClient.readContract({
+      address: chainlinkEthUsd,
+      abi: [{ type: 'function', name: 'latestAnswer', inputs: [], outputs: [{ type: 'int256' }], stateMutability: 'view' }],
+      functionName: 'latestAnswer',
+    })
+    if (answer <= 0n) throw new Error(`latestAnswer() = ${answer}`)
+    console.log(`  ETH/USD feed:      ${(Number(answer) / 1e8).toFixed(2)} USD  (live)`)
+  } catch (e) {
+    console.error(`ETH/USD feed ${chainlinkEthUsd} is not answering usably: ${e.shortMessage || e.message}`)
+    process.exit(1)
+  }
+
   await analyzeAndConfirm({
     publicClient, account,
     maxBaseFeeWei, dryRunTotals: dryTotals,
@@ -358,6 +595,19 @@ async function main() {
   })
   writeFileSync(verificationPath, JSON.stringify(verificationMeta, null, 2))
   console.log(`Wrote ${verificationPath}`)
+
+  await verifyWiring(publicClient, addresses)
+
+  console.log(`\n--- Handover still outstanding ---`)
+  console.log(`  Ownership was transferred with Ownable2Step, so the admin does NOT hold these`)
+  console.log(`  contracts until it accepts. From ${ownerAddress}, call:`)
+  for (const c of ['Root', 'BaseRegistrarImplementation', 'ETHRegistrarController', 'SimplexPriceOracle']) {
+    if (addresses[c] && addresses[c] !== zeroAddress) {
+      console.log(`    acceptOwnership()   on ${c}  ${addresses[c]}`)
+    }
+  }
+  console.log(`  Until then the deploy key ${account.address} still controls them — treat it as hot.`)
+  console.log(`  Guardian ${guardianAddress} is already the beneficiary and needs no acceptance.`)
 
   console.log(`\nCommit ${addressesPath} AND ${journalPath} AND ${verificationPath} to the repo.`)
   console.log(`See docs/deployment.md → Mainnet → Step 3.`)

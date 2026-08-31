@@ -7,7 +7,7 @@
     "deploy:local:simplex": "SIMPLEX_TLD=simplex node scripts/deploy-local.mjs"
   },
   "dependencies": {
-    "viem": "^2.33.0"
+    "viem": "2.51.2"
   },
   "devDependencies": {
     "@ensdomains/headless-web3-provider": "^1.0.8",

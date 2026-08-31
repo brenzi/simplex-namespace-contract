@@ -45,21 +45,29 @@ plain-language summary of how SNRC differs from ENS, see
   2LD NFT; it is also the PublicResolver's nameWrapper slot (subname auth via ownerOf).
 ```
 
-`ENSRegistry`, `ReverseRegistrar`, `Root`, `PublicResolver`, `StringUtils`,
-`StablePriceOracle`, `ExponentialPremiumPriceOracle`, `UniversalResolver`, and the
-price-oracle interfaces are vendored verbatim from ENS. `SimplexController` is custom
-(UUPS); `BaseRegistrarImplementation` is modified (v3 — ERC721Enumerable + `labelOf`
+`ENSRegistry`, `Root`, `PublicResolver`, `StringUtils`,
+`ExponentialPremiumPriceOracle`, `UniversalResolver`, and the price-oracle
+interfaces are vendored verbatim from ENS. `StablePriceOracle` is vendored but
+modified (SNRC added `price6Letter`, `priceUSD` and `InvalidPriceFeed`); it is what
+`.testing` runs, while `.simplex` uses the new `SimplexPriceOracle`.
+`SimplexController` is custom (UUPS); `BaseRegistrarImplementation` is modified (v3 — ERC721Enumerable + `labelOf`
 label index + `tokenURI`); `MetadataRenderer` (swappable) and `SubnameRegistrar`
 (immutable) are new SNRC contracts. **There is no NameWrapper** — only the
 `INameWrapper` interface is kept, because verbatim `PublicResolver` imports it
 (deployed with `nameWrapper = SubnameRegistrar`, so subname records authorise via
-`SubnameRegistrar.ownerOf`). See the per-file diff in the plan.
+`SubnameRegistrar.ownerOf`). **There is no reverse registrar either** — removed in
+names-v2: `.simplex` maps names to SimpleX links in one direction and nothing resolves an
+address back to a name, so `ReverseRegistrar` and `DefaultReverseRegistrar` are not
+deployed, `PublicResolver` no longer inherits `ReverseClaimer`, and a registration
+carrying a `reverseRecord` bit reverts `ReverseRecordNotSupported`. The controller's two
+former slots are reserved, not deleted, so it can be reintroduced without a layout
+migration. See the per-file diff in the plan.
 
 ## TLD strategy
 
 There is **one deployment per TLD**. Each is an independent ENS-shaped stack
 (`ENSRegistry → BaseRegistrar v3 → SimplexController + PublicResolver +
-MetadataRenderer + SubnameRegistrar + Root + ReverseRegistrar`). The TLDs:
+MetadataRenderer + SubnameRegistrar + Root`). The TLDs:
 
 | TLD        | NFT gate             | Min chars | Launch |
 |------------|----------------------|-----------|--------|
@@ -90,8 +98,10 @@ User → SimplexController.commit(hash)
        ├─ ens.setRecord(node, owner, resolver, 0)    ← unchanged (if resolver ≠ 0)
        ├─ resolver.multicallWithNodeCheck(...)        ← unchanged
        ├─ base.transferFrom(this, owner, labelhash)  ← unchanged
-       ├─ reverseRegistrar.setNameForAddr(...)        ← unchanged (if bit set)
        └─ refund excess ETH                            ← unchanged
+
+   (the reverse-record branch is gone — names-v2 removed reverse resolution, and
+    makeCommitment now rejects any non-zero reverseRecord up front)
 ```
 
 New vs ENS's `ETHRegistrarController.register`: the `_checkSimplexGates` line, and
@@ -153,21 +163,40 @@ reconstructible by re-creating subnames if it is ever redeployed.
 
 ## Pricing
 
-USD-denominated, paid in ETH via a Chainlink-style oracle. We reuse ENS's
-`StablePriceOracle` and `ExponentialPremiumPriceOracle` (Dutch auction for
-expired names) verbatim.
+USD-denominated, paid in ETH via a Chainlink-style oracle, with ENS's exponential
+Dutch auction on names that have lapsed.
 
-| Length | Annual price |
-|--------|-------------|
-| 6+     | $1          |
-| 5      | $8          |
-| 4      | $32         |
-| 3      | $128        |
+`.simplex` uses `SimplexPriceOracle` (SNRC), where the whole curve is configurable
+by call rather than fixed at construction. It holds a **base price per year** in
+attoUSD plus a sparse list of **rungs** `(maxLength, priceUSDPerYear)`: a rung at
+`K` means "names of at most `K` characters cost this". Every length between two
+rungs inherits the rung above it, and everything above the tallest rung pays the
+base price, so a curve needs only as many entries as it has price steps. The setter
+replaces base and rungs together and refuses a curve in which any length is cheaper
+than a longer one.
 
-For local dev, we use ENS's `DummyOracle` (fixed ETH/USD = $1). On mainnet we
-point the oracle at the live Chainlink ETH/USD feed. The table above is the
-`.simplex` production curve; the live `.testing` deployment uses an all-zero
-oracle, so registration there is **free**.
+| Length | Annual price | Source |
+|--------|-------------|--------|
+| 6+     | $10         | base price |
+| 5      | $100        | rung 5 |
+| 4      | $1,000      | rung 4 |
+| 3      | $10,000     | rung 3 |
+| 2      | $100,000    | rung 2 |
+| 1      | $1,000,000  | rung 1 |
+
+That is `setPrices(10e18, [(1, 1000000e18), (2, 100000e18), (3, 10000e18),
+(4, 1000e18), (5, 100e18)])`, which is what
+[`scripts/simplex-price-curve.mjs`](../scripts/simplex-price-curve.mjs) holds and
+all three deploy scripts read. The rungs run down to one character so that
+lowering `minCharLength` never hands out free names. A free TLD is
+`setPrices(0, [])`. The Chainlink feed (`setUsdOracle`) and the auction parameters
+(`setPremium`) are settable too, so the oracle never has to be redeployed to change
+what a name costs.
+
+`.testing` predates this and still runs the vendored `StablePriceOracle`, whose six
+prices are `immutable` and denominated per second; its curve is all zeros, so
+registration there is **free**. For local dev both use ENS's `DummyOracle` (fixed
+ETH/USD). On mainnet the oracle points at the live Chainlink ETH/USD feed.
 
 ## Admin authority
 
@@ -180,6 +209,19 @@ oracle, so registration there is **free**.
 | `addReservedNames(string[])`     | bulk; ~1000 names per tx                    |
 | `removeReservedNames(string[])`  | bulk; ~1000 names per tx                    |
 | `registerReserved(string,address,uint256)` | bypasses gates                    |
+| `setPriceOracle(IPriceOracleUSD)` | survives `freeze()`                        |
+
+`SimplexPriceOracle` has its own `Ownable2Step` owner, held by the same admin key
+and handed over separately:
+
+| Function                         | Bounds                                      |
+|----------------------------------|---------------------------------------------|
+| `setPrices(uint256,Rung[])`      | atomic; rejects a non-monotonic curve       |
+| `setUsdOracle(AggregatorInterface)` | rejects a zero address or a dead feed    |
+| `setPremium(uint256,uint256)`    | `totalDays = 0` disables the auction        |
+
+All three are strictly weaker than `setPriceOracle`, which can install an arbitrary
+oracle, so they add no authority the admin key did not already hold.
 
 The owner can renounce admin authority once the TLD is stable.
 

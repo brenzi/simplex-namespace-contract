@@ -42,7 +42,7 @@
  *     → prints stats + dry-run total + resume state + projected ceiling,
  *       prompts Y/N (or CONFIRM=yes).
  */
-import { encodeDeployData, encodeFunctionData, formatEther, formatGwei, http, createPublicClient, createWalletClient, parseGwei } from 'viem'
+import { encodeDeployData, encodeFunctionData, formatEther, formatGwei, http, createPublicClient, createWalletClient, parseGwei, keccak256, concatHex, toHex} from 'viem'
 import { mainnet } from 'viem/chains'
 import { appendFileSync, existsSync, readFileSync } from 'fs'
 import { spawn } from 'child_process'
@@ -54,6 +54,11 @@ const POLL_RECEIPT_INTERVAL_MS = 10_000  // poll inclusion every 10s
 const FORK_BOOT_TIMEOUT_MS = 90_000      // hardhat node has slow first boot
 const DEFAULT_BUMP_PCT = 20n
 const DEFAULT_BUMP_AFTER_HOURS = 24
+/// Depth a receipt must reach before the next dependent step is built on it.
+const DEFAULT_CONFIRMATIONS = 3
+/// How far the stall bump may compound above the configured cap before the run
+/// gives up. 4× is roughly seven 20% bumps, i.e. a week of sustained stalling.
+const DEFAULT_ABSOLUTE_CAP_MULTIPLE = 4n
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const fmtGwei = (wei) => Number(formatGwei(wei)).toFixed(4)
@@ -65,6 +70,31 @@ const nowIso = () => new Date().toISOString()
 export function loadJournal(path) {
   if (!existsSync(path)) return []
   return readFileSync(path, 'utf8').split('\n').filter(Boolean).map(JSON.parse)
+}
+
+/// Step keys name the operation, never its position. A positional counter
+/// silently remaps every later step when one is inserted or reordered, so a
+/// resumed run would skip the wrong call — or replay one. `occurrence` keeps
+/// repeated calls of the same function distinct, and the key is deliberately
+/// NOT derived from calldata: the preflight dry run executes on a fork, where
+/// every deployed address differs, and its steps must still line up with the
+/// live journal.
+export function makeStepKeys() {
+  const uses = new Map()
+  return (kind, label) => {
+    const base = `${kind}:${label}`
+    const n = (uses.get(base) || 0) + 1
+    uses.set(base, n)
+    return n === 1 ? base : `${base}#${n}`
+  }
+}
+
+/// Identifies the exact call a step made, so a resumed run can prove the
+/// journal entry it is about to skip is the step it is actually looking at.
+function callDigest(to, data, value = 0n) {
+  return keccak256(
+    concatHex([to || '0x', data, toHex(value, { size: 32 })]),
+  ).slice(0, 18)
 }
 
 function sumSpent(journal) {
@@ -150,10 +180,19 @@ export async function spawnHardhatFork({ mainnetRpcUrl, port = 8546, ensContract
   // `detached: true` puts the child in its own process group so we can
   // signal the whole tree (npx + node + hardhat) at once. Without it,
   // `proc.kill()` only signals npx, leaving hardhat running.
+  // The fork URL goes through the environment, not argv: `--fork <url>` puts
+  // the provider key in the child's command line, where any local user can read
+  // it out of `ps`. hardhat.config.ts's `mainnetFork` network reads
+  // MAINNET_RPC_URL for exactly this.
   const proc = spawn(
     'npx',
-    ['hardhat', 'node', '--fork', mainnetRpcUrl, '--port', String(port), '--hostname', '127.0.0.1'],
-    { cwd: ensContractsDir, stdio: ['ignore', 'pipe', 'pipe'], detached: true },
+    ['hardhat', 'node', '--network', 'mainnetFork', '--port', String(port), '--hostname', '127.0.0.1'],
+    {
+      cwd: ensContractsDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+      env: { ...process.env, MAINNET_RPC_URL: mainnetRpcUrl },
+    },
   )
   proc.on('error', (e) => console.error('hardhat node spawn error:', e))
   let stderr = ''
@@ -237,7 +276,7 @@ export function createDryRunRunner({ forkUrl, forkChainId, account, alreadyDone 
   const chain = { ...mainnet, id: forkChainId }
   const publicClient = createPublicClient({ chain, transport })
   const walletClient = createWalletClient({ chain, transport, account })
-  let stepCounter = 0
+  const nextKey = makeStepKeys()
   let totalGas = 0n
   const perStep = []
 
@@ -264,15 +303,10 @@ export function createDryRunRunner({ forkUrl, forkChainId, account, alreadyDone 
     return receipt
   }
 
-  function nextLabel() {
-    stepCounter += 1
-    return `step:${String(stepCounter).padStart(3, '0')}`
-  }
-
   return {
     totals: () => ({ totalGas, perStep }),
     deploy: async (name, abi, bytecode, args = []) => {
-      const step = nextLabel()
+      const step = nextKey('deploy', name)
       const data = encodeDeployData({ abi, bytecode, args })
       const receipt = await send(step, name, { to: null, data })
       // For skipped (alreadyDone) steps, the address comes from elsewhere
@@ -281,7 +315,7 @@ export function createDryRunRunner({ forkUrl, forkChainId, account, alreadyDone 
       return { address: receipt.contractAddress, abi }
     },
     write: async (contract, fn, args) => {
-      const step = nextLabel()
+      const step = nextKey('write', fn)
       const data = encodeFunctionData({ abi: contract.abi, functionName: fn, args })
       if (contract.address === null) {
         // Step is skipped on the fork because the prior deploy was skipped
@@ -301,26 +335,53 @@ export function createWaitForBaseRunner({
   publicClient, walletClient, account,
   maxBaseFeeWei, bumpAfterMs, bumpPct,
   journalPath, attemptsLogPath,
+  absoluteMaxBaseFeeWei, confirmations = DEFAULT_CONFIRMATIONS,
 }) {
+  // L25: the stall bump is unbounded on its own — 20% every 24h compounds past
+  // any budget if the chain simply stays expensive. The run stops rather than
+  // quietly paying whatever it takes.
+  const hardCap = absoluteMaxBaseFeeWei ?? maxBaseFeeWei * DEFAULT_ABSOLUTE_CAP_MULTIPLE
   const journal = loadJournal(journalPath)
   const completed = new Map(journal.map((e) => [e.step, e]))
   let spent = sumSpent(journal)
-  let stepCounter = 0
+  const nextKey = makeStepKeys()
 
-  function nextLabel() {
-    stepCounter += 1
-    return `step:${String(stepCounter).padStart(3, '0')}`
+  // Journals written before steps were named by operation cannot be resumed:
+  // their `step:007` says nothing about which call it was, so matching it to
+  // this run's steps would be guesswork about money already spent.
+  const positional = journal.filter((e) => /^step:\d+$/.test(e.step))
+  if (positional.length > 0) {
+    throw new Error(
+      `${journalPath} uses positional step keys (${positional.length} entr${positional.length === 1 ? 'y' : 'ies'}, e.g. ${positional[0].step}).\n` +
+        `  Those cannot be mapped onto named steps. This journal belongs to a completed deployment;\n` +
+        `  start a new one rather than resuming it.`,
+    )
   }
+
+  const priorAttempts = existsSync(attemptsLogPath)
+    ? readFileSync(attemptsLogPath, 'utf8').split('\n').filter(Boolean).map(JSON.parse)
+    : []
 
   function logAttempt(entry) {
     appendFileSync(attemptsLogPath, JSON.stringify(entry) + '\n')
   }
 
-  function recordSuccess(step, receipt) {
+  function recordSuccess(step, receipt, digest) {
+    // Inclusion is not success. A tx that reverts at inclusion still yields a
+    // receipt and still costs gas, and journalling it would mark the step done
+    // and skip it on every later resume.
+    if (receipt.status !== 'success') {
+      logAttempt({ ts: nowIso(), step, txHash: receipt.transactionHash,
+        outcome: 'reverted', gasUsed: receipt.gasUsed.toString() })
+      throw new Error(
+        `[${step}] tx ${receipt.transactionHash} was included but REVERTED — not journalled.\n` +
+          `  Investigate before rerunning; the gas is spent either way.`,
+      )
+    }
     const cost = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice)
     spent += cost
     const entry = {
-      ts: nowIso(), step,
+      ts: nowIso(), step, callDigest: digest,
       txHash: receipt.transactionHash,
       address: receipt.contractAddress || undefined,
       gasUsed: receipt.gasUsed.toString(),
@@ -354,20 +415,79 @@ export function createWaitForBaseRunner({
     }
   }
 
+  /// Every step here feeds the next — an address from a deploy, a permission
+  /// from a write — so a one-confirmation read that a reorg then unwinds would
+  /// have the rest of the run building on state that no longer exists.
+  async function awaitConfirmations(step, receipt) {
+    if (confirmations <= 1) return receipt
+    while (true) {
+      const head = await publicClient.getBlockNumber()
+      const depth = head - BigInt(receipt.blockNumber) + 1n
+      if (depth >= BigInt(confirmations)) return receipt
+      await sleep(POLL_RECEIPT_INTERVAL_MS)
+      // Re-read: a reorg can drop the tx entirely, in which case the caller
+      // must go back to waiting rather than journal it.
+      const again = await publicClient
+        .getTransactionReceipt({ hash: receipt.transactionHash })
+        .catch(() => null)
+      if (!again) {
+        logAttempt({ ts: nowIso(), step, txHash: receipt.transactionHash,
+          outcome: 'reorged-out' })
+        return null
+      }
+      receipt = again
+    }
+  }
+
   async function waitForInclusion(step, hash, deadline) {
     while (Date.now() < deadline) {
       await sleep(POLL_RECEIPT_INTERVAL_MS)
       const receipt = await publicClient.getTransactionReceipt({ hash }).catch(() => null)
-      if (receipt) return { status: 'mined', receipt }
+      if (receipt) {
+        const settled = await awaitConfirmations(step, receipt)
+        if (settled) return { status: 'mined', receipt: settled }
+        continue // reorged out — keep waiting on the same hash
+      }
     }
     return { status: 'stall', reason: `tx ${hash} not included within ${bumpAfterMs / 3600000}h` }
   }
 
   async function runStep(step, { to, data, value = 0n }) {
+    const digest = callDigest(to, data, value)
+
     if (completed.has(step)) {
       const e = completed.get(step)
+      // A resumed run rebuilds every prior address from the journal, so the
+      // call it is about to skip must hash to what was recorded. If it does
+      // not, the script changed under the journal and skipping would drop a
+      // step that never actually ran.
+      if (e.callDigest && e.callDigest !== digest) {
+        throw new Error(
+          `[${step}] journal mismatch: recorded ${e.callDigest}, this run would send ${digest}.\n` +
+            `  The deploy script changed since the journal was written. Resolve by hand — ` +
+            `do not delete the journal, it is the only record of what is already on chain.`,
+        )
+      }
+      if (!e.callDigest) {
+        console.warn(`  ! ${step}: journal entry predates call digests — skipping unverified`)
+      }
       console.log(`  ↻ ${step}: already in journal (${e.txHash}) — skipped`)
       return e
+    }
+
+    // Crash recovery. A step can be submitted and then wait up to
+    // BUMP_AFTER_HOURS for inclusion; a kill in that window leaves the tx on
+    // chain and nothing in the journal, so a naive resume would send it twice.
+    // The attempts log recorded every hash, so check them before spending.
+    for (const a of priorAttempts) {
+      if (a.step !== step || !a.txHash) continue
+      const r = await publicClient
+        .getTransactionReceipt({ hash: a.txHash })
+        .catch(() => null)
+      if (r) {
+        console.log(`  ⤿ ${step}: recovered ${a.txHash} from a previous run — not resending`)
+        return recordSuccess(step, r, digest)
+      }
     }
 
     // Real estimateGas once per step. A revert here = the tx would fail.
@@ -406,7 +526,7 @@ export function createWaitForBaseRunner({
         // If the tx was already mined under an earlier hash, collect it.
         for (const h of hashes) {
           const r = await publicClient.getTransactionReceipt({ hash: h }).catch(() => null)
-          if (r) return recordSuccess(step, r)
+          if (r) return recordSuccess(step, r, digest)
         }
         // "Nonce too low" means a prior tx (probably from a prior partial
         // run) already used this nonce — refresh and retry the same step.
@@ -429,16 +549,27 @@ export function createWaitForBaseRunner({
 
       const deadline = Date.now() + bumpAfterMs
       const result = await waitForInclusion(step, hash, deadline)
-      if (result.status === 'mined') return recordSuccess(step, result.receipt)
+      if (result.status === 'mined') return recordSuccess(step, result.receipt, digest)
 
       // Stall handling — bump cap and resubmit at the same nonce.
       // First check whether a prior hash mined while we were waiting.
       for (const h of hashes) {
         const r = await publicClient.getTransactionReceipt({ hash: h }).catch(() => null)
-        if (r) return recordSuccess(step, r)
+        if (r) return recordSuccess(step, r, digest)
       }
       bumps += 1
-      cap = (cap * (100n + bumpPct)) / 100n
+      const nextCap = (cap * (100n + bumpPct)) / 100n
+      if (nextCap > hardCap) {
+        logAttempt({ ts: nowIso(), step, txHash: hash, outcome: 'cap-exhausted',
+          cap: cap.toString(), wouldBe: nextCap.toString(), hardCap: hardCap.toString() })
+        throw new Error(
+          `[${step}] bumping past the absolute ceiling (${fmtGwei(nextCap)} > ${fmtGwei(hardCap)} gwei) — stopping.\n` +
+            `  tx ${hash} is still pending at ${fmtGwei(cap)} gwei and may yet be mined; do NOT\n` +
+            `  resend by hand. Wait, or raise ABSOLUTE_MAX_BASE_FEE_GWEI and resume — the journal\n` +
+            `  and attempts log will adopt it if it lands.`,
+        )
+      }
+      cap = nextCap
       logAttempt({ ts: nowIso(), step, txHash: hash, outcome: 'stalled',
         reason: result.reason, bumps, newCap: cap.toString() })
       console.warn(`  [${step}] stalled — bumping cap to ${fmtGwei(cap)} gwei (bump ${bumps})`)
@@ -449,23 +580,13 @@ export function createWaitForBaseRunner({
     completedSteps: () => completed,
     spent: () => spent,
     deploy: async (name, abi, bytecode, args = []) => {
-      const step = nextLabel()
-      if (completed.has(step)) {
-        const e = completed.get(step)
-        console.log(`  ↻ ${step} (${name}): already in journal → ${e.address}`)
-        return { address: e.address, abi }
-      }
+      const step = nextKey('deploy', name)
       const data = encodeDeployData({ abi, bytecode, args })
       const e = await runStep(step, { to: null, data })
       return { address: e.address, abi }
     },
     write: async (contract, fn, args) => {
-      const step = nextLabel()
-      if (completed.has(step)) {
-        const e = completed.get(step)
-        console.log(`  ↻ ${step} (${fn}): already in journal (${e.txHash})`)
-        return
-      }
+      const step = nextKey('write', fn)
       const data = encodeFunctionData({ abi: contract.abi, functionName: fn, args })
       await runStep(step, { to: contract.address, data })
     },
@@ -539,6 +660,8 @@ export async function analyzeAndConfirm({
 export const DEFAULTS = {
   BUMP_AFTER_MS: DEFAULT_BUMP_AFTER_HOURS * 60 * 60 * 1000,
   BUMP_PCT: DEFAULT_BUMP_PCT,
+  CONFIRMATIONS: DEFAULT_CONFIRMATIONS,
+  ABSOLUTE_CAP_MULTIPLE: DEFAULT_ABSOLUTE_CAP_MULTIPLE,
   POLL_BASE_INTERVAL_MS,
   POLL_RECEIPT_INTERVAL_MS,
 }

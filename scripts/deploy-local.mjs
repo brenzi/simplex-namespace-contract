@@ -11,6 +11,14 @@ import { localhost } from 'viem/chains'
 import { readFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import {
+  SIMPLEX_PRICE_BASE,
+  SIMPLEX_PRICE_RUNGS,
+  SIMPLEX_PRICE_ORACLE_ARTIFACT,
+  SIMPLEX_START_PREMIUM,
+  SIMPLEX_TOTAL_DAYS,
+  USD_FEED_DECIMALS,
+} from './simplex-price-curve.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ARTIFACTS = join(__dirname, '..', 'ens-contracts', 'artifacts', 'contracts')
@@ -65,16 +73,9 @@ async function main() {
     'ethregistrar/BaseRegistrarImplementation.sol/BaseRegistrarImplementation.json',
     [ensRegistry.address, tldNode])
 
-  const reverseRegistrar = await deploy('ReverseRegistrar',
-    'reverseRegistrar/ReverseRegistrar.sol/ReverseRegistrar.json',
-    [ensRegistry.address])
 
-  // addr.reverse must be owned by a ReverseRegistrar so the verbatim PublicResolver's
-  // ReverseClaimer constructor succeeds. Reverse resolution is otherwise disabled:
-  // there is no DefaultReverseRegistrar and the controller gets address(0) for both
-  // reverse args, so this registrar is never wired to the controller.
-  await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash('reverse'), account.address])
-  await write(ensRegistry, 'setSubnodeOwner', [namehash('reverse'), labelhash('addr'), reverseRegistrar.address])
+  // No reverse registrar and no addr.reverse node: PublicResolver no longer
+  // inherits ReverseClaimer, so nothing needs to own it for the resolver to deploy.
 
   // Set TLD owner to deployer (need to set resolver before transferring)
   await write(ensRegistry, 'setSubnodeOwner', [zeroHash, labelhash(tld), account.address])
@@ -83,14 +84,18 @@ async function main() {
     'ethregistrar/DummyOracle.sol/DummyOracle.json',
     [100000000n])
 
-  // .testing is free during the testing phase (gas-only). .simplex keeps the
-  // production curve: $1 / $8 / $32 / $128 per year for 6+ / 5 / 4 / 3 chars.
-  const priceArray = tld === 'testing'
-    ? [0n, 0n, 0n, 0n, 0n]
-    : [0n, 0n, 4056075240196n, 1014018810049n, 31688087814n]
-  const priceOracle = await deploy('ExponentialPremiumPriceOracle',
-    'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
-    [dummyOracle.address, priceArray, 100000000000000000000000000n, 21n])
+  // `.testing` is live on the vendored ExponentialPremiumPriceOracle with an
+  // all-zero curve (gas-only registration) and keeps it: swapping a deployed
+  // TLD's oracle is a separate change. `.simplex` gets SimplexPriceOracle,
+  // whose curve, feed and auction are all settable by call afterwards, so it
+  // never has to be redeployed to change what a name costs.
+  const priceOracle = tld === 'testing'
+    ? await deploy('ExponentialPremiumPriceOracle',
+        'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
+        [dummyOracle.address, [0n, 0n, 0n, 0n, 0n, 0n], 100000000000000000000000000n, 21n])
+    : await deploy('SimplexPriceOracle', SIMPLEX_PRICE_ORACLE_ARTIFACT,
+        [dummyOracle.address, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS,
+         SIMPLEX_START_PREMIUM, SIMPLEX_TOTAL_DAYS])
 
   const mockNft = await deploy('MockSMPXNFT',
     'mocks/MockSMPXNFT.sol/MockSMPXNFT.json')
@@ -111,8 +116,6 @@ async function main() {
       priceOracle.address,
       60n,
       86400n,
-      zeroAddress, // reverse resolution disabled — no ReverseRegistrar wiring
-      zeroAddress, // no DefaultReverseRegistrar
       ensRegistry.address,
       {
         tldNode,
@@ -140,16 +143,21 @@ async function main() {
     'simplex/SubnameRegistrar.sol/SubnameRegistrar.json',
     [ensRegistry.address, baseRegistrar.address])
 
-  // PublicResolver is verbatim ENS. SNRC is wrapper-free for 2LDs (their node is
-  // owned directly by the NFT holder via auto-reclaim), but the resolver's
-  // NameWrapper slot is repurposed for the SubnameRegistrar so subname records
-  // authorise against the live 2LD holder (subnameRegistrar.ownerOf).
-  const publicResolver = await deploy('PublicResolver',
-    'resolvers/PublicResolver.sol/PublicResolver.json',
-    [ensRegistry.address, subnameRegistrar.address, controller.address, reverseRegistrar.address])
+  // SimplexResolver = PublicResolver + signed record writes. SNRC is wrapper-free
+  // for 2LDs (their node is owned directly by the NFT holder via auto-reclaim),
+  // but the resolver's NameWrapper slot is repurposed for the SubnameRegistrar so
+  // subname records authorise against the live 2LD holder (subnameRegistrar.ownerOf).
+  // trustedReverseRegistrar is address(0) and inert: there is no reverse resolution.
+  const publicResolver = await deploy('SimplexResolver',
+    'simplex/SimplexResolver.sol/SimplexResolver.json',
+    [ensRegistry.address, subnameRegistrar.address, controller.address, zeroAddress])
 
   await write(subnameRegistrar, 'setResolver', [publicResolver.address])
   await write(baseRegistrar, 'setSubnameHook', [subnameRegistrar.address])
+  await write(controller, 'setDefaultResolver', [publicResolver.address])
+  // local dev: one key plays both roles, and sales are open so the payable path works
+  await write(controller, 'setBeneficiary', [account.address])
+  await write(controller, 'setPublicSalesOpen', [true])
 
   // Wire up
   await write(baseRegistrar, 'addController', [controller.address])
@@ -203,14 +211,15 @@ async function main() {
   const addresses = {
     ENSRegistry: ensRegistry.address,
     BaseRegistrarImplementation: baseRegistrar.address,
-    ReverseRegistrar: reverseRegistrar.address,
+    ReverseRegistrar: zeroAddress,
     DefaultReverseRegistrar: zeroAddress,
     NameWrapper: zeroAddress, // wrapper-free v3
     MetadataRenderer: metadataRenderer.address,
     SubnameRegistrar: subnameRegistrar.address,
     PublicResolver: publicResolver.address,
     ETHRegistrarController: controller.address,
-    ExponentialPremiumPriceOracle: priceOracle.address,
+    [tld === 'testing' ? 'ExponentialPremiumPriceOracle' : 'SimplexPriceOracle']:
+      priceOracle.address,
     DummyOracle: dummyOracle.address,
     MockSMPXNFT: mockNft.address,
     NameWrapperPublicResolver: publicResolver.address,
