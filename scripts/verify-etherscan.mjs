@@ -25,8 +25,9 @@
  * The verification file is either:
  *   (a) the legacy Sepolia format with flat `SimplexControllerImpl` /
  *       `SimplexControllerProxy` / `proxyInitData` fields + optional
- *       `PriceOracle` + `priceOracleConstructorArgs` → translated into
- *       TARGETS inline below, OR
+ *       `PriceOracle` + `priceOracleConstructorArgs` (+ `priceOracleContract`,
+ *       naming which oracle; absent means the vendored
+ *       ExponentialPremiumPriceOracle) → translated into TARGETS inline below, OR
  *   (b) the comprehensive format written by build-verification.mjs /
  *       deploy-mainnet.mjs with a `contracts` dict → consumed directly.
  *
@@ -96,16 +97,54 @@ if (meta.contracts) {
   ]
   if (meta.PriceOracle && meta.priceOracleConstructorArgs) {
     const a = meta.priceOracleConstructorArgs
-    const oracleConstructorArgs = encodeAbiParameters(
-      [{ type: 'address' }, { type: 'uint256[]' }, { type: 'uint256' }, { type: 'uint256' }],
-      [a.usdOracle, a.rentPrices.map((s) => BigInt(s)), BigInt(a.startPremium), BigInt(a.totalDays)],
+    // Which oracle is named explicitly by `priceOracleContract`; older files
+    // predate SimplexPriceOracle and only ever held the vendored one, so an
+    // absent field means ExponentialPremiumPriceOracle.
+    const isSimplexOracle = meta.priceOracleContract === 'SimplexPriceOracle'
+    TARGETS.push(
+      isSimplexOracle
+        ? {
+            label: 'SimplexPriceOracle',
+            address: meta.PriceOracle,
+            artifact: 'contracts/simplex/SimplexPriceOracle.sol/SimplexPriceOracle.json',
+            constructorArgs: encodeAbiParameters(
+              [
+                { type: 'address' },
+                { type: 'uint8' },
+                { type: 'uint256' },
+                {
+                  type: 'tuple[]',
+                  components: [
+                    { name: 'maxLength', type: 'uint256' },
+                    { name: 'priceUSDPerYear', type: 'uint256' },
+                  ],
+                },
+                { type: 'uint256' },
+                { type: 'uint256' },
+              ],
+              [
+                a.usdOracle,
+                Number(a.usdOracleDecimals),
+                BigInt(a.basePriceUSDPerYear),
+                a.rungs.map((r) => ({
+                  maxLength: BigInt(r.maxLength),
+                  priceUSDPerYear: BigInt(r.priceUSDPerYear),
+                })),
+                BigInt(a.startPremium),
+                BigInt(a.totalDays),
+              ],
+            ),
+          }
+        : {
+            label: 'ExponentialPremiumPriceOracle',
+            address: meta.PriceOracle,
+            artifact: 'contracts/ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
+            constructorArgs: encodeAbiParameters(
+              [{ type: 'address' }, { type: 'uint256[]' }, { type: 'uint256' }, { type: 'uint256' }],
+              [a.usdOracle, a.rentPrices.map((s) => BigInt(s)), BigInt(a.startPremium), BigInt(a.totalDays)],
+            ),
+          },
     )
-    TARGETS.push({
-      label: 'ExponentialPremiumPriceOracle',
-      address: meta.PriceOracle,
-      artifact: 'contracts/ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
-      constructorArgs: oracleConstructorArgs,
-    })
   }
 }
 

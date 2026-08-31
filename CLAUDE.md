@@ -56,7 +56,7 @@ Resolver: `SimplexResolver` — `PublicResolver` plus signed record writes (`set
 
 Subnames are on-chain via the `SubnameRegistrar`: registry subnodes **owned by the registrar and soulbound to the 2LD NFT** — a subname's effective owner is the current 2LD token holder, derived via `SubnameRegistrar.ownerOf` (which walks up the parent chain to the 2LD node), so transferring the NFT moves all its subnames instantly. Record authorisation routes through `PublicResolver`'s `nameWrapper` hook (the resolver is deployed with `nameWrapper = subnameRegistrar`); the 2LD node itself is owned directly by the NFT holder because `BaseRegistrar` **auto-reclaims** it to the new holder on transfer. On re-registration, `BaseRegistrar` calls `subnameRegistrar.onReregister` to bump a per-2LD generation that invalidates the previous owner's subnames (garbage-collected via permissionless `purge`); creating over a generation-dead subname is refused, so a revived label always starts with no records. Authority follows the *registration*, not the registry record it outlives: `BaseRegistrar` mirrors every expiry change via `onExpiryChanged`, and a lapsed 2LD loses its subtree. Deleting or purging a subname retires its records through `SimplexResolver.clearSubnameRecords` (registrar-only, and only for nodes the registrar owns), because the node hash is reused verbatim if the label is ever created again. Subnames are created + indexed on-chain so they enumerate without an indexer; depth (subnames of subnames) is supported in the contracts. 2LDs themselves are plain ERC-721 tokens on the `BaseRegistrar` and trade directly on any marketplace; their NFT metadata (JSON + SVG, with the domain name) is rendered fully on-chain by the `MetadataRenderer`. There is no NameWrapper and no ERC-1155 wrapping.
 
-Payment is ETH (same as ENS). Pricing: $10/year (6+ chars), $100 (5), $1000 (4), $10000 (3). The oracle is ENS's plus a sixth length bucket and `priceUSD` — see names-v2.
+Payment is ETH (same as ENS). Pricing: $10/year (6+ chars), $100 (5), $1000 (4), $10000 (3). `.simplex` uses `SimplexPriceOracle` (SNRC): a base price per year plus a sparse list of `(maxLength, priceUSDPerYear)` rungs, all replaceable by an owner call, with the ETH/USD feed and the Dutch-auction parameters settable too. `.testing` still runs ENS's `StablePriceOracle` plus a sixth length bucket and `priceUSD` — see names-v2.
 
 ## Key references
 
@@ -98,6 +98,7 @@ Two keys. **Admin** (a timelock behind a multisig) holds the rare and permissive
 - `disableNftGate()` — one-way (true→false) — *admin*
 - `setMinCharLength(uint8)` — monotonic decrease only (6→5→4→3) — *admin*
 - `removeReservedNames` / `registerReserved` / `setDefaultResolver` / `setPriceOracle` / `recoverFunds` — *admin*
+- `SimplexPriceOracle.setPrices` / `setUsdOracle` / `setPremium` — *admin*, on the oracle's own `Ownable2Step` owner. All three are strictly weaker than `setPriceOracle`, which can install an arbitrary oracle
 - `addReservedNames` — *admin **or** guardian*: a scheduled reservation would tell a squatter which name is valuable and for how long
 - `setPublicSalesOpen(bool)` — *admin **or** guardian*: gates the payable path only; the credited, reserved and renew paths are exempt
 - `setRegistrarAllowance` / `setBeneficiary` — **guardian only**; `withdraw()` is permissionless and pays `beneficiary` (there is no `setTreasury`)
@@ -142,7 +143,7 @@ Each TLD is an independent deployment. Only `SimplexController` is behind a prox
 2. ENSRegistry
 3. Root → transfer registry root → assign TLD ownership → lock
 4. BaseRegistrarImplementation v3 (own the TLD node)
-5. Price oracle (DummyOracle local / Chainlink mainnet) + ExponentialPremiumPriceOracle
+5. Price oracle (DummyOracle local / Chainlink mainnet) + SimplexPriceOracle for `.simplex` (ExponentialPremiumPriceOracle on the legacy `.testing` stack); transfer its `Ownable2Step` ownership to the admin key separately from the controller's
 6. SimplexController = impl + ERC1967 proxy (NFT gate on for .testing, off for .simplex); add as controller on the base registrar
 7. SubnameRegistrar(registry, baseRegistrar)
 8. SimplexResolver (`nameWrapper = SubnameRegistrar`, `trustedETHController = controller`, `trustedReverseRegistrar = address(0)`) → `subnameRegistrar.setResolver(resolver)` → `controller.setDefaultResolver(resolver)`

@@ -35,8 +35,15 @@ assigned separately.
 **Registration rules are SNRC's own.** A name must be 6+ characters (loosened
 over time) and some names are reserved. For `.testing`, registration was
 initially limited to holders of a specific "SMPXNFT" access NFT — that gate has
-since been lifted. Pricing is cheap and USD-denominated ($1/year for 6+ chars,
-more for short names); `.testing` is free.
+since been lifted. Pricing is USD-denominated ($10/year for 6+ chars, ten times
+more for each character shorter); `.testing` is free.
+
+**Prices can be changed without a new contract.** ENS bakes its price list into
+the oracle at deployment, so every price change means deploying a replacement.
+SNRC's `SimplexPriceOracle` keeps the list in storage: a base yearly price plus a
+short list of "names this long or shorter cost this much" steps, both replaceable
+by one owner call. The contract refuses any change that would make a shorter name
+cheaper than a longer one.
 
 **Almost nothing can change after launch.** Only one contract — the registration
 controller — is upgradeable, and that power is meant to move to a cold owner and

@@ -65,7 +65,9 @@ addresses file); its current implementation is `0x281ca41311c2aa808c917c4674639d
 2. `node scripts/deploy-local.mjs` — deploys the wrapper-free stack for the TLD
    selected by `SIMPLEX_TLD` (default `testing`):
    - `ENSRegistry`, `BaseRegistrarImplementation` (v3)
-   - `DummyOracle` (fixed ETH/USD = $1) + `ExponentialPremiumPriceOracle`
+   - `DummyOracle` (fixed ETH/USD = $1) + the price oracle
+     (`SimplexPriceOracle` for `.simplex`, `ExponentialPremiumPriceOracle` for
+     `.testing`)
    - `MockSMPXNFT`, with token #0 minted to the deployer (the NFT gate is on
      for `.testing`, off for `.simplex`)
    - `SimplexController` + ERC-1967 proxy (deployed **before** `PublicResolver`
@@ -164,7 +166,8 @@ Pass `CONFIRM=yes` to skip the prompt. The dry run is read-only against mainnet
 ### What the deploy does
 
 1. Deploys the full wrapper-free stack: `ENSRegistry`, `BaseRegistrarImplementation`
-   (v3), `ExponentialPremiumPriceOracle`,
+   (v3), the price oracle (`SimplexPriceOracle` for `.simplex`,
+   `ExponentialPremiumPriceOracle` for `.testing`),
    `SimplexController` + UUPS proxy, `SubnameRegistrar`, `PublicResolver`,
    `MetadataRenderer`, `UniversalResolver`.
 2. Wires the controller into the `BaseRegistrar`, pre-loads the reserved labels
@@ -253,27 +256,59 @@ once to reconstruct the file first.
 
 ### Changing prices
 
-`SimplexController.setPriceOracle(IPriceOracleUSD)` (owner-only) swaps the active
-oracle without a controller redeploy — useful for `.simplex`, or to move
-`.testing` off its all-zero (free) curve. Deploy a fresh
-`ExponentialPremiumPriceOracle` pointed at the mainnet Chainlink feed
-(`0x5f4eC3Df…`) with the desired `PRICES` — **six** attoUSD/sec rates for label
-lengths 1/2/3/4/5/6+ — then submit `SimplexController.setPriceOracle(<new
-oracle>)`. The `.simplex` curve is $10/yr at six characters and above, ten times
-more for each character lost:
+On `.simplex` this is a plain owner call. `SimplexPriceOracle.setPrices(base,
+rungs)` replaces the whole curve atomically, with no deployment and no
+`setPriceOracle`. `base` is attoUSD per year for every length above the tallest
+rung; each rung is `(maxLength, priceUSDPerYear)` and covers every length up to
+`maxLength`, so lengths between two rungs need no entry of their own:
 
-| length | per year | attoUSD/sec |
+| length | per year | rung |
 |---|---|---|
-| 6+ | $10 | 317097919837 |
-| 5 | $100 | 3170979198370 |
-| 4 | $1,000 | 31709791983700 |
-| 3 | $10,000 | 317097919837000 |
-| 2 | $100,000 | 3170979198370000 |
-| 1 | $1,000,000 | 31709791983700000 |
+| 6+ | $10 | base price |
+| 5 | $100 | `(5, 100e18)` |
+| 4 | $1,000 | `(4, 1000e18)` |
+| 3 | $10,000 | `(3, 10000e18)` |
+| 2 | $100,000 | `(2, 100000e18)` |
+| 1 | $1,000,000 | `(1, 1000000e18)` |
 
-A **five**-entry array is still accepted and keeps the old behaviour, where
-`price5Letter` applies to every name of five characters or more — so 5 and 6+ are
-priced alike. Pass six entries to split them.
+That is `setPrices(10e18, [(1, 1000000e18), (2, 100000e18), (3, 10000e18),
+(4, 1000e18), (5, 100e18)])`. Rungs go in ascending length order with
+non-increasing prices, each `maxLength` in 1..64, and the base must not exceed the
+lowest rung; the setter reverts otherwise, so no length can ever be cheaper than a
+longer one. A free TLD is `setPrices(0, [])`. `setUsdOracle` moves the Chainlink
+feed. The oracle has its own `Ownable2Step` owner, handed over separately from the
+controller's.
+
+`setPremium(startPremium, totalDays)` retunes the Dutch auction on lapsed names.
+It takes the starting premium in attoUSD and the number of days it takes to decay
+to nothing, so $1,024 over 10 days is `setPremium(1024e18, 10)`, giving
+`endValue = 1024e18 >> 10 = 1e18`. The premium is charged on top of the rent from
+the moment the name becomes registrable (its expiry plus the registrar's 90-day
+grace period) and halves every day, with `endValue` subtracted throughout so the
+curve lands exactly on zero at `totalDays` rather than stepping off a cliff:
+
+| days past grace | premium |
+|---|---|
+| 0 | $1,023 |
+| 1 | $511 |
+| 2 | $255 |
+| 5 | $31 |
+| 9 | $1 |
+| 10 and after | $0 |
+
+ENS's mainnet auction is `setPremium(100000000e18, 21)`, which is what `.testing`
+inherited. `setPremium(x, 0)` makes `endValue` equal `startPremium`, zeroing the
+premium at every elapsed time, and is how the auction is switched off.
+
+`.testing` predates this and runs the vendored `StablePriceOracle`, whose prices
+are `immutable`. Changing them there means deploying a fresh oracle pointed at the
+mainnet Chainlink feed (`0x5f4eC3Df…`) with the desired `PRICES` — **six**
+attoUSD/sec rates for label lengths 1/2/3/4/5/6+ — and submitting
+`SimplexController.setPriceOracle(<new oracle>)`. A **five**-entry array is still
+accepted and keeps the old behaviour, where `price5Letter` applies to every name of
+five characters or more, so 5 and 6+ are priced alike; pass six entries to split
+them. Deploying a `SimplexPriceOracle` as the replacement is the better move, since
+every later change is then a call.
 
 The oracle must implement `IPriceOracleUSD`, i.e. `priceUSD()` alongside
 `price()`. `price()` converts to wei through the Chainlink feed for the payable

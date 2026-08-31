@@ -11,6 +11,14 @@ import { localhost } from 'viem/chains'
 import { readFileSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import {
+  SIMPLEX_PRICE_BASE,
+  SIMPLEX_PRICE_RUNGS,
+  SIMPLEX_PRICE_ORACLE_ARTIFACT,
+  SIMPLEX_START_PREMIUM,
+  SIMPLEX_TOTAL_DAYS,
+  USD_FEED_DECIMALS,
+} from './simplex-price-curve.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ARTIFACTS = join(__dirname, '..', 'ens-contracts', 'artifacts', 'contracts')
@@ -76,24 +84,18 @@ async function main() {
     'ethregistrar/DummyOracle.sol/DummyOracle.json',
     [100000000n])
 
-  // .testing is free during the testing phase (gas-only). .simplex keeps the
-  // production curve: $1 / $8 / $32 / $128 per year for 6+ / 5 / 4 / 3 chars.
-  // attoUSD per second by label length [1, 2, 3, 4, 5, 6+]. Six entries, not five:
-  // a five-entry array makes price5Letter apply to everything 5 chars and up, so
-  // 5 and 6+ could not be priced apart.
-  const priceArray = tld === 'testing'
-    ? [0n, 0n, 0n, 0n, 0n, 0n]
-    : [
-        31709791983700000n, // 1 char    $1,000,000 / yr
-        3170979198370000n,  // 2 chars     $100,000 / yr
-        317097919837000n,   // 3 chars      $10,000 / yr
-        31709791983700n,    // 4 chars       $1,000 / yr
-        3170979198370n,     // 5 chars         $100 / yr
-        317097919837n,      // 6+ chars         $10 / yr
-      ]
-  const priceOracle = await deploy('ExponentialPremiumPriceOracle',
-    'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
-    [dummyOracle.address, priceArray, 100000000000000000000000000n, 21n])
+  // `.testing` is live on the vendored ExponentialPremiumPriceOracle with an
+  // all-zero curve (gas-only registration) and keeps it: swapping a deployed
+  // TLD's oracle is a separate change. `.simplex` gets SimplexPriceOracle,
+  // whose curve, feed and auction are all settable by call afterwards, so it
+  // never has to be redeployed to change what a name costs.
+  const priceOracle = tld === 'testing'
+    ? await deploy('ExponentialPremiumPriceOracle',
+        'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
+        [dummyOracle.address, [0n, 0n, 0n, 0n, 0n, 0n], 100000000000000000000000000n, 21n])
+    : await deploy('SimplexPriceOracle', SIMPLEX_PRICE_ORACLE_ARTIFACT,
+        [dummyOracle.address, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS,
+         SIMPLEX_START_PREMIUM, SIMPLEX_TOTAL_DAYS])
 
   const mockNft = await deploy('MockSMPXNFT',
     'mocks/MockSMPXNFT.sol/MockSMPXNFT.json')
@@ -216,7 +218,8 @@ async function main() {
     SubnameRegistrar: subnameRegistrar.address,
     PublicResolver: publicResolver.address,
     ETHRegistrarController: controller.address,
-    ExponentialPremiumPriceOracle: priceOracle.address,
+    [tld === 'testing' ? 'ExponentialPremiumPriceOracle' : 'SimplexPriceOracle']:
+      priceOracle.address,
     DummyOracle: dummyOracle.address,
     MockSMPXNFT: mockNft.address,
     NameWrapperPublicResolver: publicResolver.address,

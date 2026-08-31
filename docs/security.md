@@ -57,7 +57,9 @@ Subname labels are capped the same way: `SubnameRegistrar.MAX_LABEL_LENGTH = 63`
 `SimplexController` is `Ownable2StepUpgradeable`. The deploy script calls
 `transferOwnership(coldOwner)`, which only sets `pendingOwner`; the cold owner
 must then call `acceptOwnership()`. Until it does, the **ephemeral deployer key**
-still owns the controller — including `_authorizeUpgrade` (UUPS), `setPriceOracle`,
+still owns the controller — including `_authorizeUpgrade` (UUPS), `setPriceOracle`
+(and, on `.simplex`, the price oracle's own `setPrices` / `setUsdOracle` /
+`setPremium`, which have a second, separate `Ownable2Step` handover),
 `disableNftGate`, `setMinCharLength`, `setDefaultResolver`, `registerReserved`,
 `addReservedNames` / `removeReservedNames`, `setPublicSalesOpen` and `freeze()`.
 (The registrar is 1-step `Ownable` and transfers immediately; only the controller
