@@ -1,79 +1,64 @@
 # `.simplex`: launch to freeze
 
-Who controls the contracts, from deployment until the powers are given up. Milestones are
-labelled GOV1 to GOV9 and dated in `launch-names-v2.gan`. The contract changes themselves
-are in [`names-v2-contracts.md`](./names-v2-contracts.md).
+Who controls the contracts, from deployment until the powers are given up.
 
 ## 1. Table of contents
 
 1. Table of contents
-2. Four terms used throughout
+2. Timeline
 3. The keys
-4. Timeline
-5. Powers, before and after the freeze
-6. What no key can ever do
-7. Why it is built this way
-8. The fallback: snapshot and redeploy
-9. Appendix A: transition recipes
+4. Powers, before and after the freeze
+5. What no key can ever do
+6. Why it is built this way
+7. The fallback: snapshot and redeploy
+8. Appendix A: transition recipes
 
-## 2. Four terms used throughout
+## 2. Timeline
 
-**Handover** (GOV2): the deploy key gives every contract away and stops being used.
-
-**Hardening** (GOV8): each single hardware wallet is replaced by a multi-signature Safe, and
-admin actions start taking seven days instead of taking effect at once.
-
-**The freeze** (GOV9): two calls that give powers up for good. `Root.lock` ends the ability
-to replace the deployment. `controller.freeze()` ends the ability to upgrade the controller's
-code.
-
-**Snapshot and redeploy**: the way out if something goes badly wrong before the freeze.
-Deploy fresh contracts, re-create every name on them, point clients at the new addresses.
-The freeze ends this option.
-
-## 3. The keys
-
-Four keys. Two are hardware wallets held by two different people, and that split is what the
-rest of this document turns on.
-
-**Deploy key.** One hot wallet, a plain EOA. It owns everything from GOV1 to GOV5, then is
-destroyed.
-
-**Admin key.** One hardware wallet. From GOV2 it owns `Root`, `BaseRegistrarImplementation`,
-`SimplexController` and `SimplexPriceOracle`. Its calls take effect the moment they are
-signed. The price oracle is a separate contract with its own owner, so it is handed over
-separately. It holds the price curve, the ETH/USD feed pointer and the expired-name auction;
-the controller holds none of those.
-
-**Guardian key.** A second hardware wallet, held by a different person in a different place.
-It is the controller's `beneficiary`, so it receives the revenue and holds the powers that
-stop things quickly. Its calls are also immediate.
-
-**Registrar hot wallet.** Owns nothing. It lives in KMS, run by the names service. It pays
-gas, spends the allowance the guardian gives it, and relays users' signed requests.
-
-Two devices, not one. On one device a single theft could upgrade the controller and take the
-treasury; splitting them costs one extra device and one extra person. The timelock, the
-Safes and the multi-signer rotation are deferred to GOV8, not abandoned.
-
-## 4. Timeline
+Four keys act in this plan: the deploy key, the admin key, the guardian key and the registrar
+hot wallet.
 
 | Milestone | Change |
 |---|---|
 | GOV1 | The deploy key deploys `.simplex` and reserves the roughly 3000 names chosen in advance. Public sales closed. |
-| GOV2 | Handover: `setBeneficiary` first, then four ownership transfers, all on one day. |
+| GOV2 | Handover: `setBeneficiary` first, then four ownership transfers, all on one day. The deploy key stops being used. |
 | GOV3 | The guardian gives the registrar hot wallet its spending allowance. First real use of the new keys. |
 | GOV4 | Contracts, registrar, app and codes all live. |
 | GOV5 | The handover is verified and the deploy key is destroyed. |
 | GOV6 | The investor window opens. Hard deadline for the handover, because names now start belonging to third parties. |
 | GOV7 | Public sales open. |
-| GOV8 | Hardening. No fixed date. |
-| GOV9 | The freeze. No fixed date, and never before GOV8. |
+| GOV8 | Hardening: the hardware wallets are replaced by multi-signature Safes, and admin actions start taking seven days instead of taking effect at once. No fixed date. |
+| GOV9 | The freeze: `Root.lock` ends the ability to replace the deployment, and `controller.freeze()` ends the ability to upgrade the controller's code. No fixed date, and never before GOV8. |
 
 GOV1 to GOV7 are dated and binding. GOV8 and GOV9 are not: both wait until the namespace is
 big enough to be worth the work they cost.
 
-## 5. Powers, before and after the freeze
+## 3. The keys
+
+**Deploy key.** A hot wallet, a plain EOA. It owns everything from GOV1 to GOV5, then is
+destroyed.
+
+**Admin key.** A hardware wallet. From GOV2 it owns `Root`, `BaseRegistrarImplementation`,
+`SimplexController` and `SimplexPriceOracle`. Its calls take effect the moment they are
+signed. The price oracle is a separate contract with its own owner, so it is handed over
+separately. It holds the price curve, the ETH/USD feed pointer and the expired-name auction;
+the controller holds none of those.
+
+**Guardian key.** A hardware wallet, separate from the admin key. It is the controller's
+`beneficiary`, so it receives the revenue and holds the powers that stop things quickly. Its
+calls are also immediate.
+
+**Registrar hot wallet.** Owns nothing. It lives in KMS, run by the names service. It pays
+gas, spends the allowance the guardian gives it, and relays users' signed requests.
+
+The admin key and the guardian key are two authorisation tiers, ranked by how much damage a
+compromised key can do. The admin tier can replace the controller's code, and new code can do
+anything the contracts allow, so its reach has no bound. The guardian tier is bounded: halt
+sales, cut a registrar's allowance, redirect revenue, and nothing else. They are separate
+keys so that one compromise does not hand over both tiers. The timelock, the Safes and the
+multi-signer rotation are deferred to GOV8, not abandoned.
+
+## 4. Powers, before and after the freeze
 
 | Key | GOV2 until GOV9 | After GOV9 |
 |---|---|---|
@@ -103,7 +88,7 @@ These powers outlive GOV9 because losing them would be worse than keeping them.
 `setMetadataRenderer` updates NFT artwork, since the renderer is immutable and is replaced
 rather than edited.
 
-## 6. What no key can ever do
+## 5. What no key can ever do
 
 No key can take, transfer or re-point a name somebody owns. `_register` requires
 `available(id)`, false until 90 days past expiry, and that check lives in the immutable
@@ -121,17 +106,17 @@ its remaining term plus 90 days of grace, and renewal is permissionless througho
 can renew anyone's name at the old price as soon as the change is noticed. That is months of
 visible behaviour rather than seven days of notice. GOV8 buys the notice back.
 
-## 7. Why it is built this way
+## 6. Why it is built this way
 
 **Two keys, split by direction.** The guardian stops things: reserve a name, pause sales, cut
 a registrar's allowance to zero. The admin changes things: release reserved names, hand names
 to brands, fund registrars, open sales.
 
 Neither key waits for a delay yet, so the split can look like a formality. It is not. It
-keeps the revenue off the upgrade key, so a stolen admin device cannot also take the
-treasury. Upgrading the controller and moving the money then need two devices held by two
-people. And it puts the emergency stops on the key that is not used for routine work, which
-is the one more likely to be sitting in a drawer.
+keeps the revenue off the upgrade key, so a stolen admin key cannot also take the
+treasury. Upgrading the controller and moving the money then need two separate keys. And it
+puts the emergency stops on the key that is not used for routine work, which is the one more
+likely to be sitting in a drawer.
 
 The same split decides which powers get a delay at GOV8. The guardian's stay immediate,
 because the harm they answer grows with every block: a compromised registrar mints junk names
@@ -143,18 +128,19 @@ nobody loses a name while the repair sits in the queue. Fixing that feed is now 
 `priceOracle.setUsdOracle` instead of a redeploy, which shortens the outage but does not
 change which key it belongs to.
 
-**Two hardware wallets now, Safes and a timelock later.** Only the date changed. Safes and a
+**Hardware wallets now, Safes and a timelock later.** Only the date changed. Safes and a
 timelock cost coordination every week, and until the namespace has enough names and enough
 turnover that cost is real while the benefit is theoretical. The first months therefore run
-on two devices, with snapshot and redeploy as the way out. That fallback only works while the
-namespace is small, which is the same condition, so the arrangement ends itself.
+on plain hardware wallets, with snapshot and redeploy as the way out: fresh contracts, every
+name re-created on them, clients pointed at the new addresses. That fallback only works while
+the namespace is small, which is the same condition, so the arrangement ends itself.
 
 Four things are worse in the meantime:
 
-- **No warning period.** As section 6 describes, an admin action takes effect when signed and
+- **No warning period.** As section 5 describes, an admin action takes effect when signed and
   there is no scheduled transaction for the guardian to cancel.
-- **One device per role.** Lose the admin device and its powers are gone; steal it and they
-  are taken. No other key recovers either case.
+- **No signing threshold.** Lose the admin key and its powers are gone; steal it and they are
+  taken. No other key recovers either case.
 - **Rotation is one-shot and unchecked.** `BaseRegistrar` and `Root` use OpenZeppelin's
   single-step `Ownable` and are both immutable, so moving them to a new device is a
   `transferOwnership` the recipient never has to accept. OpenZeppelin rejects the zero
@@ -192,9 +178,9 @@ operationally, since brand reservation, `registerReserved` and everything else k
 It does keep the upgrade power alive, and that is the one power in the system with no bound
 on it.
 
-## 8. The fallback: snapshot and redeploy
+## 7. The fallback: snapshot and redeploy
 
-This is what makes two hardware wallets acceptable, so be precise about what it can and
+This is what makes plain hardware wallets acceptable, so be precise about what it can and
 cannot save.
 
 **Why it is possible.** `Root.lock` is deliberately not called at GOV1. While the `.simplex`
@@ -231,7 +217,7 @@ names is already several hundred million gas, and step 4's exposure grows with t
 volume. The point where redeploy stops being credible is the point where Safes and a timelock
 become worth their weight. GOV8 is due when redeploy stops being believable, not on a date.
 
-## 9. Appendix A: transition recipes
+## 8. Appendix A: transition recipes
 
 Every on-chain call, in order, with who signs it.
 
@@ -286,7 +272,7 @@ false and the registrar has no credits, so nothing can be registered before GOV6
 removes a task that could slip, and makes the reserved set part of the deployment's
 acceptance check.
 
-Before GOV1, both hardware wallets must be initialised, their addresses recorded, and **each
+Before GOV1, the hardware wallets must be initialised, their addresses recorded, and **each
 must have executed one rehearsal transaction on mainnet** from the device itself. Two of the
 handover transfers take effect with nobody having to accept them, so an address nobody can
 sign for is unrecoverable. The rehearsal proves the device, not the address.
@@ -346,7 +332,7 @@ Caller: **guardian key**. `controller.setPublicSalesOpen(true)`.
 
 ### A5. Hardening (GOV8)
 
-Moves both roles from single devices to Safes, and puts a timelock in front of the admin.
+Moves both tiers onto Safes, and puts a timelock in front of the admin.
 
 | # | Caller | Call |
 |---|---|---|
@@ -368,13 +354,13 @@ Verify: `owner()` is the timelock on all four contracts; `beneficiary()` is the 
 Safe; the old devices revert on every admin and guardian call; a scheduled no-op executes
 after 7 days, and the guardian Safe can cancel one.
 
-Retire the two devices only after that. Any later signer rotation follows the same pattern,
-except that it is then a Safe transaction rather than a contract call.
+Retire the old hardware wallets only after that. Any later signer rotation follows the same
+pattern, except that it is then a Safe transaction rather than a contract call.
 
 ### A6. Routine operations
 
-Before GOV8 the callers are the two devices and nothing waits. After GOV8, read the form in
-brackets.
+Before GOV8 the callers are the hardware wallets and nothing waits. After GOV8, read the form
+in brackets.
 
 | Action | Caller | Call |
 |---|---|---|
@@ -394,8 +380,8 @@ brackets.
 
 All four conditions must hold before anything is scheduled:
 
-- GOV8 is complete. Freezing while a single device is still the admin key would make the code
-  permanent and the weakest custody permanent with it.
+- GOV8 is complete. Freezing before then would make the code permanent and the weakest
+  custody permanent with it.
 - No open bug or unexplained behaviour against the controller implementation.
 - The full sponsored journey has run in production since GOV7 with no defect that needed an
   upgrade to fix.
