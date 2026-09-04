@@ -174,8 +174,11 @@ async function main() {
 
   // Genesis reserved-names list — these labels cannot be registered by the public.
   // Extend as needed before deploying to testnet / mainnet. Bulk in one tx.
+  // SimplexController.Reason — the on-chain enum. Append-only once names are
+  // reserved, so these integers are fixed by the contract, not by this script.
+  const REASON_INTERNAL = 5
   const reservedAtDeploy = ['simplex', 'simplex-chat']
-  await write(controller, 'addReservedNames', [reservedAtDeploy])
+  await write(controller, 'addReservedNames', [reservedAtDeploy, REASON_INTERNAL])
   for (const label of reservedAtDeploy) {
     console.log(`Reserved: ${label}.${tld}`)
   }

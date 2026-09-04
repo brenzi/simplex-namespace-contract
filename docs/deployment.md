@@ -332,12 +332,23 @@ key. `setPriceOracle` deliberately survives `freeze()`.
   registration gate. Once called, the dApp's gate UI clears automatically (it
   reads `nftGateEnabled` on-chain).
 - `setMinCharLength(uint8)` — monotonic decrease only (6 → 5 → 4 → 3).
-- `addReservedNames(string[])` — owner **or beneficiary**, so a name under threat
-  can be reserved immediately rather than at the timelock's pace. Bulk; about 25k
-  gas per name, so batch ~300 per transaction (gas *estimators* run roughly 3×
-  over actual on this loop, so the submitted limit looks far larger than the gas
-  really burned). `removeReservedNames(string[])` is owner-only — releasing a
-  reserved name is the direction that should be visible before it lands.
+- `addReservedNames(string[],Reason)` — owner **or beneficiary**, so a name under
+  threat can be reserved immediately rather than at the timelock's pace. Bulk, one
+  reason for the batch; about 25k gas per name, so batch ~300 per transaction (gas
+  *estimators* run roughly 3× over actual on this loop, so the submitted limit
+  looks far larger than the gas really burned). `Reason.None` (0) is rejected — it
+  is the value meaning *not reserved*, so passing it would silently unreserve.
+  `removeReservedNames(string[])` is owner-only — releasing a reserved name is the
+  direction that should be visible before it lands.
+- `setReservationReason(string[],Reason)` — owner **or beneficiary**; reclassifies
+  names that are already reserved. Use this rather than removing and re-adding,
+  which would leave the name registrable for the gap between the two transactions.
+  Reverts for a name that is not reserved: it is not a second way to reserve.
+- `Reason` is an on-chain enum — `None(0)`, `Unspecified(1)`, `Trademark(2)`,
+  `PublicInterest(3)`, `Offensive(4)`, `Internal(5)`, `Premium(6)`. The wording a
+  user sees is client-side, so new phrasing needs no upgrade. The integers are
+  **append-only** once names are reserved against them: reordering silently
+  relabels every existing reservation and nothing on chain can detect it.
 - `registerReserved(string,address,uint256)` — owner-only; bypasses the gates and
   the commit/reveal. Sets `defaultResolver` on the node and transfers the token,
   so a brand's name resolves immediately without the brand ever holding ETH.

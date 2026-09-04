@@ -220,8 +220,11 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
 
   await write(baseRegistrar, 'addController', [controller.address])
 
+  // SimplexController.Reason — the on-chain enum. Append-only once names are
+  // reserved, so these integers are fixed by the contract, not by this script.
+  const REASON_INTERNAL = 5
   const reservedAtDeploy = ['simplex', 'simplex-chat']
-  await write(controller, 'addReservedNames', [reservedAtDeploy])
+  await write(controller, 'addReservedNames', [reservedAtDeploy, REASON_INTERNAL])
 
   // SubnameRegistrar owns + resolves subnames, soulbound to the 2LD NFT. It is
   // deployed before the resolver because the resolver's nameWrapper slot points
