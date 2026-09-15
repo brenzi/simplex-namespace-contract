@@ -115,23 +115,19 @@ if (meta.contracts) {
                 {
                   type: 'tuple[]',
                   components: [
-                    { name: 'maxLength', type: 'uint256' },
-                    { name: 'priceUSDPerYear', type: 'uint256' },
+                    { name: 'labelLength', type: 'uint256' },
+                    { name: 'priceCentsPerYear', type: 'uint256' },
                   ],
                 },
-                { type: 'uint256' },
-                { type: 'uint256' },
               ],
               [
                 a.usdOracle,
                 Number(a.usdOracleDecimals),
-                BigInt(a.basePriceUSDPerYear),
-                a.rungs.map((r) => ({
-                  maxLength: BigInt(r.maxLength),
-                  priceUSDPerYear: BigInt(r.priceUSDPerYear),
+                BigInt(a.basePriceCentsPerYear),
+                a.prices.map((r) => ({
+                  labelLength: BigInt(r.labelLength),
+                  priceCentsPerYear: BigInt(r.priceCentsPerYear),
                 })),
-                BigInt(a.startPremium),
-                BigInt(a.totalDays),
               ],
             ),
           }

@@ -505,6 +505,9 @@ Accepted, and new to this ledger:
   renewals out of reach and take names as they lapse. It is the slowest and
   loudest attack available — public for the timelock delay, then each name's
   remaining term plus 90 days of grace, with renewal permissionless throughout.
+- **V4 — `SimplexPriceOracle` does not check feed staleness.** It reads
+  `latestAnswer()` and ignores `updatedAt`, so a frozen but positive feed keeps
+  quoting its last price. The recovery is the oracle owner's `setUsdOracle`.
 
 ### Closed, not a finding
 

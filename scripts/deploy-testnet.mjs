@@ -25,8 +25,6 @@ import {
   SIMPLEX_PRICE_BASE,
   SIMPLEX_PRICE_RUNGS,
   SIMPLEX_PRICE_ORACLE_ARTIFACT,
-  SIMPLEX_START_PREMIUM,
-  SIMPLEX_TOTAL_DAYS,
   USD_FEED_DECIMALS,
 } from './simplex-price-curve.mjs'
 
@@ -118,7 +116,7 @@ async function main() {
   // `.testing` is live on the vendored ExponentialPremiumPriceOracle with an
   // all-zero curve (gas-only registration) and keeps it: swapping a deployed
   // TLD's oracle is a separate change. `.simplex` gets SimplexPriceOracle,
-  // whose curve, feed and auction are all settable by call afterwards, so it
+  // whose curve and feed are both settable by call afterwards, so it
   // never has to be redeployed to change what a name costs.
   const isTesting = tld === 'testing'
   const priceOracle = isTesting
@@ -126,8 +124,7 @@ async function main() {
         'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
         [chainlinkEthUsd, [0n, 0n, 0n, 0n, 0n, 0n], 100000000000000000000000000n, 21n])
     : await deploy('SimplexPriceOracle', SIMPLEX_PRICE_ORACLE_ARTIFACT,
-        [chainlinkEthUsd, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS,
-         SIMPLEX_START_PREMIUM, SIMPLEX_TOTAL_DAYS])
+        [chainlinkEthUsd, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS])
 
   // Sepolia has no SMPXNFT, so deploy a MockSMPXNFT for the testing-phase gate.
   // Token #0 goes straight to the cold owner so the deployer never holds an
@@ -173,7 +170,7 @@ async function main() {
 
   // SimplexController.Reason — the on-chain enum. Append-only once names are
   // reserved, so these integers are fixed by the contract, not by this script.
-  const REASON_INTERNAL = 5
+  const REASON_INTERNAL = 1
   const reservedAtDeploy = ['simplex', 'simplex-chat']
   await write(controller, 'addReservedNames', [reservedAtDeploy, REASON_INTERNAL])
   for (const label of reservedAtDeploy) {
@@ -268,8 +265,8 @@ async function main() {
 
     // SimplexController uses Ownable2Step — this sets pendingOwner but
     // does NOT transfer admin until the cold owner accepts. SimplexPriceOracle
-    // is a second, separate Ownable2Step handover: it owns the price curve, the
-    // feed pointer and the auction, none of which the controller owns.
+    // is a second, separate Ownable2Step handover: it owns the price curve and
+    // the feed pointer, neither of which the controller owns.
     await write(controller, 'transferOwnership', [ownerAddress])
     console.log(`\n  SimplexController pendingOwner -> ${ownerAddress}`)
     if (!isTesting) {
@@ -351,13 +348,11 @@ async function main() {
       : {
           usdOracle: chainlinkEthUsd,
           usdOracleDecimals: String(USD_FEED_DECIMALS),
-          basePriceUSDPerYear: String(SIMPLEX_PRICE_BASE),
-          rungs: SIMPLEX_PRICE_RUNGS.map(({ maxLength, priceUSDPerYear }) => ({
-            maxLength: String(maxLength),
-            priceUSDPerYear: String(priceUSDPerYear),
+          basePriceCentsPerYear: String(SIMPLEX_PRICE_BASE),
+          prices: SIMPLEX_PRICE_RUNGS.map(({ labelLength, priceCentsPerYear }) => ({
+            labelLength: String(labelLength),
+            priceCentsPerYear: String(priceCentsPerYear),
           })),
-          startPremium: String(SIMPLEX_START_PREMIUM),
-          totalDays: String(SIMPLEX_TOTAL_DAYS),
         },
   }, null, 2))
   console.log(`Verification metadata saved to ${verificationPath}`)

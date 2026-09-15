@@ -45,8 +45,6 @@ import { fileURLToPath } from 'url'
 import {
   SIMPLEX_PRICE_BASE,
   SIMPLEX_PRICE_RUNGS,
-  SIMPLEX_START_PREMIUM,
-  SIMPLEX_TOTAL_DAYS,
   USD_FEED_DECIMALS,
 } from './simplex-price-curve.mjs'
 
@@ -84,7 +82,7 @@ export function assembleVerification({
     functionName: 'initialize',
     args: [
       addresses.BaseRegistrarImplementation,
-      addresses.ExponentialPremiumPriceOracle,
+      addresses.ExponentialPremiumPriceOracle ?? addresses.SimplexPriceOracle,
       minCommitmentAge,
       maxCommitmentAge,
       addresses.ENSRegistry,
@@ -148,20 +146,16 @@ export function assembleVerification({
                 {
                   type: 'tuple[]',
                   components: [
-                    { name: 'maxLength', type: 'uint256' },
-                    { name: 'priceUSDPerYear', type: 'uint256' },
+                    { name: 'labelLength', type: 'uint256' },
+                    { name: 'priceCentsPerYear', type: 'uint256' },
                   ],
                 },
-                { type: 'uint256' },
-                { type: 'uint256' },
               ],
               [
                 chainlinkEthUsd,
                 USD_FEED_DECIMALS,
                 SIMPLEX_PRICE_BASE,
                 SIMPLEX_PRICE_RUNGS,
-                SIMPLEX_START_PREMIUM,
-                SIMPLEX_TOTAL_DAYS,
               ],
             ),
           },

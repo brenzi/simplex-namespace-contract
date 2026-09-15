@@ -1,6 +1,6 @@
 // Exercises the resume logic changed for M5/M6 with stub clients: no chain.
 import { writeFileSync, rmSync, readFileSync, existsSync } from 'fs'
-import { createWaitForBaseRunner, makeStepKeys, DEFAULTS } from '/work/simplex-namespace-contract/scripts/gas-tools.mjs'
+import { createWaitForBaseRunner, makeStepKeys, DEFAULTS } from './gas-tools.mjs'
 
 const J = '/tmp/j.jsonl', A = '/tmp/a.jsonl'
 const clean = () => [J, A].forEach((f) => existsSync(f) && rmSync(f))

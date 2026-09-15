@@ -85,21 +85,14 @@ async function main() {
   // `.testing` is live on the vendored ExponentialPremiumPriceOracle with an
   // all-zero curve (gas-only registration) and keeps it: swapping a deployed
   // TLD's oracle is a separate change. `.simplex` gets SimplexPriceOracle,
-  // whose curve, feed and auction are all settable by call afterwards, so it
+  // whose curve and feed are both settable by call afterwards, so it
   // never has to be redeployed to change what a name costs.
-  // SimplexPriceOracle takes cents per year and an exact-length exception list;
-  // the shared curve is in attoUSD per year with maxLength rungs, so convert.
-  const cents = (attoUsd) => attoUsd / 10n ** 16n
   const priceOracle = tld === 'testing'
     ? await deploy('ExponentialPremiumPriceOracle',
         'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
         [dummyOracle.address, [0n, 0n, 0n, 0n, 0n, 0n], 100000000000000000000000000n, 21n])
     : await deploy('SimplexPriceOracle', SIMPLEX_PRICE_ORACLE_ARTIFACT,
-        [dummyOracle.address, USD_FEED_DECIMALS, cents(SIMPLEX_PRICE_BASE),
-         SIMPLEX_PRICE_RUNGS.map(({ maxLength, priceUSDPerYear }) => ({
-           labelLength: maxLength,
-           priceCentsPerYear: cents(priceUSDPerYear),
-         }))])
+        [dummyOracle.address, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS])
 
   const mockNft = await deploy('MockSMPXNFT',
     'mocks/MockSMPXNFT.sol/MockSMPXNFT.json')

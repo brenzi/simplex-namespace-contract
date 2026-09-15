@@ -31,6 +31,7 @@
  *   OWNER_ADDRESS      cold owner (default: simplexchat.eth)
  *   BUMP_AFTER_HOURS   stall threshold before cap bump (default: 24)
  *   BUMP_PCT           cap multiplier on stall (default: 20)
+ *   ABSOLUTE_MAX_BASE_FEE_GWEI  ceiling the bumps stop at (default: 4× MAX_BASE_FEE_GWEI)
  *   FORK_PORT          local port for the dry-run fork (default: 18545 — picked
  *                      to avoid Reth/Geth's stock 8545/8546 ports)
  *   CONFIRM=yes        skip the interactive confirmation prompt
@@ -59,8 +60,6 @@ import {
   SIMPLEX_PRICE_BASE,
   SIMPLEX_PRICE_RUNGS,
   SIMPLEX_PRICE_ORACLE_ARTIFACT,
-  SIMPLEX_START_PREMIUM,
-  SIMPLEX_TOTAL_DAYS,
   USD_FEED_DECIMALS,
 } from './simplex-price-curve.mjs'
 
@@ -133,6 +132,9 @@ if (!maxBaseFeeGwei) {
   process.exit(1)
 }
 const maxBaseFeeWei = parseGwei(maxBaseFeeGwei)
+const absoluteMaxBaseFeeWei = process.env.ABSOLUTE_MAX_BASE_FEE_GWEI
+  ? parseGwei(process.env.ABSOLUTE_MAX_BASE_FEE_GWEI)
+  : undefined
 
 const account = privateKeyToAccount(deployerKey)
 const addressesPath = join(REPO_ROOT, `deployments.mainnet.${tld}.json`)
@@ -175,7 +177,7 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   // `.testing` is live on the vendored ExponentialPremiumPriceOracle with an
   // all-zero curve (gas-only registration) and keeps it: swapping a deployed
   // TLD's oracle is a separate change. `.simplex` gets SimplexPriceOracle,
-  // whose curve, feed and auction are all settable by call afterwards, so it
+  // whose curve and feed are both settable by call afterwards, so it
   // never has to be redeployed to change what a name costs. Its rungs run down
   // to one character, so lowering minCharLength never hands out free names.
   const isTesting = tld === 'testing'
@@ -184,8 +186,7 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
         'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
         [chainlinkEthUsd, [0n, 0n, 0n, 0n, 0n, 0n], 100000000000000000000000000n, 21n])
     : await deploy('SimplexPriceOracle', SIMPLEX_PRICE_ORACLE_ARTIFACT,
-        [chainlinkEthUsd, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS,
-         SIMPLEX_START_PREMIUM, SIMPLEX_TOTAL_DAYS])
+        [chainlinkEthUsd, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS])
 
   const smpxNft = { address: smpxNftAddr }
 
@@ -222,7 +223,7 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
 
   // SimplexController.Reason — the on-chain enum. Append-only once names are
   // reserved, so these integers are fixed by the contract, not by this script.
-  const REASON_INTERNAL = 5
+  const REASON_INTERNAL = 1
   const reservedAtDeploy = ['simplex', 'simplex-chat']
   await write(controller, 'addReservedNames', [reservedAtDeploy, REASON_INTERNAL])
 
@@ -286,9 +287,9 @@ async function runDeploySequence({ deploy: deployRaw, write }) {
   if (ownerAddress.toLowerCase() !== account.address.toLowerCase()) {
     await write(baseRegistrar, 'transferOwnership', [ownerAddress])
     // SimplexPriceOracle carries its own Ownable2Step owner, separate from the
-    // controller's. Forgetting it would leave the whole price curve, the feed
-    // pointer and the auction on the deploy key, which is destroyed after the
-    // handover. The vendored oracle `.testing` runs has no owner at all.
+    // controller's. Forgetting it would leave the whole price curve and the feed
+    // pointer on the deploy key, which is destroyed after the handover. The
+    // vendored oracle `.testing` runs has no owner at all.
     if (!isTesting) await write(priceOracle, 'transferOwnership', [ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('eth-usd.data.eth'), ownerAddress])
     await write(ensRegistry, 'setOwner', [namehash('data.eth'), ownerAddress])
@@ -398,10 +399,10 @@ async function verifyWiring(publicClient, addresses) {
       abi: [{ type: 'function', name: 'rentPrice', inputs: [{ type: 'string' }, { type: 'uint256' }],
         outputs: [{ type: 'tuple', components: [{ name: 'base', type: 'uint256' }, { name: 'premium', type: 'uint256' }] }],
         stateMutability: 'view' }],
-      functionName: 'rentPrice', args: ['abcdef', 31536000n],
+      functionName: 'rentPrice', args: ['abcdef', 63072000n],
     })
     const ok = !expectPaid || p.base > 0n
-    console.log(`  ${ok ? '✓' : '✗'} one-year price for a 6-char name: ${Number(p.base) / 1e18} ETH${expectPaid ? '' : '  (.testing is free by design)'}`)
+    console.log(`  ${ok ? '✓' : '✗'} two-year price for a 6-char name: ${Number(p.base) / 1e18} ETH${expectPaid ? '' : '  (.testing is free by design)'}`)
     if (!ok) failures.push('rentPrice is zero on a paid TLD')
   } catch (e) {
     console.log(`  ✗ rentPrice read failed — ${e.shortMessage || e.message}`)
@@ -417,10 +418,10 @@ async function verifyWiring(publicClient, addresses) {
     await check('oracle feed scale matches the Chainlink feed decimals', String(10 ** USD_FEED_DECIMALS),
       () => read(oracle, [], U256, 'usdOracleScale'))
     await check('oracle base price per year', String(SIMPLEX_PRICE_BASE),
-      () => read(oracle, [], U256, 'basePriceUSDPerYear'))
-    for (const { maxLength, priceUSDPerYear } of SIMPLEX_PRICE_RUNGS) {
-      await check(`oracle price at ${maxLength} char(s)`, String(priceUSDPerYear),
-        () => read(oracle, U256, U256, 'priceUSDPerYear', [maxLength]))
+      () => read(oracle, [], U256, 'basePriceCentsPerYear'))
+    for (const { labelLength, priceCentsPerYear } of SIMPLEX_PRICE_RUNGS) {
+      await check(`oracle price at ${labelLength} char(s)`, String(priceCentsPerYear),
+        () => read(oracle, U256, U256, 'priceCentsPerYear', [labelLength]))
     }
     // Ownable2Step: after the handover the deploy key still owns it and the cold
     // owner is only pending, exactly as for the controller. If no handover ran
@@ -575,7 +576,7 @@ async function main() {
   const real = createWaitForBaseRunner({
     publicClient, walletClient, account,
     maxBaseFeeWei, bumpAfterMs, bumpPct,
-    journalPath, attemptsLogPath,
+    journalPath, attemptsLogPath, absoluteMaxBaseFeeWei,
   })
 
   const addresses = await runDeploySequence({
@@ -604,7 +605,7 @@ async function main() {
   console.log(`\n--- Handover still outstanding ---`)
   console.log(`  Ownership was transferred with Ownable2Step, so the admin does NOT hold these`)
   console.log(`  contracts until it accepts. From ${ownerAddress}, call:`)
-  for (const c of ['Root', 'BaseRegistrarImplementation', 'ETHRegistrarController', 'SimplexPriceOracle']) {
+  for (const c of ['Root', 'ETHRegistrarController', 'SimplexPriceOracle']) {
     if (addresses[c] && addresses[c] !== zeroAddress) {
       console.log(`    acceptOwnership()   on ${c}  ${addresses[c]}`)
     }
