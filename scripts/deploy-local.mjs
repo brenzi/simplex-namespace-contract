@@ -15,8 +15,6 @@ import {
   SIMPLEX_PRICE_BASE,
   SIMPLEX_PRICE_RUNGS,
   SIMPLEX_PRICE_ORACLE_ARTIFACT,
-  SIMPLEX_START_PREMIUM,
-  SIMPLEX_TOTAL_DAYS,
   USD_FEED_DECIMALS,
 } from './simplex-price-curve.mjs'
 
@@ -89,13 +87,19 @@ async function main() {
   // TLD's oracle is a separate change. `.simplex` gets SimplexPriceOracle,
   // whose curve, feed and auction are all settable by call afterwards, so it
   // never has to be redeployed to change what a name costs.
+  // SimplexPriceOracle takes cents per year and an exact-length exception list;
+  // the shared curve is in attoUSD per year with maxLength rungs, so convert.
+  const cents = (attoUsd) => attoUsd / 10n ** 16n
   const priceOracle = tld === 'testing'
     ? await deploy('ExponentialPremiumPriceOracle',
         'ethregistrar/ExponentialPremiumPriceOracle.sol/ExponentialPremiumPriceOracle.json',
         [dummyOracle.address, [0n, 0n, 0n, 0n, 0n, 0n], 100000000000000000000000000n, 21n])
     : await deploy('SimplexPriceOracle', SIMPLEX_PRICE_ORACLE_ARTIFACT,
-        [dummyOracle.address, USD_FEED_DECIMALS, SIMPLEX_PRICE_BASE, SIMPLEX_PRICE_RUNGS,
-         SIMPLEX_START_PREMIUM, SIMPLEX_TOTAL_DAYS])
+        [dummyOracle.address, USD_FEED_DECIMALS, cents(SIMPLEX_PRICE_BASE),
+         SIMPLEX_PRICE_RUNGS.map(({ maxLength, priceUSDPerYear }) => ({
+           labelLength: maxLength,
+           priceCentsPerYear: cents(priceUSDPerYear),
+         }))])
 
   const mockNft = await deploy('MockSMPXNFT',
     'mocks/MockSMPXNFT.sol/MockSMPXNFT.json')
@@ -176,7 +180,7 @@ async function main() {
   // Extend as needed before deploying to testnet / mainnet. Bulk in one tx.
   // SimplexController.Reason — the on-chain enum. Append-only once names are
   // reserved, so these integers are fixed by the contract, not by this script.
-  const REASON_INTERNAL = 5
+  const REASON_INTERNAL = 1
   const reservedAtDeploy = ['simplex', 'simplex-chat']
   await write(controller, 'addReservedNames', [reservedAtDeploy, REASON_INTERNAL])
   for (const label of reservedAtDeploy) {
