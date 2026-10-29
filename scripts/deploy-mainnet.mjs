@@ -40,8 +40,9 @@
  *   CONFIRM=yes        skip the interactive confirmation prompt
  *
  * Reads reserved-names.${tld}.csv (name,reason,category), required for .simplex.
- * Reads community-terms.${tld}.md (the terms text, which goes on chain, hashed to termsHash)
- * and community-names.${tld}.csv (name,community), both optional; names require terms.
+ * Reads terms.${tld}.json ({ "generalTerms": link, "communityTerms": link }), required,
+ * each link checked by terms-check.mjs before any transaction,
+ * and community-names.${tld}.csv (name,community), optional.
  *
  * Files written next to the addresses file:
  *   deployments.mainnet.${tld}.json            ← final addresses (on success)
@@ -70,6 +71,7 @@ import {
   SIMPLEX_PRICE_ORACLE_ARTIFACT,
   USD_FEED_DECIMALS,
 } from './simplex-price-curve.mjs'
+import { checkTermsLink } from './terms-check.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(__dirname, '..')
@@ -144,12 +146,8 @@ const RESERVE_BATCH = 200
 const ALLOWED_LABEL_REGEX = /^(?!.{2}--)[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
 const reservedNamesPath = join(REPO_ROOT, `reserved-names.${tld}.csv`)
 const reservedByReason = loadReservedNames(reservedNamesPath)
-const communityTerms = loadCommunityTerms(join(REPO_ROOT, `community-terms.${tld}.md`))
+const terms = loadTerms(join(REPO_ROOT, `terms.${tld}.json`))
 const communityNames = loadCommunityNames(join(REPO_ROOT, `community-names.${tld}.csv`))
-if (communityNames.length && !communityTerms) {
-  console.error(`community-terms.${tld}.md is missing: a listed name cannot be registered while no terms are set`)
-  process.exit(1)
-}
 
 /// RFC 4180: a quoted field may hold commas, line breaks and doubled quotes.
 function parseCsv(text) {
@@ -207,10 +205,14 @@ function loadReservedNames(path) {
   return byReason
 }
 
-function loadCommunityTerms(path) {
-  if (!existsSync(path)) return undefined
-  const text = readFileSync(path, 'utf8')
-  return { hash: keccak256(toBytes(text)), text }
+function loadTerms(path) {
+  const { generalTerms, communityTerms } = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}
+  if (!generalTerms || !communityTerms) {
+    console.error(`${path} must hold "generalTerms" and "communityTerms": every registration accepts terms`)
+    process.exit(1)
+  }
+  const withHash = (link) => ({ link, hash: keccak256(toBytes(link)) })
+  return { generalTerms: withHash(generalTerms), communityTerms: withHash(communityTerms) }
 }
 
 /// `name,community` rows. Only the name goes on chain.
@@ -397,7 +399,8 @@ async function runDeploySequence({ deploy: deployRaw, write, adminAccepted }) {
     [controller.address])
   await write(controller, 'setSponsor', [sponsor.address])
 
-  if (communityTerms) await write(namePolicy, 'setTerms', [communityTerms.text])
+  await write(namePolicy, 'setGeneralTerms', [terms.generalTerms.link])
+  await write(namePolicy, 'setCommunityTerms', [terms.communityTerms.link])
   for (let i = 0; i < communityNames.length; i += RESERVE_BATCH) {
     await write(namePolicy, 'addCommunityNames', [communityNames.slice(i, i + RESERVE_BATCH)])
   }
@@ -556,13 +559,12 @@ async function verifyWiring(publicClient, addresses, handedOver) {
     () => read(registrar, [], ADDR, 'namePolicy'))
   await check('name policy is a controller on the registrar', 'true',
     () => read(registrar, ADDR, [{ type: 'bool' }], 'controllers', [addresses.SimplexNamePolicy]))
-  await check('community terms hash', communityTerms?.hash ?? zeroHash,
-    () => read(addresses.SimplexNamePolicy, [], [{ type: 'bytes32' }], 'termsHash'))
-  await check('community terms text, by its keccak256', communityTerms?.hash ?? 'empty',
-    async () => {
-      const text = await read(addresses.SimplexNamePolicy, [], [{ type: 'string' }], 'termsText')
-      return text ? keccak256(toBytes(text)) : 'empty'
-    })
+  for (const [kind, { link, hash }] of Object.entries(terms)) {
+    await check(`${kind} link`, link,
+      () => read(addresses.SimplexNamePolicy, [], [{ type: 'string' }], `${kind}Link`))
+    await check(`${kind} hash`, hash,
+      () => read(addresses.SimplexNamePolicy, [], [{ type: 'bytes32' }], `${kind}Hash`))
+  }
   await check('controller nftGateEnabled', String(nftGateEnabled),
     () => read(controller, [], [{ type: 'bool' }], 'nftGateEnabled'))
   await check('controller minCharLength', '6',
@@ -746,6 +748,13 @@ async function main() {
         `  really are starting over.`,
     )
     process.exit(1)
+  }
+
+  for (const [role, kind] of [['general', 'generalTerms'], ['community', 'communityTerms']]) {
+    await checkTermsLink(role, terms[kind].link).catch((err) => {
+      console.error(`terms.${tld}.json ${kind}: ${err.message}`)
+      process.exit(1)
+    })
   }
 
   console.log(`SNRC mainnet deploy for .${tld} (chainId ${mainnet.id})`)
