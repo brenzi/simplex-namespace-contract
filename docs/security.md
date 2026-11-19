@@ -165,7 +165,7 @@ multisig (trusted); it's a policy knob, not an attacker surface.
 `ERC721Enumerable` (`totalSupply` / `tokenOfOwnerByIndex` / `balanceOf`) and
 `tokenURI` reflect raw token ownership, which is only updated on
 transfer/mint/burn — **not** on expiry (a name is burned only on re-registration
-after its grace period). So they can disagree with the grace-period `ownerOf`.
+after its grace period or its unregistration). So they can disagree with the grace-period `ownerOf`.
 **Accepted (read-side contract):** all readers (the dApp, resolvers, integrators)
 MUST filter by `nameExpires(id) > block.timestamp`. Documented as an invariant
 on `BaseRegistrarImplementation`.
@@ -195,7 +195,10 @@ incentivised). **Accepted (read-side):** this matches plain ENS (an expired
 name's subnames also linger until cleared); the dApp should `purge` on 2LD
 acquisition. The leak is records-only — ownership/authorisation never transfers
 to the new owner without an explicit `createSubname`. The dApp does not purge on
-acquisition yet; accepted as is in the pre-launch review (2026-10-21, M5).
+acquisition yet; accepted as is in the pre-launch review (2026-10-21, M5). The
+same holds from an `unregister`, which sets the subname registrar's `expiryOf`
+to 0: the subnames lose their owner at once and their records resolve until
+`purge`, which the store service calls after each unregistration.
 
 ## Assurances (verified properties)
 
@@ -330,7 +333,7 @@ resolution and, in an earlier revision, an on-chain edit-credit system.
 | `removeReservedNames`, `registerReserved` (name policy), `setDefaultResolver`, `setMinCharLength`, `setPriceOracle` | owner only | Permissive directions stay behind the timelock. `registerReserved` also releases the reservation, so the holder can renew. |
 | `setSponsor(address)` | owner only | The one contract allowed to call `registerSponsored` / `renewSponsored`, trusted with the allowance and the owner-consent check. Dies at `freeze()`. |
 | `freeze()` | owner only | One-way. Makes the implementation, the name policy's implementation and the sponsor permanent and seals `setPublicSalesOpen`. Refuses while sales are closed or no sponsor is set, so a mis-ordered freeze cannot shut the payable or the sponsored path forever. |
-| `SimplexController.unregister(label, until)` | owner **or** beneficiary | Only before the name's `disputeUntil`, which a sponsored registration sets 14 to 120 days out, from the `disputeDays` of `registerWithCredit`: the owner signs them, unless the registrar registers to itself and chooses them. `until` must equal `disputeUntil`, so a queued or repeated call cannot end a later registration of the label. The payable path and `registerReserved` set none. Clears the records on the default resolver and on a past default the node points at, then sets the expiry, the registry node's owner and resolver to 0 and ends the subnames. The name is available to anyone at once. Survives `freeze()`: disputes continue after it. The registrar refuses a renewal until `disputeUntil`, so no renewal is erased. |
+| `SimplexController.unregister(label, until)` | owner **or** beneficiary | Only before the name's `disputeUntil`, which a sponsored registration sets 14 to 120 days out, from the `disputeDays` of `registerWithCredit`: the owner signs them, unless the registrar registers to itself and chooses them. `until` must equal `disputeUntil`, so a queued or repeated call cannot end a later registration of the label whose dispute ends at another second; once a name is unregistered, any other prepared `unregister` of it is cancelled. The payable path and `registerReserved` set none. Clears the records on the default resolver and on a past default the node points at, then sets the expiry, the registry node's owner and resolver to 0 and ends the subnames. The name is available to anyone at once. Survives `freeze()`: disputes continue after it. The registrar refuses a renewal until `disputeUntil`, so no renewal is erased. |
 | `SimplexNamePolicy.addCommunityNames(string[])` | owner **or** beneficiary | Restrictive: a listed name can then be registered or received only by someone who accepts the current community terms, except through `registerReserved` and other registrar controllers (admin), under an off-chain agreement. Skips any name that is registered or in its grace period, since its holder never accepted them. Sent privately, like reservations: a pending listing reveals the name, which a squatter can then register under the general terms. |
 | `removeCommunityNames`, `setGeneralTerms(string)`, `setCommunityTerms(string)` | owner only | Each setter stores a link to one file at one commit and its keccak256; an empty link reverts. After a new link, an acceptance of that kind not yet used at registration or claim must be made again; the other kind's acceptances stay valid, and existing holders are not asked to accept. |
 | `setNamePolicy(address)` on the controller and on the registrar | owner only | Survive `freeze()`. The policy is called on every paid or sponsored registration, every renewal and every non-controller transfer of every name, so a wrong or hostile target blocks them. The controller's setter refuses zero, so the reserved list always applies; the registrar's accepts zero, which drops the transfer check. A setter reverts unless the target's `controller()` (or `registrar()`) returns that controller or registrar: this catches a target bound to another controller or registrar, not a hostile one, so check that both pointers reference the same instance. The controller's setter also reverts for the policy's implementation; the registrar's accepts it, and every holder transfer then reverts until the pointer is corrected. A new policy contract starts empty: its reservations must be in place before the controller points at it, and it cannot list held names as community names; upgrading the policy keeps both lists. |
@@ -461,7 +464,9 @@ Accepted:
   for to anyone, and `addController` survives `freeze` as the repair path. A
   controller may also unregister a name in its dispute period through the
   registrar's `unregister(id, until)`, which leaves the default resolver's
-  records in place; only the controller's `unregister` clears them.
+  records in place; only the controller's `unregister` clears them. The 14 to
+  120 days are bounded in `SimplexController` only: another controller can give
+  a name any dispute period, and its renewal is refused for that long.
 - **Consent covers the name, not its contents.** Between the recipient's consent
   and the claim landing, the holder can still change the name's records, point
   its registry resolver at a contract of the holder's own, and create subnames
@@ -614,6 +619,10 @@ cannot coexist in one deployment and cannot be migrated after the fact.
   `ClaimName`, which names the offer it claims. A sponsored registration needs
   `RegisterName`, verified by `SimplexSponsor`. `.testing` keeps
   `transferWithSig` and has neither.
+- The dispute period changes `RegisterName` again: it gains `uint256
+  disputeDays` before `nonce`, and `registerWithCredit` takes `disputeDays`
+  after the registration. The names page that signs and the store service that
+  submits ship with the sponsor that verifies it.
 
 ### Deployment opsec
 
@@ -674,7 +683,9 @@ checks that the admin owns everything and nothing is pending.
 `available(id)` is `expiries[id] + GRACE_PERIOD < block.timestamp`. That check is
 in the **immutable** registrar, so no owner power on any contract — including an
 arbitrary controller upgrade before the freeze — can seize, transfer or re-point
-a name someone holds. `reclaim` requires `_isApprovedOrOwner` and points the node
+a name someone holds, except a name in its dispute period: any registrar
+controller can `unregister` it before its `disputeUntil`, and then register it
+anew. `reclaim` requires `_isApprovedOrOwner` and points the node
 at the holder only; `approveWithSig` requires the holder's signature and a
 grace-aware `ownerOf`, and only the recipient, or a controller, can complete the transfer.
 
@@ -782,7 +793,8 @@ reservation that waits longer in public — an underpriced transaction in the
 mempool, or a guardian Safe proposal waiting in the Safe Transaction Service queue
 for its second signature — tells a squatter which name to take, and the squatter's
 `register` lands first. The reservation then succeeds on a name that is already
-held, and nothing takes the name back before it expires: the reservation stops
+held, and nothing takes the name back before it expires, except an `unregister`
+within the dispute period of a registration by the store: the reservation stops
 only its renewal. A pre-aged speculative commitment can also
 win the ordering, but gains nothing over registering the guessed label outright.
 `test/simplex/TestReservationRace.test.ts` pins only the case where the

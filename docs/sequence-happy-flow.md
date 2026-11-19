@@ -307,7 +307,7 @@ sequenceDiagram
 
     note over B: name expired + grace period passed
     C->>CT: register("alice", Carol, ...)
-    CT->>B: registerWithLabel("alice", Carol, duration, disputePeriod)
+    CT->>B: registerWithLabel("alice", Carol, duration, disputePeriod=0)
     note over B: _register sees the old token -> _burn(old),<br/>then mints fresh to Carol
     B->>SR: onReregister(namehash("alice.testing"))
     note over SR: generation[2LD]++ — every old subname now has<br/>generationAt != generation, so ownerOf -> 0 (dead)

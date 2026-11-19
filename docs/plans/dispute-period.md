@@ -18,17 +18,17 @@ A card payment can be disputed or refunded for about 120 days after it settles, 
 | D6 | Renewals | final; after a disputed renewal the guardian reserves the name, so its next renewal is refused | the owner, 19 Nov |
 | D7 | Registrar upgrades | the admin, through the registrar's own ProxyAdmin, until that ProxyAdmin's ownership is renounced, independently of `controller.freeze()` | the owner, 19 Nov |
 | D8 | Transfers during the dispute period | allowed; clients show the dispute end and ask the recipient's acknowledgement | the owner, 18 Nov |
-| D9 | What is public | each name's `disputeUntil` | the owner, 18 Nov |
+| D9 | What is public | each name's `disputeUntil`, and with it the class of its payment: 0, 14 or 120 days | decided, from D8; open to the owner |
 | D10 | Who unregisters | the guardian or the admin | the owner, 19 Nov |
 | D11 | Placement | the registrar stores `disputeUntil`, written at registration and deleted at unregistration, unregisters only before it and only when the caller names it, and renews only from it; the controller's `unregister(label, until)` for the guardian and the admin | decided |
-| D12 | Unregistration | the records cleared on the default resolver and on a past default the node points at; then the expiry, the registry node's owner and its resolver set to 0, and the subnames ended; the next registration burns the token and invalidates the subnames, as for a lapsed name | decided |
+| D12 | Unregistration | the records cleared on the default resolver and on a past default the node points at; then the expiry, the registry node's owner and its resolver set to 0, and the `SubnameRegistrar`'s subnames ended; the next registration burns the token and invalidates the subnames, as for a lapsed name | decided |
 | D13 | In-app payments and codes | in-app 120 days; a code takes the days of the payment that bought it, at least 14 | decided |
 | D14 | Renewals during the dispute period | refused by the registrar until `disputeUntil` (`DisputePeriodNotOver`), on every controller's path, so a final renewal is never erased by an unregistration; the shortest term is 730 days, so a name cannot lapse meanwhile | decided, from D5 and D6 |
 | D15 | A registration without a dispute period | stores `disputeUntil` 0 | decided |
 | D16 | Storage | `disputeUntil` follows the registrar's last state variable | decided |
 | D17 | Terms | the names conditions (simplex-chat `docs/NAMES-CONDITIONS.md`, the general and the community terms on chain) state the dispute period and the end of a registration within it | the owner, 19 Nov |
 | D18 | A compromised guardian | can take a name in its dispute period | accepted by the owner, 19 Nov |
-| D19 | A dispute after `disputeUntil` | the name stays; the guardian reserves it, as after a disputed renewal (D6) | decided, from D6 |
+| D19 | A payment for the name disputed, reversed or refunded in full, and its registration not ended | the name stays; the guardian reserves it, as after a disputed renewal (D6) | decided, from D6 |
 
 ## 3. States
 
@@ -136,8 +136,9 @@ sequenceDiagram
 | a holder or recipient during the dispute period | renews only from `disputeUntil` (D14) | the shortest term is 730 days |
 | a recipient of a claim during the dispute period | loses the name on an unregistration | clients show the dispute end and ask for an acknowledgement (D8) |
 | a registrar controller added by the admin | unregisters a name in its dispute period, leaving the default resolver's records, which resolve again under the next holder who points the name at that resolver | as every controller power, behind the timelock from GOV8; a final name stays final |
-| a queued or repeated `unregister` | ends no later registration of the label: `until` names one registration's `disputeUntil` (`DisputeUntilMismatch`) | a new registration writes a new `disputeUntil` |
-| an observer of the chain | learns each name's dispute end, so 0, 14 or 120 days | public by D9 |
+| a queued or repeated `unregister` | ends no later registration of the label whose dispute ends at another second: `until` names one registration's `disputeUntil` (`DisputeUntilMismatch`) | once a name is unregistered, the guardian and the admin cancel any other prepared `unregister` of it |
+| a registrar controller added by the admin, registering | any dispute period: the 14 to 120 days are bounded in `SimplexController` only, and a renewal is refused until `disputeUntil` | as every controller power, behind the timelock from GOV8 |
+| an observer of the chain | learns each name's dispute end, so 0, 14 or 120 days, and with it whether its registration was paid in ETH, in crypto to the store, or by card or in-app | public by D9 |
 
 ## 5. Contract changes
 
@@ -191,10 +192,11 @@ Sizes in bytes, limit 24,576:
 
 ## 6. Effects outside this repository
 
-- simplex-chat, store service: `disputeDays` per payment by D3 and D13, in the `RegisterName` digest and calldata, with a reveal refused when signed over another value; on `charge.dispute.created` or `charge.refunded` before `disputeUntil`, the guardian's `unregister(label, disputeUntil)`, then `purge` of the name's subnames and the refund; after a disputed renewal, or a dispute after `disputeUntil`, the guardian's `addReservedNames`; a renewal offered only from `disputeUntil`.
+- simplex-chat, store service: `disputeDays` per payment by D3 and D13, in the `RegisterName` digest and calldata, with a reveal refused when signed over another value; on `charge.dispute.created`, or on `charge.refunded` for a full refund, before `disputeUntil`, the guardian's `unregister(label, disputeUntil)`, then `purge` of the name's subnames and the refund; when a payment for the name is disputed, reversed or refunded in full and its registration is not ended, the guardian's `addReservedNames`; a renewal offered only from `disputeUntil`.
 - simplex.domains: `RegisterName` with `disputeDays`; the dispute end on the order page.
 - The app's claim flow and the dApp's claim review: the dispute end before a claim, with the recipient's acknowledgement (D8). The app and the dApp offer a renewal only from `disputeUntil`.
 - The names resolver: a name with expiry 0, and every subname under it, answers as unregistered.
+- Indexers: `unregister` emits `NameUnregistered(id)` and no ERC-721 `Transfer`; a subgraph or the dApp's name list reads it, or filters by `nameExpires`, as for a lapsed name.
 - This repository: `CLAUDE.md` and `docs/security.md` state `unregister` and the narrower freeze guarantee; the deployment scripts for the redeployed registrar come with the registrar's upgradability change.
 - simplex-chat `docs/NAMES-CONDITIONS.md`, linked on chain at `d94981224` (#8135): a version with the dispute period (branch `ab/names-dispute-period`). It follows the version for the upgradeable stack, which states upgradeability and no dispute period; the change that lands second rebases. Its links go into `terms.simplex.json` and on chain as above.
 

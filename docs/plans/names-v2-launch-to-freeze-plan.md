@@ -104,7 +104,8 @@ registry root is in `Root`, `Root`'s controller can do the same. The redeploy of
 rests on that power. `root.lock(labelhash("simplex"))` at GOV9 ends it: `Root` has no call
 that reassigns a locked label or moves the registry root out.
 After GOV9 no key can change the controller's code either, so no key can write records on a
-name it does not own. That matters because the controller is `trustedETHController` on the
+name it does not own, except the clearing of a name's records by `unregister` in its dispute
+period. That matters because the controller is `trustedETHController` on the
 resolver, and a hostile upgrade would abuse exactly that authority.
 
 Two indirect paths stay open. Reserving a held name stops its renewal, and after its grace
@@ -113,7 +114,8 @@ also price renewals out of reach and collect names as they lapse, either by poin
 `setPriceOracle` at a hostile oracle or by calling `priceOracle.setPrices` with a punishing
 curve. The second adds nothing, since an arbitrary oracle can already do anything a curve
 change can. Before GOV8 there is no warning: the change takes effect when signed. What limits
-the damage is slow and public. Every name keeps its remaining term plus 90 days of grace, and
+the damage is slow and public. Every name past its dispute period keeps its remaining term
+plus 90 days of grace, and
 renewal of an unreserved name is permissionless throughout, so anyone can renew anyone's name
 at the old price as soon as the change is noticed. That is months of visible behaviour rather
 than seven days of notice. GOV8 buys the notice back.
