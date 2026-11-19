@@ -13,19 +13,22 @@ A card payment can be disputed or refunded for about 120 days after it settles, 
 | D1 | Term | the whole paid term at registration | the owner, 19 Nov |
 | D2 | Dispute period | defined by each sponsored registration; before its end the guardian or the admin unregisters the name | the owner, 19 Nov |
 | D3 | Days | card 120; BTC and XMR 14; ETH in the dApp 0 | the owner, 19 Nov |
-| D4 | Bounds on the sponsored path | at least 14 days, at most 120, on chain | the owner, 19 Nov (minimum) |
+| D4 | Bounds on the sponsored path | at least 14 days, at most 120, on chain | the owner, 19 Nov |
 | D5 | An unregistered name | available to anyone at once; the store refunds the payment; no reinstatement | the owner, 19 Nov |
 | D6 | Renewals | final; after a disputed renewal the guardian reserves the name, so its next renewal is refused | the owner, 19 Nov |
 | D7 | Registrar upgrades | the admin, through the registrar's own ProxyAdmin, until that ProxyAdmin's ownership is renounced, independently of `controller.freeze()` | the owner, 19 Nov |
 | D8 | Transfers during the dispute period | allowed; clients show the dispute end and ask the recipient's acknowledgement | the owner, 18 Nov |
 | D9 | What is public | each name's `disputeUntil` | the owner, 18 Nov |
-| D10 | Who unregisters | the guardian or the admin | decided |
-| D11 | Placement | the registrar stores `disputeUntil`, written only at registration, unregisters only before it and renews only from it; the controller's `unregister(label)` for the guardian and the admin | decided |
+| D10 | Who unregisters | the guardian or the admin | the owner, 19 Nov |
+| D11 | Placement | the registrar stores `disputeUntil`, written at registration and deleted at unregistration, unregisters only before it and only when the caller names it, and renews only from it; the controller's `unregister(label, until)` for the guardian and the admin | decided |
 | D12 | Unregistration | the records cleared on the default resolver and on a past default the node points at; then the expiry, the registry node's owner and its resolver set to 0, and the subnames ended; the next registration burns the token and invalidates the subnames, as for a lapsed name | decided |
 | D13 | In-app payments and codes | in-app 120 days; a code takes the days of the payment that bought it, at least 14 | decided |
 | D14 | Renewals during the dispute period | refused by the registrar until `disputeUntil` (`DisputePeriodNotOver`), on every controller's path, so a final renewal is never erased by an unregistration; the shortest term is 730 days, so a name cannot lapse meanwhile | decided, from D5 and D6 |
 | D15 | A registration without a dispute period | stores `disputeUntil` 0 | decided |
 | D16 | Storage | `disputeUntil` follows the registrar's last state variable | decided |
+| D17 | Terms | the general and community terms state the dispute period and the end of a registration whose payment is disputed, reversed or refunded within it | the owner, 19 Nov |
+| D18 | A compromised guardian | can take a name in its dispute period | accepted by the owner, 19 Nov |
+| D19 | A dispute after `disputeUntil` | the name stays; the guardian reserves it, as after a disputed renewal (D6) | decided, from D6 |
 
 ## 3. States
 
@@ -34,7 +37,7 @@ stateDiagram-v2
   [*] --> disputable: registerWithCredit with 14 to 120 days
   [*] --> final: register (ETH), registerReserved
   disputable --> final: dispute period ends
-  disputable --> unregistered: guardian or admin, unregister(label)
+  disputable --> unregistered: guardian or admin, unregister(label, disputeUntil)
   final --> final: renew, renewWithCredit
   disputable --> disputable: a claim
   unregistered --> [*]: available to any registration
@@ -51,7 +54,7 @@ stateDiagram-v2
 ```
 BaseRegistrarImplementation
   ... as #49, every state variable
-  disputeUntil      mapping(uint256 => uint256)   public, written only at registration
+  disputeUntil      mapping(uint256 => uint256)   public, written at registration, deleted at unregistration
 
   registerWithLabel(label, owner, duration, disputePeriod)              controller only
     ... as #49
@@ -61,7 +64,8 @@ BaseRegistrarImplementation
     block.timestamp >= disputeUntil[id]                                  else DisputePeriodNotOver(id)
     ... as #49
 
-  unregister(id)                                                         controller only, live
+  unregister(id, until)                                                  controller only, live
+    disputeUntil[id] == until                                            else DisputeUntilMismatch(id)
     block.timestamp < disputeUntil[id]                                   else DisputePeriodOver(id)
     delete disputeUntil[id]
     expiries[id] = 0
@@ -75,10 +79,10 @@ SimplexController
   registerSponsored(registration, disputeDays)                           sponsor only
     MIN_DISPUTE_DAYS <= disputeDays <= MAX_DISPUTE_DAYS                  else DisputeDaysOutOfRange(disputeDays)
     ... as #49, disputePeriod = disputeDays days
-  unregister(label)                                                      owner or beneficiary
+  unregister(label, until)                                               owner or beneficiary
     _retireStaleRecords(namehash)                                        a past default the node points at
     defaultResolver != 0 => defaultResolver.clearRecords(namehash)
-    base.unregister(uint256(keccak256(label)))
+    base.unregister(uint256(keccak256(label)), until)
 
 SimplexNamePolicy.registerReserved(label, owner, duration)
   ... as #49, disputePeriod 0
@@ -107,10 +111,11 @@ sequenceDiagram
   C->>C: 14 <= disputeDays <= 120
   C->>R: registerWithLabel(label, owner, duration, disputeDays days)
   alt dispute opened or refund made before disputeUntil
-    S-->>G: alert with the evidence
-    G->>C: unregister(label)
+    S-->>G: alert with the evidence and disputeUntil
+    G->>C: unregister(label, disputeUntil)
     C->>C: clear the records on the default resolver and on a past default the node points at
-    C->>R: unregister(id)
+    C->>R: unregister(id, disputeUntil)
+    R->>R: disputeUntil matches and is in the future
     R->>R: expiry 0, registry owner and resolver 0
     R->>N: onExpiryChanged(node, 0)
     S->>N: purge(node, subname labels)
@@ -130,7 +135,8 @@ sequenceDiagram
 | the guardian | unregisters any name in its dispute period, up to 120 days after its registration, and can register it to itself at once with a commitment made before; before this change it could mint only available names | one key until GOV8; a dispute period ends on its own; ETH registrations and `registerReserved` take none |
 | a holder or recipient during the dispute period | renews only from `disputeUntil` (D14) | the shortest term is 730 days |
 | a recipient of a claim during the dispute period | loses the name on an unregistration | clients show the dispute end and ask for an acknowledgement (D8) |
-| a registrar controller added by the admin | unregisters a name in its dispute period | as every controller power, behind the timelock from GOV8; a final name stays final |
+| a registrar controller added by the admin | unregisters a name in its dispute period, leaving the default resolver's records, which resolve again under the next holder who points the name at that resolver | as every controller power, behind the timelock from GOV8; a final name stays final |
+| a queued or repeated `unregister` | ends no later registration of the label: `until` names one registration's `disputeUntil` (`DisputeUntilMismatch`) | a new registration writes a new `disputeUntil` |
 | an observer of the chain | learns each name's dispute end, so 0, 14 or 120 days | public by D9 |
 
 ## 5. Contract changes
@@ -141,8 +147,8 @@ flowchart LR
   service -->|"registerWithCredit(..., disputeDays, ...)"| sponsor["SimplexSponsor<br/>new deployment"]
   sponsor -->|"registerSponsored(registration, disputeDays)"| controller["SimplexController"]
   dapp["dApp"] -->|"register, payable"| controller
-  guardian["Guardian or admin"] -->|"unregister(label)"| controller
-  controller -->|"registerWithLabel(..., disputePeriod), unregister(id)"| registrar["BaseRegistrar<br/>upgradeable, redeployed"]
+  guardian["Guardian or admin"] -->|"unregister(label, until)"| controller
+  controller -->|"registerWithLabel(..., disputePeriod), unregister(id, until)"| registrar["BaseRegistrar<br/>upgradeable, redeployed"]
   policy["SimplexNamePolicy"] -->|"registerWithLabel(..., 0)"| registrar
   registrar -->|"setSubnodeRecord(baseNode, id, 0, 0, 0)"| registry["ENSRegistry"]
   registrar -->|"onExpiryChanged(node, 0)"| subnames["SubnameRegistrar"]
@@ -154,23 +160,23 @@ flowchart LR
 - `disputeUntil`, public, after the last state variable;
 - `registerWithLabel` takes `disputePeriod`;
 - `renew` refuses a renewal before `disputeUntil`;
-- `unregister(uint256)`, controller only;
+- `unregister(uint256 id, uint256 until)`, controller only;
 - event `NameUnregistered(uint256 indexed id)`;
-- errors `DisputePeriodOver(uint256 id)` and `DisputePeriodNotOver(uint256 id)`.
+- errors `DisputePeriodOver(uint256 id)`, `DisputePeriodNotOver(uint256 id)` and `DisputeUntilMismatch(uint256 id)`.
 
 `SimplexController`:
 
 - `MIN_DISPUTE_DAYS = 14`, `MAX_DISPUTE_DAYS = 120`;
 - `registerSponsored(registration, disputeDays)`;
 - `_registerCore` takes the dispute period, which `register` passes as 0;
-- `unregister(string label)`, owner or beneficiary;
+- `unregister(string label, uint256 until)`, owner or beneficiary;
 - error `DisputeDaysOutOfRange(uint256)`.
 
 `SimplexNamePolicy`: `registerReserved` registers with 0.
 
 `SimplexSponsor`, a new deployment: `registerWithCredit(registration, disputeDays, nonce, deadline, sig)` and `RegisterName` with `uint256 disputeDays`; `renewWithCredit` as #49.
 
-The registrar's, controller's and policy's implementations and the new sponsor with `setSponsor` land together, before `freeze()`: `registerWithLabel` changes its signature, and `setSponsor` ends at the freeze.
+The registrar's, controller's and policy's implementations and the new sponsor with `setSponsor` land together, before `freeze()`: `registerWithLabel` changes its signature, and `setSponsor` ends at the freeze. The terms with the dispute period (D17) are set with `setGeneralTerms` and `setCommunityTerms` before the new sponsor.
 
 Sizes in bytes, limit 24,576:
 
@@ -183,11 +189,12 @@ Sizes in bytes, limit 24,576:
 
 ## 6. Effects outside this repository
 
-- simplex-chat, store service: `disputeDays` per payment by D3 and D13, in the `RegisterName` digest and calldata, with a reveal refused when signed over another value; on `charge.dispute.created` or `charge.refunded` before `disputeUntil`, the guardian's `unregister(label)`, then `purge` of the name's subnames and the refund; after a disputed renewal, the guardian's `addReservedNames`; a renewal offered only from `disputeUntil`.
+- simplex-chat, store service: `disputeDays` per payment by D3 and D13, in the `RegisterName` digest and calldata, with a reveal refused when signed over another value; on `charge.dispute.created` or `charge.refunded` before `disputeUntil`, the guardian's `unregister(label, disputeUntil)`, then `purge` of the name's subnames and the refund; after a disputed renewal, or a dispute after `disputeUntil`, the guardian's `addReservedNames`; a renewal offered only from `disputeUntil`.
 - simplex.domains: `RegisterName` with `disputeDays`; the dispute end on the order page.
 - The app's claim flow and the dApp's claim review: the dispute end before a claim, with the recipient's acknowledgement (D8). The app and the dApp offer a renewal only from `disputeUntil`.
 - The names resolver: a name with expiry 0, and every subname under it, answers as unregistered.
-- This repository: `CLAUDE.md` and `docs/security.md` state `unregister` and the narrower freeze guarantee; the deployment scripts for the redeployed registrar come with the registrar's upgradability change.
+- This repository: `CLAUDE.md` and `docs/security.md` state `unregister` and the narrower freeze guarantee; the terms drafts in `test/fixtures/terms/` state the dispute period (branch `ab/dispute-terms`); the deployment scripts for the redeployed registrar come with the registrar's upgradability change.
+- The published terms, now placeholders at simplex-chat `72fcd35`: the texts with the dispute period, committed and tagged as `general-terms-vN` and `community-terms-vN`, and their links in `terms.simplex.json`.
 
 ## 7. Tests
 
@@ -203,7 +210,7 @@ Sizes in bytes, limit 24,576:
 - a renewal on each path reverts `DisputePeriodNotOver` one second before `disputeUntil` and succeeds at it;
 - the default resolver's records are cleared although the holder pointed the node at 0, and a past default's records although the default was rotated;
 - `unregister` without a default resolver, and after `freeze()`;
-- a re-registration writes a new dispute end;
+- a re-registration writes a new dispute end, and an `unregister` naming the earlier one reverts `DisputeUntilMismatch`;
 - the registrar's `unregister` reverts for every caller but a controller;
 - `test/ethregistrar/TestBaseRegistrar.test.ts` passes the new argument and runs in the fork's CI;
 - each new guard, removed, fails at least one test.

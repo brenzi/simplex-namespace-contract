@@ -92,7 +92,9 @@ rather than edited.
 
 ## 5. What no key can ever do
 
-No key can take, transfer or re-point a name somebody owns. `_register` requires
+No key can take, transfer or re-point a name somebody owns, except that the admin
+or the guardian can unregister a sponsored name before its `disputeUntil`
+([`dispute-period.md`](./dispute-period.md)). `_register` requires
 `available(id)`, false until 90 days past expiry, and that check lives in the immutable
 registrar. `reclaim` needs the token holder. `approveWithSig` needs the owner's signature, and
 only the recipient, or a controller, can complete a transfer.

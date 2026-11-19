@@ -397,8 +397,11 @@ key. `setPriceOracle` deliberately survives `freeze()`.
   registration gate. Once called, the dApp's gate UI clears automatically (it
   reads `nftGateEnabled` on-chain).
 - `setMinCharLength(uint8)` — monotonic decrease only (6 → 5 → 4 → 3).
-- `unregister(string label)` — owner **or beneficiary**, also after `freeze()`;
-  only before the name's `disputeUntil` on the registrar. Used when a payment of
+- `unregister(string label, uint256 until)` — owner **or beneficiary**, also
+  after `freeze()`; only before the name's `disputeUntil` on the registrar, and
+  only with `until` equal to it: read `baseRegistrar.disputeUntil(labelhash)`
+  when preparing the call, so a queued or repeated call cannot end a later
+  registration of the label. Used when a payment of
   a sponsored registration is disputed or refunded: it clears the name's
   records on the default resolver and on a past default the name points at,
   ends the registration and the subnames, and
