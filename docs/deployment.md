@@ -408,7 +408,8 @@ key. `setPriceOracle` deliberately survives `freeze()`.
   records on the default resolver and on a past default the name points at,
   ends the registration and the `SubnameRegistrar`'s subnames, and
   makes the name available at once. Then `subnameRegistrar.purge(node, labels)`
-  deletes the subnames (permissionless), and the store refunds the payment.
+  deletes the subnames (permissionless). The store then accepts a card
+  dispute, which cannot be refunded, or refunds a payment it gives back.
   After a disputed renewal, reserve the name with `addReservedNames` instead.
 - `SimplexNamePolicy.addReservedNames(string[],Reason)` — owner **or
   beneficiary**, so a name under threat can be reserved immediately rather than
@@ -448,6 +449,10 @@ key. `setPriceOracle` deliberately survives `freeze()`.
   lets it lapse, anyone can register it after its grace period unless it is
   reserved again.
 - `setDefaultResolver(address)` — the resolver `registerReserved` points names at.
+  Every resolver ever set as default must accept `clearRecords` from the
+  controller (its `trustedETHController`): the controller clears a past default
+  that a name points at, at registration and at `unregister`, so a holder could
+  otherwise block both by pointing the name at it.
 - `setPublicSalesOpen(bool)` — owner **or beneficiary**; gates the payable
   `register()` only. The credited path, `registerReserved` and both renew paths
   are exempt, so pausing never blocks the app-store flow or a renewal. Two-way

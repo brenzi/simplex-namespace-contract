@@ -249,7 +249,7 @@ down in favour of a split.
 
 - **simplex-chat #7530:** core signs `RegisterName` with the name's wallet key and
   the key's current `nonces` value from the sponsor, and ShopService calls
-  `SimplexSponsor.registerWithCredit(reg, nonce, deadline, sig)`; ShopService
+  `SimplexSponsor.registerWithCredit(reg, disputeDays, nonce, deadline, sig)`; ShopService
   refuses a registration whose owner is its own address (§4).
 - **Web store plan (`sh/names-design`):** the browser signs with the wallet it
   generates; the link from the app contains the app's signature and deadline; the

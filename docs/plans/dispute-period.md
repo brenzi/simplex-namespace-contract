@@ -14,7 +14,7 @@ A card payment can be disputed or refunded for about 120 days after it settles, 
 | D2 | Dispute period | defined by each sponsored registration; before its end the guardian or the admin unregisters the name | the owner, 19 Nov |
 | D3 | Days | card 120; BTC and XMR 14; ETH in the dApp 0 | the owner, 19 Nov |
 | D4 | Bounds on the sponsored path | at least 14 days, at most 120, on chain | the owner, 19 Nov |
-| D5 | An unregistered name | available to anyone at once; the store refunds the payment; no reinstatement | the owner, 19 Nov |
+| D5 | An unregistered name | available to anyone at once; the payment goes back: the store accepts a card dispute, or refunds; no reinstatement | the owner, 19 Nov |
 | D6 | Renewals | final; after a disputed renewal the guardian reserves the name, so its next renewal is refused | the owner, 19 Nov |
 | D7 | Registrar upgrades | the admin, through the registrar's own ProxyAdmin, until that ProxyAdmin's ownership is renounced, independently of `controller.freeze()` | the owner, 19 Nov |
 | D8 | Transfers during the dispute period | allowed; clients show the dispute end and ask the recipient's acknowledgement | the owner, 18 Nov |
@@ -48,7 +48,8 @@ stateDiagram-v2
 | State | `unregister` | claim | renewal | `available` |
 |---|---|---|---|---|
 | disputable, before `disputeUntil` | guardian or admin | allowed; clients ask for an acknowledgement | `DisputePeriodNotOver` | false |
-| final | `DisputePeriodOver` with `until` 0; `DisputeUntilMismatch` with any other | as #49 | as #49 | false |
+| final, `disputeUntil` 0 | `DisputePeriodOver` with `until` 0; `DisputeUntilMismatch` with any other | as #49 | as #49 | false |
+| final, dispute period passed | `DisputePeriodOver` with `until` equal to `disputeUntil`; `DisputeUntilMismatch` with any other | as #49 | as #49 | false |
 | unregistered | `DisputePeriodOver` with `until` 0; `DisputeUntilMismatch` with any other | refused by `ownerOf` | refused by the registrar's `renew` | true |
 
 ```
@@ -93,7 +94,7 @@ SimplexSponsor.registerWithCredit(registration, disputeDays, nonce, deadline, si
   controller.registerSponsored(registration, disputeDays)
 ```
 
-Example: a two-year card registration on day 0 with 120 days expires on day 730. Disputed on day 30, it is unregistered by the guardian on day 31, available to anyone at once, and the store refunds the payment. Undisputed, it is final and renewable from day 120.
+Example: a two-year card registration on day 0 with 120 days expires on day 730. Disputed on day 30, it is unregistered by the guardian on day 31, available to anyone at once, and the store accepts the dispute. Undisputed, it is final and renewable from day 120.
 
 ```mermaid
 sequenceDiagram
@@ -119,7 +120,7 @@ sequenceDiagram
     R->>R: expiry 0, registry owner and resolver 0
     R->>N: onExpiryChanged(node, 0)
     S->>N: purge(node, subname labels)
-    S->>S: refund
+    S->>S: accept a card dispute, or refund a payment the store gives back
   else no dispute
     Note over R: final and renewable from disputeUntil
   end
@@ -195,10 +196,10 @@ Sizes in bytes, limit 24,576:
 
 ## 6. Effects outside this repository
 
-- simplex-chat, store service: `disputeDays` per payment by D3 and D13, in the `RegisterName` digest and calldata, with a reveal refused when signed over another value; on `charge.dispute.created`, or on `charge.refunded` for a full refund, before `disputeUntil`, the guardian's `unregister(label, disputeUntil)`, then `purge` of the name's subnames and the refund; when a payment for the name is disputed, reversed or refunded in full and its registration is not ended, the guardian's `addReservedNames`; a renewal offered only from `disputeUntil`.
+- simplex-chat, store service: `disputeDays` per payment by D3 and D13, in the `RegisterName` digest and calldata, with a reveal refused when signed over another value; before `disputeUntil`, the guardian's `unregister(label, disputeUntil)` and `purge` of the name's subnames, then, per trigger: on `charge.dispute.created`, the store accepts the dispute (a disputed charge cannot be refunded); for a payment the store gives back, the refund; on `charge.refunded` for a full refund made outside the service, nothing more; when a payment for the name is disputed, reversed or refunded in full and its registration is not ended, the guardian's `addReservedNames`; a renewal offered only from `disputeUntil`.
 - simplex.domains: `RegisterName` with `disputeDays`; the dispute end on the order page.
 - The app's claim flow and the dApp's claim review: the dispute end before a claim, with the recipient's acknowledgement (D8). The app and the dApp offer a renewal only from `disputeUntil`.
-- The names resolver: a name with expiry 0, and every node under it, answers as unregistered: `purge` deletes the `SubnameRegistrar`'s subnames, while subnodes the holder created directly in the registry keep their owner, resolver and records until the name is registered again.
+- The names resolver: a name with expiry 0, and every node under it, answers as unregistered: `purge` deletes the `SubnameRegistrar`'s subnames, while subnodes the holder created directly in the registry keep their owner, resolver and records, also after the next registration, until the next holder replaces them.
 - `docs/plans/names-v2-launch-to-freeze-plan.md`: `unregister` in the guardian's and the admin's powers, and its routine operation.
 - Indexers: `unregister` emits `NameUnregistered(id)` and no ERC-721 `Transfer`; a subgraph or the dApp's name list reads it, or filters by `nameExpires`, as for a lapsed name.
 - This repository: `CLAUDE.md` and `docs/security.md` state `unregister` and the narrower freeze guarantee; the deployment scripts for the redeployed registrar come with the registrar's upgradability change.
