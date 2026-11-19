@@ -179,7 +179,10 @@ flowchart LR
 
 The registrar's, controller's and policy's implementations and the new sponsor with `setSponsor` land together, before `freeze()`: `registerWithLabel` changes its signature, and `setSponsor` ends at the freeze. The conditions with the dispute period (D17) are set with `setGeneralTerms` and `setCommunityTerms` in the same batch as `setSponsor`, so that every registration with a dispute period is made under them.
 
-At the rebase onto `ab/upgradeable-stack`, the registrar's storage-layout snapshot gains `disputeUntil` as its last variable.
+At the rebase onto `ab/upgradeable-stack`:
+
+- the registrar's storage-layout snapshot gains `disputeUntil` as its last variable;
+- that branch removes `controller.freeze()` and `frozen`, so the test "is made without a default resolver and after the freeze" keeps only its default-resolver half, the mutant `if (frozen) revert Frozen();` goes, and the statements on `freeze()` in this plan, `CLAUDE.md`, `docs/security.md` and `docs/deployment.md` follow that branch's wording.
 
 Sizes in bytes, limit 24,576:
 
