@@ -20,10 +20,10 @@ A card payment can be disputed or refunded for about 120 days after it settles, 
 | D8 | Transfers during the dispute period | allowed; clients show the dispute end and ask the recipient's acknowledgement | the owner, 18 Nov |
 | D9 | What is public | each name's `disputeUntil` | the owner, 18 Nov |
 | D10 | Who unregisters | the guardian or the admin | decided |
-| D11 | Placement | the registrar stores `disputeUntil`, written only at registration, and unregisters only before it; the controller's `unregister(label)` for the guardian and the admin | decided |
-| D12 | Unregistration | the default resolver's records cleared; then the expiry, the registry node's owner and its resolver set to 0, and the subnames ended; the next registration burns the token and invalidates the subnames, as for a lapsed name | decided |
+| D11 | Placement | the registrar stores `disputeUntil`, written only at registration, unregisters only before it and renews only from it; the controller's `unregister(label)` for the guardian and the admin | decided |
+| D12 | Unregistration | the records cleared on the default resolver and on a past default the node points at; then the expiry, the registry node's owner and its resolver set to 0, and the subnames ended; the next registration burns the token and invalidates the subnames, as for a lapsed name | decided |
 | D13 | In-app payments and codes | in-app 120 days; a code takes the days of the payment that bought it, at least 14 | decided |
-| D14 | Renewals during the dispute period | refused until `disputeUntil` (`DisputePeriodNotOver`), so a final renewal is never erased by an unregistration; the shortest term is 730 days, so a name cannot lapse meanwhile | decided, from D5 and D6 |
+| D14 | Renewals during the dispute period | refused by the registrar until `disputeUntil` (`DisputePeriodNotOver`), on every controller's path, so a final renewal is never erased by an unregistration; the shortest term is 730 days, so a name cannot lapse meanwhile | decided, from D5 and D6 |
 | D15 | A registration without a dispute period | stores `disputeUntil` 0 | decided |
 | D16 | Storage | `disputeUntil` follows the registrar's last state variable | decided |
 
@@ -57,6 +57,10 @@ BaseRegistrarImplementation
     ... as #49
     disputeUntil[id] = disputePeriod == 0 ? 0 : block.timestamp + disputePeriod
 
+  renew(id, duration)                                                    controller only, live
+    block.timestamp >= disputeUntil[id]                                  else DisputePeriodNotOver(id)
+    ... as #49
+
   unregister(id)                                                         controller only, live
     block.timestamp < disputeUntil[id]                                   else DisputePeriodOver(id)
     delete disputeUntil[id]
@@ -71,12 +75,9 @@ SimplexController
   registerSponsored(registration, disputeDays)                           sponsor only
     MIN_DISPUTE_DAYS <= disputeDays <= MAX_DISPUTE_DAYS                  else DisputeDaysOutOfRange(disputeDays)
     ... as #49, disputePeriod = disputeDays days
-  _renewCore(label, ...)                                                 renew, renewSponsored
-    duration >= MIN_RENEWAL_DURATION                                     as #49
-    block.timestamp >= base.disputeUntil(id)                             else DisputePeriodNotOver(label)
-    ... as #49
   unregister(label)                                                      owner or beneficiary
-    _retireStaleRecords(namehash)
+    _retireStaleRecords(namehash)                                        a past default the node points at
+    defaultResolver != 0 => defaultResolver.clearRecords(namehash)
     base.unregister(uint256(keccak256(label)))
 
 SimplexNamePolicy.registerReserved(label, owner, duration)
@@ -108,7 +109,7 @@ sequenceDiagram
   alt dispute opened or refund made before disputeUntil
     S-->>G: alert with the evidence
     G->>C: unregister(label)
-    C->>C: clear the default resolver's records
+    C->>C: clear the records on the default resolver and on a past default the node points at
     C->>R: unregister(id)
     R->>R: expiry 0, registry owner and resolver 0
     R->>N: onExpiryChanged(node, 0)
@@ -152,18 +153,18 @@ flowchart LR
 
 - `disputeUntil`, public, after the last state variable;
 - `registerWithLabel` takes `disputePeriod`;
+- `renew` refuses a renewal before `disputeUntil`;
 - `unregister(uint256)`, controller only;
 - event `NameUnregistered(uint256 indexed id)`;
-- error `DisputePeriodOver(uint256 id)`.
+- errors `DisputePeriodOver(uint256 id)` and `DisputePeriodNotOver(uint256 id)`.
 
 `SimplexController`:
 
 - `MIN_DISPUTE_DAYS = 14`, `MAX_DISPUTE_DAYS = 120`;
 - `registerSponsored(registration, disputeDays)`;
 - `_registerCore` takes the dispute period, which `register` passes as 0;
-- `_renewCore` refuses a renewal before `disputeUntil`;
 - `unregister(string label)`, owner or beneficiary;
-- errors `DisputeDaysOutOfRange(uint256)` and `DisputePeriodNotOver(string)`.
+- error `DisputeDaysOutOfRange(uint256)`.
 
 `SimplexNamePolicy`: `registerReserved` registers with 0.
 
@@ -175,8 +176,8 @@ Sizes in bytes, limit 24,576:
 
 | Contract | #49 | This change |
 |---|---|---|
-| BaseRegistrarImplementation | 19,556 | 20,464 |
-| SimplexController | 21,889 | 22,749 |
+| BaseRegistrarImplementation | 19,556 | 20,539 |
+| SimplexController | 21,889 | 22,709 |
 | SimplexNamePolicy | 22,652 | 22,665 |
 | SimplexSponsor | 5,840 | 5,856 |
 
@@ -199,7 +200,9 @@ Sizes in bytes, limit 24,576:
 - after `unregister`: `nameExpires` 0, `available` true, `ownerOf` reverts, the registry node's owner and resolver 0, the default resolver's records empty, the subnames without owner, `expiryOf` 0 on the subname registrar, `purge` deletes the subnames, a claim, a renewal and a record write by the old holder revert, and a second `unregister` reverts;
 - a registration after `unregister`, by anyone: the old token burned, the subnames of the old holder without owner, the records cleared;
 - a claim during the dispute period moves the name, and an `unregister` then takes it from the recipient;
-- a renewal on either path reverts `DisputePeriodNotOver` one second before `disputeUntil` and succeeds at it;
+- a renewal on each path reverts `DisputePeriodNotOver` one second before `disputeUntil` and succeeds at it;
+- the default resolver's records are cleared although the holder pointed the node at 0, and a past default's records although the default was rotated;
+- `unregister` without a default resolver, and after `freeze()`;
 - a re-registration writes a new dispute end;
 - the registrar's `unregister` reverts for every caller but a controller;
 - `test/ethregistrar/TestBaseRegistrar.test.ts` passes the new argument and runs in the fork's CI;

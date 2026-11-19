@@ -98,9 +98,10 @@ User → SimplexController.commit(hash)
        ├─ require(msg.value ≥ totalPrice)      ← unchanged
        ├─ commit-reveal age check              ← unchanged
        ├─ namePolicy.consumeRegistration(...)  ← NEW: reserved names, community terms
-       ├─ base.registerWithLabel(label, this, duration)  ← v3: passes the
+       ├─ base.registerWithLabel(label, this, duration, 0)  ← v3: passes the
        │      plaintext label so the registrar records labelOf (hash→name);
-       │      registers to the owner directly when resolver = 0
+       │      registers to the owner directly when resolver = 0; no dispute
+       │      period, so the name is final at once
        ├─ ens.setRecord(node, this, resolver, 0)     ← if resolver ≠ 0; the owner
        │      arrives with the token below (the registry gives a node only to
        │      its caller)
@@ -119,7 +120,10 @@ New vs ENS's `ETHRegistrarController.register`: the owner-is-caller check, the
 the registrar records the on-chain label index, and the controller rather than
 the owner in `setRecord`. Registering for someone else goes through
 `SimplexSponsor.registerWithCredit`, with the owner's `RegisterName` signature
-([`plans/recipient-consent.md`](./plans/recipient-consent.md)).
+([`plans/recipient-consent.md`](./plans/recipient-consent.md)). That path
+defines a dispute period of 14 to 120 days, before whose end the guardian or the
+admin can unregister the name
+([`plans/dispute-period.md`](./plans/dispute-period.md)).
 
 ## SimpleX data on-chain
 
@@ -278,7 +282,7 @@ simplex-namespace-contract/      ← parent repo (this)
       simplex/INamePolicy.sol            ← new (hook interface)
       ethregistrar/BaseRegistrarImplementation.sol ← modified (v3: enumerable,
                                             labelOf, tokenURI, registerWithLabel,
-                                            consented transfer)
+                                            consented transfer, dispute period)
       registry/ENSRegistry.sol           ← modified (signed approval, owner consent)
       mocks/MockSMPXNFT.sol              ← new
       mocks/Multicall3.sol               ← new (aggregate3 + tryAggregate)

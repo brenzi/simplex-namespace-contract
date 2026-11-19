@@ -330,7 +330,7 @@ resolution and, in an earlier revision, an on-chain edit-credit system.
 | `removeReservedNames`, `registerReserved` (name policy), `setDefaultResolver`, `setMinCharLength`, `setPriceOracle` | owner only | Permissive directions stay behind the timelock. `registerReserved` also releases the reservation, so the holder can renew. |
 | `setSponsor(address)` | owner only | The one contract allowed to call `registerSponsored` / `renewSponsored`, trusted with the allowance and the owner-consent check. Dies at `freeze()`. |
 | `freeze()` | owner only | One-way. Makes the implementation, the name policy's implementation and the sponsor permanent and seals `setPublicSalesOpen`. Refuses while sales are closed or no sponsor is set, so a mis-ordered freeze cannot shut the payable or the sponsored path forever. |
-| `SimplexController.unregister(label)` | owner **or** beneficiary | Only before the name's `disputeUntil`, which a sponsored registration sets 14 to 120 days out, from the buyer's signed `disputeDays`; the payable path and `registerReserved` set none. Clears the default resolver's records, then sets the expiry, the registry node's owner and resolver to 0 and ends the subnames. The name is available to anyone at once. Survives `freeze()`: disputes continue after it. A renewal is refused until `disputeUntil`, so it cannot be erased. |
+| `SimplexController.unregister(label)` | owner **or** beneficiary | Only before the name's `disputeUntil`, which a sponsored registration sets 14 to 120 days out, from the `disputeDays` of `registerWithCredit`: the owner signs them, unless the registrar registers to itself and chooses them. The payable path and `registerReserved` set none. Clears the records on the default resolver and on a past default the node points at, then sets the expiry, the registry node's owner and resolver to 0 and ends the subnames. The name is available to anyone at once. Survives `freeze()`: disputes continue after it. The registrar refuses a renewal until `disputeUntil`, so no renewal is erased. |
 | `SimplexNamePolicy.addCommunityNames(string[])` | owner **or** beneficiary | Restrictive: a listed name can then be registered or received only by someone who accepts the current community terms, except through `registerReserved` and other registrar controllers (admin), under an off-chain agreement. Skips any name that is registered or in its grace period, since its holder never accepted them. Sent privately, like reservations: a pending listing reveals the name, which a squatter can then register under the general terms. |
 | `removeCommunityNames`, `setGeneralTerms(string)`, `setCommunityTerms(string)` | owner only | Each setter stores a link to one file at one commit and its keccak256; an empty link reverts. After a new link, an acceptance of that kind not yet used at registration or claim must be made again; the other kind's acceptances stay valid, and existing holders are not asked to accept. |
 | `setNamePolicy(address)` on the controller and on the registrar | owner only | Survive `freeze()`. The policy is called on every paid or sponsored registration, every renewal and every non-controller transfer of every name, so a wrong or hostile target blocks them. The controller's setter refuses zero, so the reserved list always applies; the registrar's accepts zero, which drops the transfer check. A setter reverts unless the target's `controller()` (or `registrar()`) returns that controller or registrar: this catches a target bound to another controller or registrar, not a hostile one, so check that both pointers reference the same instance. The controller's setter also reverts for the policy's implementation; the registrar's accepts it, and every holder transfer then reverts until the pointer is corrected. A new policy contract starts empty: its reservations must be in place before the controller points at it, and it cannot list held names as community names; upgrading the policy keeps both lists. |
@@ -507,7 +507,10 @@ Accepted:
   previous holder who pointed the node at no resolver, or at another past
   default, before the name lapsed leaves records in a default resolver that
   resolve again once the new registration points back at it; a bare registration
-  (`resolver == 0`) keeps a non-default resolver pointer. Subnames have similar
+  (`resolver == 0`) keeps a non-default resolver pointer. An unregistration
+  clears the current default resolver whatever the node points at, and a past
+  default the node points at; a past default that the holder stopped pointing
+  at keeps its records, as for a lapse. Subnames have similar
   gaps: a subname under a deleted subname, or one taken out of the
   `SubnameRegistrar`, keeps its records, and the previous holder keeps owning and
   writing any shadow subnode, so clients enumerate a previously held label's
@@ -751,7 +754,8 @@ Accepted, and new to this ledger:
   refuse above a gas threshold, and validate payload sizes before submitting.
   This is a security property carried by the service, not the contracts.
 - **V3 — after GOV9, hostile pricing is the one path from a retained key to a
-  held name that is not reserved.**
+  held name that is not reserved and past its dispute period.** Within the
+  dispute period, `unregister` is another, on the guardian without delay.
   `setPriceOracle` survives the freeze by necessity: the Chainlink feed is
   `immutable` inside the oracle, so freezing pricing would let a retired feed end
   registration and renewal forever. The cost is that an admin could price
