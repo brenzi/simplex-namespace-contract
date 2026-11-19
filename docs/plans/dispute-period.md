@@ -16,7 +16,7 @@ A card payment can be disputed or refunded for about 120 days after it settles, 
 | D4 | Bounds on the sponsored path | at least 14 days, at most 120, on chain | the owner, 19 Nov |
 | D5 | An unregistered name | available to anyone at once; the payment goes back: the store accepts a card dispute, or refunds; no reinstatement | the owner, 19 Nov |
 | D6 | Renewals | final; after a disputed renewal the guardian reserves the name, so its next renewal is refused | the owner, 19 Nov |
-| D7 | Registrar upgrades | the admin, through the registrar's own ProxyAdmin, until that ProxyAdmin's ownership is renounced, independently of `controller.freeze()` | the owner, 19 Nov |
+| D7 | Registrar upgrades | the admin, through the registrar's own ProxyAdmin, until that ProxyAdmin's ownership is renounced; the upgradeable stack removes `controller.freeze()` | the owner, 19 Nov |
 | D8 | Transfers during the dispute period | allowed; clients show the dispute end and ask the recipient's acknowledgement | the owner, 18 Nov |
 | D9 | What is public | each name's `disputeUntil`, and with it the class of its payment: 0, 14 or 120 days | the owner, 19 Nov |
 | D10 | Who unregisters | the guardian or the admin | the owner, 19 Nov |
@@ -81,7 +81,7 @@ SimplexController
     MIN_DISPUTE_DAYS <= disputeDays <= MAX_DISPUTE_DAYS                  else DisputeDaysOutOfRange(disputeDays)
     ... as #49, disputePeriod = disputeDays days
   unregister(label, until)                                               owner or beneficiary
-    _retireStaleRecords(namehash)                                        a past default the node points at
+    _retireStaleRecords(namehash)                                        the default or a past default the node points at
     defaultResolver != 0 => defaultResolver.clearRecords(namehash)
     base.unregister(uint256(keccak256(label)), until)
 
@@ -119,7 +119,7 @@ sequenceDiagram
     R->>R: disputeUntil matches and is in the future
     R->>R: expiry 0, registry owner and resolver 0
     R->>N: onExpiryChanged(node, 0)
-    S->>N: purge(node, subname labels)
+    S->>N: purge(node, labelhashes of getChildren), per level
     S->>S: accept a card dispute, or refund a payment the store gives back
   else no dispute
     Note over R: final and renewable from disputeUntil
@@ -154,7 +154,7 @@ flowchart LR
   policy["SimplexNamePolicy"] -->|"registerWithLabel(..., 0)"| registrar
   registrar -->|"setSubnodeRecord(baseNode, id, 0, 0, 0)"| registry["ENSRegistry"]
   registrar -->|"onExpiryChanged(node, 0)"| subnames["SubnameRegistrar"]
-  service -->|"purge(node, labels)"| subnames
+  service -->|"purge(node, labelhashes)"| subnames
 ```
 
 `BaseRegistrarImplementation`:
@@ -201,7 +201,7 @@ Sizes in bytes, limit 24,576:
 - The app's claim flow and the dApp's claim review: the dispute end before a claim, with the recipient's acknowledgement (D8). The app and the dApp offer a renewal only from `disputeUntil`.
 - The names resolver: a name with expiry 0, and every node under it, answers as unregistered: `purge` deletes the `SubnameRegistrar`'s subnames, while subnodes the holder created directly in the registry keep their owner, resolver and records, also after the next registration, until the next holder replaces them.
 - `docs/plans/names-v2-launch-to-freeze-plan.md`: `unregister` in the guardian's and the admin's powers, and its routine operation.
-- Indexers: `unregister` emits `NameUnregistered(id)` and no ERC-721 `Transfer`; a subgraph or the dApp's name list reads it, or filters by `nameExpires`, as for a lapsed name.
+- Indexers: `unregister` emits `NameUnregistered(id)` and no ERC-721 `Transfer`. The subgraph (`ens-subgraph` at `a80c67b`) sets a name's expiry only from `NameRegistered` and `NameRenewed`, so it gains a `NameUnregistered` handler that sets the expiry to 0; filtering by expiry holds only with on-chain `nameExpires` until then.
 - This repository: `CLAUDE.md` and `docs/security.md` state `unregister` and the narrower freeze guarantee; the deployment scripts for the redeployed registrar come with the registrar's upgradability change.
 - simplex-chat `docs/NAMES-CONDITIONS.md`, linked on chain at `d94981224` (#8135): a version with the dispute period (branch `ab/names-conditions-dispute`). It follows the version for the upgradeable stack, which states upgradeability and no dispute period; the change merged second merges master. Its links go into `terms.simplex.json` and on chain as above.
 
