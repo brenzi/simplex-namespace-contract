@@ -18,17 +18,17 @@ A card payment can be disputed or refunded for about 120 days after it settles, 
 | D6 | Renewals | final; after a disputed renewal the guardian reserves the name, so its next renewal is refused | the owner, 19 Nov |
 | D7 | Registrar upgrades | the admin, through the registrar's own ProxyAdmin, until that ProxyAdmin's ownership is renounced, independently of `controller.freeze()` | the owner, 19 Nov |
 | D8 | Transfers during the dispute period | allowed; clients show the dispute end and ask the recipient's acknowledgement | the owner, 18 Nov |
-| D9 | What is public | each name's `disputeUntil`, and with it the class of its payment: 0, 14 or 120 days | decided, from D8; open to the owner |
+| D9 | What is public | each name's `disputeUntil`, and with it the class of its payment: 0, 14 or 120 days | the owner, 19 Nov |
 | D10 | Who unregisters | the guardian or the admin | the owner, 19 Nov |
 | D11 | Placement | the registrar stores `disputeUntil`, written at registration and deleted at unregistration, unregisters only before it and only when the caller names it, and renews only from it; the controller's `unregister(label, until)` for the guardian and the admin | decided |
 | D12 | Unregistration | the records cleared on the default resolver and on a past default the node points at; then the expiry, the registry node's owner and its resolver set to 0, and the `SubnameRegistrar`'s subnames ended; the next registration burns the token and invalidates the subnames, as for a lapsed name | decided |
 | D13 | In-app payments and codes | in-app 120 days; a code takes the days of the payment that bought it, at least 14 | decided |
-| D14 | Renewals during the dispute period | refused by the registrar until `disputeUntil` (`DisputePeriodNotOver`), on every controller's path, so a final renewal is never erased by an unregistration; the shortest term is 730 days, so a name cannot lapse meanwhile | decided, from D5 and D6 |
+| D14 | Renewals during the dispute period | refused by the registrar until `disputeUntil` (`DisputePeriodNotOver`), on every controller's path, so a final renewal is never erased by an unregistration; the shortest term is 730 days, so a name cannot lapse meanwhile | the owner, 19 Nov |
 | D15 | A registration without a dispute period | stores `disputeUntil` 0 | decided |
 | D16 | Storage | `disputeUntil` follows the registrar's last state variable | decided |
-| D17 | Terms | the names conditions (simplex-chat `docs/NAMES-CONDITIONS.md`, the general and the community terms on chain) state the dispute period and the end of a registration within it | the owner, 19 Nov |
+| D17 | Terms | the names conditions (simplex-chat `docs/NAMES-CONDITIONS.md`, the general and the community terms on chain) state the dispute period and the end of a registration within it, only if it was made without a valid order, or a payment used for it is disputed, reversed or refunded in full | the owner, 19 Nov |
 | D18 | A compromised guardian | can take a name in its dispute period | accepted by the owner, 19 Nov |
-| D19 | A payment for the name disputed, reversed or refunded in full, and its registration not ended | the name stays; the guardian reserves it, as after a disputed renewal (D6) | decided, from D6 |
+| D19 | A payment for the name disputed, reversed or refunded in full, and its registration not ended | the name stays; the guardian reserves it, as after a disputed renewal (D6), and the conditions state that further extensions can be refused | the owner, 19 Nov |
 
 ## 3. States
 
