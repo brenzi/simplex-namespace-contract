@@ -179,7 +179,7 @@ flowchart LR
 
 The registrar's, controller's and policy's implementations and the new sponsor with `setSponsor` land together, before `freeze()`: `registerWithLabel` changes its signature, and `setSponsor` ends at the freeze. The conditions with the dispute period (D17) are set with `setGeneralTerms` and `setCommunityTerms` in the same batch as `setSponsor`, so that every registration with a dispute period is made under them.
 
-At the rebase onto `ab/upgradeable-stack`, that plan's list of the registrar functions other contracts call gains `unregister(uint256,uint256)` and the four-argument `registerWithLabel`, and the registrar's storage-layout snapshot gains `disputeUntil` as its last variable.
+At the rebase onto `ab/upgradeable-stack`, the registrar's storage-layout snapshot gains `disputeUntil` as its last variable.
 
 Sizes in bytes, limit 24,576:
 
