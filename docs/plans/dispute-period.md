@@ -182,8 +182,8 @@ Sizes in bytes, limit 24,576:
 
 | Contract | #49 | This change |
 |---|---|---|
-| BaseRegistrarImplementation | 19,556 | 20,539 |
-| SimplexController | 21,889 | 22,709 |
+| BaseRegistrarImplementation | 19,556 | 20,614 |
+| SimplexController | 21,889 | 22,717 |
 | SimplexNamePolicy | 22,652 | 22,665 |
 | SimplexSponsor | 5,840 | 5,856 |
 
