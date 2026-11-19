@@ -26,7 +26,7 @@ A card payment can be disputed or refunded for about 120 days after it settles, 
 | D14 | Renewals during the dispute period | refused by the registrar until `disputeUntil` (`DisputePeriodNotOver`), on every controller's path, so a final renewal is never erased by an unregistration; the shortest term is 730 days, so a name cannot lapse meanwhile | decided, from D5 and D6 |
 | D15 | A registration without a dispute period | stores `disputeUntil` 0 | decided |
 | D16 | Storage | `disputeUntil` follows the registrar's last state variable | decided |
-| D17 | Terms | the general and community terms state the dispute period and the end of a registration whose payment is disputed, reversed or refunded within it | the owner, 19 Nov |
+| D17 | Terms | the names conditions (simplex-chat `docs/NAMES-CONDITIONS.md`, the general and the community terms on chain) state the dispute period and the end of a registration within it | the owner, 19 Nov |
 | D18 | A compromised guardian | can take a name in its dispute period | accepted by the owner, 19 Nov |
 | D19 | A dispute after `disputeUntil` | the name stays; the guardian reserves it, as after a disputed renewal (D6) | decided, from D6 |
 
@@ -176,7 +176,7 @@ flowchart LR
 
 `SimplexSponsor`, a new deployment: `registerWithCredit(registration, disputeDays, nonce, deadline, sig)` and `RegisterName` with `uint256 disputeDays`; `renewWithCredit` as #49.
 
-The registrar's, controller's and policy's implementations and the new sponsor with `setSponsor` land together, before `freeze()`: `registerWithLabel` changes its signature, and `setSponsor` ends at the freeze. The terms with the dispute period (D17) are set with `setGeneralTerms` and `setCommunityTerms` before the new sponsor.
+The registrar's, controller's and policy's implementations and the new sponsor with `setSponsor` land together, before `freeze()`: `registerWithLabel` changes its signature, and `setSponsor` ends at the freeze. The conditions with the dispute period (D17) are set with `setGeneralTerms` and `setCommunityTerms` in the same batch as `setSponsor`, so that every registration with a dispute period is made under them.
 
 At the rebase onto `ab/upgradeable-stack`, that plan's list of the registrar functions other contracts call gains `unregister(uint256,uint256)` and the four-argument `registerWithLabel`, and the registrar's storage-layout snapshot gains `disputeUntil` as its last variable.
 
@@ -195,8 +195,8 @@ Sizes in bytes, limit 24,576:
 - simplex.domains: `RegisterName` with `disputeDays`; the dispute end on the order page.
 - The app's claim flow and the dApp's claim review: the dispute end before a claim, with the recipient's acknowledgement (D8). The app and the dApp offer a renewal only from `disputeUntil`.
 - The names resolver: a name with expiry 0, and every subname under it, answers as unregistered.
-- This repository: `CLAUDE.md` and `docs/security.md` state `unregister` and the narrower freeze guarantee; the terms drafts in `test/fixtures/terms/` state the dispute period (branch `ab/dispute-terms`); the deployment scripts for the redeployed registrar come with the registrar's upgradability change.
-- The published terms, now placeholders at simplex-chat `72fcd35`: the texts with the dispute period, committed and tagged as `general-terms-vN` and `community-terms-vN`, and their links in `terms.simplex.json`.
+- This repository: `CLAUDE.md` and `docs/security.md` state `unregister` and the narrower freeze guarantee; the deployment scripts for the redeployed registrar come with the registrar's upgradability change.
+- simplex-chat `docs/NAMES-CONDITIONS.md`, linked on chain at `d94981224` (#8135): a version with the dispute period (branch `ab/names-dispute-period`). It follows the version for the upgradeable stack, which states upgradeability and no dispute period; the change that lands second rebases. Its links go into `terms.simplex.json` and on chain as above.
 
 ## 7. Tests
 
