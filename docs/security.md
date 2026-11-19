@@ -330,6 +330,7 @@ resolution and, in an earlier revision, an on-chain edit-credit system.
 | `removeReservedNames`, `registerReserved` (name policy), `setDefaultResolver`, `setMinCharLength`, `setPriceOracle` | owner only | Permissive directions stay behind the timelock. `registerReserved` also releases the reservation, so the holder can renew. |
 | `setSponsor(address)` | owner only | The one contract allowed to call `registerSponsored` / `renewSponsored`, trusted with the allowance and the owner-consent check. Dies at `freeze()`. |
 | `freeze()` | owner only | One-way. Makes the implementation, the name policy's implementation and the sponsor permanent and seals `setPublicSalesOpen`. Refuses while sales are closed or no sponsor is set, so a mis-ordered freeze cannot shut the payable or the sponsored path forever. |
+| `SimplexController.unregister(label)` | owner **or** beneficiary | Only before the name's `disputeUntil`, which a sponsored registration sets 14 to 120 days out, from the buyer's signed `disputeDays`; the payable path and `registerReserved` set none. Clears the default resolver's records, then sets the expiry, the registry node's owner and resolver to 0 and ends the subnames. The name is available to anyone at once. Survives `freeze()`: disputes continue after it. A renewal is refused until `disputeUntil`, so it cannot be erased. |
 | `SimplexNamePolicy.addCommunityNames(string[])` | owner **or** beneficiary | Restrictive: a listed name can then be registered or received only by someone who accepts the current community terms, except through `registerReserved` and other registrar controllers (admin), under an off-chain agreement. Skips any name that is registered or in its grace period, since its holder never accepted them. Sent privately, like reservations: a pending listing reveals the name, which a squatter can then register under the general terms. |
 | `removeCommunityNames`, `setGeneralTerms(string)`, `setCommunityTerms(string)` | owner only | Each setter stores a link to one file at one commit and its keccak256; an empty link reverts. After a new link, an acceptance of that kind not yet used at registration or claim must be made again; the other kind's acceptances stay valid, and existing holders are not asked to accept. |
 | `setNamePolicy(address)` on the controller and on the registrar | owner only | Survive `freeze()`. The policy is called on every paid or sponsored registration, every renewal and every non-controller transfer of every name, so a wrong or hostile target blocks them. The controller's setter refuses zero, so the reserved list always applies; the registrar's accepts zero, which drops the transfer check. A setter reverts unless the target's `controller()` (or `registrar()`) returns that controller or registrar: this catches a target bound to another controller or registrar, not a hostile one, so check that both pointers reference the same instance. The controller's setter also reverts for the policy's implementation; the registrar's accepts it, and every holder transfer then reverts until the pointer is corrected. A new policy contract starts empty: its reservations must be in place before the controller points at it, and it cannot list held names as community names; upgrading the policy keeps both lists. |
@@ -352,6 +353,11 @@ saying it does:
   policy;
 - the owner or the guardian can stop the renewal of a held name by reserving it,
   and once its grace period ends only `registerReserved` can assign it;
+- the owner or the guardian can unregister a sponsored name before its
+  `disputeUntil`, at most 120 days after its registration. A key that does so
+  can also register the name to itself at once, with a commitment made before;
+  before the dispute period, the guardian could mint only names that were
+  already available;
 - the owner or the guardian can list community names, and the owner can set new
   terms, remove names from the list, repoint the controller's pointer to
   `SimplexNamePolicy`, and repoint or unset the registrar's. Unsetting the
@@ -362,9 +368,10 @@ saying it does:
 That is deliberate — brand reservation, outreach and disputes have to continue
 for the life of the namespace, which is why the owner is never renounced. The
 guarantee a freeze gives is narrower and worth stating exactly: **no key can
-change the code, and no key can take a name from its holder before its
-registration expires.** Names that are unregistered remain issuable by the two
-governance keys forever.
+change the code, and no key can take a name from its holder after its dispute
+period ends and before its registration expires.** A name registered through
+the payable path or `registerReserved` has no dispute period. Names that are
+unregistered remain issuable by the two governance keys forever.
 
 ### Bounds that are the registrar's job, not the contract's
 
@@ -717,7 +724,8 @@ Accepted, and new to this ledger:
 - **V1 — a compromised guardian is unrecoverable after the freeze.** Only the
   beneficiary may rotate itself, and the post-freeze upgrade escape is closed, so
   a compromised guardian permanently holds `withdraw` and `setRegistrarAllowance`.
-  No name can be taken from its holder before it expires, but the guardian can
+  No name can be taken from its holder after its dispute period ends and before
+  it expires, but the guardian can unregister a name in its dispute period and
   reserve held names, which stops their renewal, and reserve them again whenever
   the admin releases them. The admin's recovery is to release and renew each
   such name in one atomic timelock batch, every term, or to add a
