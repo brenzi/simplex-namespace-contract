@@ -55,7 +55,7 @@ The admin key and the guardian key are two authorisation tiers, ranked by how mu
 compromised key can do. The admin tier can replace the controller's code, and new code can do
 anything the contracts allow, so its reach has no bound. The guardian tier is bounded in kind:
 halt sales, set registrar allowances, redirect revenue, reserve names (which also stops their
-renewal), and nothing else. It is not bounded in amount: it can give itself any allowance and
+renewal), unregister a name in its dispute period, and nothing else. It is not bounded in amount: it can give itself any allowance and
 mint unreserved names with it, an accepted risk (`docs/security.md`, V1). They are separate
 keys so that one compromise does not hand over both tiers. The timelock, the Safes and the
 multi-signer rotation are deferred to GOV8, not abandoned.
@@ -65,8 +65,8 @@ multi-signer rotation are deferred to GOV8, not abandoned.
 | Key | GOV2 until GOV9 | After GOV9 |
 |---|---|---|
 | Deploy key | nothing | nothing |
-| Admin key | upgrade the controller and the name policy; `setSponsor`; `namePolicy.removeReservedNames`; `namePolicy.registerReserved`; `setMinCharLength`; `setDefaultResolver`; `setPriceOracle`; `priceOracle.setPrices`; `priceOracle.setUsdOracle`; `priceOracle.setPremium`; `recoverFunds`; `addController`; `removeController`; `setMetadataRenderer`; `setMaxLabelLength`; `setSubnameHook`; `setNamePolicy` (registrar and controller); `namePolicy.removeCommunityNames`; `namePolicy.setGeneralTerms`; `namePolicy.setCommunityTerms`; `baseRegistrar.setResolver`; `Root.setResolver`; `Root.setController`; `Root.lock`; `freeze()` | the same list without the upgrade calls, `setSponsor` and `freeze()`, since all are used up |
-| Guardian key | `namePolicy.addReservedNames`; `namePolicy.addCommunityNames`; `setPublicSalesOpen`; `sponsor.setRegistrarAllowance`; `setBeneficiary`; receives `withdraw()` | the same list without `setPublicSalesOpen` |
+| Admin key | upgrade the controller and the name policy; `setSponsor`; `namePolicy.removeReservedNames`; `namePolicy.registerReserved`; `setMinCharLength`; `setDefaultResolver`; `setPriceOracle`; `priceOracle.setPrices`; `priceOracle.setUsdOracle`; `priceOracle.setPremium`; `recoverFunds`; `addController`; `removeController`; `setMetadataRenderer`; `setMaxLabelLength`; `setSubnameHook`; `setNamePolicy` (registrar and controller); `namePolicy.removeCommunityNames`; `namePolicy.setGeneralTerms`; `namePolicy.setCommunityTerms`; `baseRegistrar.setResolver`; `Root.setResolver`; `Root.setController`; `Root.lock`; `controller.unregister`; `freeze()` | the same list without the upgrade calls, `setSponsor` and `freeze()`, since all are used up |
+| Guardian key | `namePolicy.addReservedNames`; `namePolicy.addCommunityNames`; `setPublicSalesOpen`; `sponsor.setRegistrarAllowance`; `setBeneficiary`; `controller.unregister`; receives `withdraw()` | the same list without `setPublicSalesOpen` |
 | Registrar hot wallet | `sponsor.registerWithCredit` (with the owner's `RegisterName` signature); `sponsor.renewWithCredit`; and relaying signed user requests: `approveWithSig`, `claimWithSig`, `setTextWithSig`, `clearRecordsWithSig`, `setApprovalForAllWithSig`, `createSubnameWithSig`, `deleteSubnameWithSig`, `commitUnderGeneralTermsWithSig`, `commitUnderCommunityTermsWithSig`, `acceptGeneralTermsForClaimWithSig`, `acceptCommunityTermsForClaimWithSig` | same |
 | Anyone | `commit`; `commitUnderGeneralTerms`; `commitUnderCommunityTerms`; `acceptGeneralTermsForClaim`; `acceptCommunityTermsForClaim`; payable `register` and `renew`; `withdraw`; all signed-request paths; record writes on names they own; `reclaim`; subname create and delete; `purge` | same |
 
@@ -123,7 +123,7 @@ than seven days of notice. GOV8 buys the notice back.
 ## 6. Why it is built this way
 
 **Two keys, split by direction.** The guardian stops things: reserve a name, pause sales, cut
-a registrar's allowance to zero. It also funds registrars and opens sales (A3, A4), the two
+a registrar's allowance to zero, end a registration in its dispute period. It also funds registrars and opens sales (A3, A4), the two
 permissive powers on the fast key. The admin changes things: release reserved names, hand names
 to brands.
 
@@ -209,7 +209,9 @@ remaining expiry, its `simplex.contact` and `simplex.channel` records, and any s
 the new deployment re-mints the snapshot directly, with no user action and no signature.
 Subnames are the exception: only a name's holder can create them, and a name the admin holds
 reaches its holder only when the holder claims it, so re-creating them needs a purpose-built
-migration controller or the holders' signatures.
+migration controller or the holders' signatures. `registerReserved` writes no dispute period,
+so a redeploy ends every name's dispute period; a payment disputed after it is handled by a
+reservation ([`dispute-period.md`](./dispute-period.md), D19).
 
 **The order that makes it safe.**
 
@@ -403,6 +405,7 @@ in brackets.
 | List community names | guardian key *(guardian Safe, 2 sigs)* | `namePolicy.addCommunityNames([names])`, sent privately; names that are registered or in grace are skipped (`CommunityNameSkipped`) |
 | Publish new general terms or community terms | admin key *(admin Safe, timelock, 7 days)* | Commit the file to `simplex-chat/simplex-chat`, tag it `general-terms-vN` or `community-terms-vN`, wait until git.simplex.chat mirrors it, run `scripts/terms-check.mjs` on the link, then `namePolicy.setGeneralTerms(link)` or `namePolicy.setCommunityTerms(link)`. An acceptance of that kind not yet used at registration or claim must then be made again; existing holders are not asked to accept. |
 | Hold a disputed name | guardian key *(guardian Safe, 2 sigs)* | `namePolicy.addReservedNames([name], reason)`, sent privately (see below): the name can no longer be renewed. Settle with `removeReservedNames([name])` (admin, executed before the grace period ends; the holder keeps it) or, once the grace period has ended, `registerReserved` to whoever the ruling names |
+| End a registration whose payment is disputed, reversed or refunded in full, or which was made without a valid order | guardian key *(guardian Safe, 2 sigs)* | before its `disputeUntil`: `controller.unregister(label, baseRegistrar.disputeUntil(labelhash))`, then `subnameRegistrar.purge(node, labels)`, and the store refunds; cancel any other prepared `unregister` of the name (`docs/deployment.md`) |
 | Keep a lapsing brand name protected | guardian key *(guardian Safe, 2 sigs)* | for a name handed out by `registerReserved` and not renewed: `namePolicy.addReservedNames([name], reason)` before its grace period ends, sent privately |
 | Refill a registrar's allowance | guardian key *(guardian Safe, 2 sigs)* | `sponsor.setRegistrarAllowance(registrar, N)`, in attoUSD; replaces the old value rather than adding to it |
 | Cut off a compromised registrar | guardian key *(guardian Safe, 2 sigs)* | `sponsor.setRegistrarAllowance(registrar, 0)` |

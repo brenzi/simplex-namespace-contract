@@ -48,8 +48,8 @@ stateDiagram-v2
 | State | `unregister` | claim | renewal | `available` |
 |---|---|---|---|---|
 | disputable, before `disputeUntil` | guardian or admin | allowed; clients ask for an acknowledgement | `DisputePeriodNotOver` | false |
-| final | `DisputePeriodOver` | as #49 | as #49 | false |
-| unregistered | `DisputePeriodOver` | refused by `ownerOf` | refused by the registrar's `renew` | true |
+| final | `DisputePeriodOver` with `until` 0; `DisputeUntilMismatch` with any other | as #49 | as #49 | false |
+| unregistered | `DisputePeriodOver` with `until` 0; `DisputeUntilMismatch` with any other | refused by `ownerOf` | refused by the registrar's `renew` | true |
 
 ```
 BaseRegistrarImplementation
@@ -65,7 +65,7 @@ BaseRegistrarImplementation
     ... as #49
 
   unregister(id, until)                                                  controller only, live
-    disputeUntil[id] == until                                            else DisputeUntilMismatch(id)
+    disputeUntil[id] == until                                            else DisputeUntilMismatch(until, disputeUntil[id])
     block.timestamp < disputeUntil[id]                                   else DisputePeriodOver(id)
     delete disputeUntil[id]
     expiries[id] = 0
@@ -163,7 +163,7 @@ flowchart LR
 - `renew` refuses a renewal before `disputeUntil`;
 - `unregister(uint256 id, uint256 until)`, controller only;
 - event `NameUnregistered(uint256 indexed id)`;
-- errors `DisputePeriodOver(uint256 id)`, `DisputePeriodNotOver(uint256 id)` and `DisputeUntilMismatch(uint256 id)`.
+- errors `DisputePeriodOver(uint256 id)`, `DisputePeriodNotOver(uint256 id)` and `DisputeUntilMismatch(uint256 named, uint256 current)`.
 
 `SimplexController`:
 
@@ -195,7 +195,8 @@ Sizes in bytes, limit 24,576:
 - simplex-chat, store service: `disputeDays` per payment by D3 and D13, in the `RegisterName` digest and calldata, with a reveal refused when signed over another value; on `charge.dispute.created`, or on `charge.refunded` for a full refund, before `disputeUntil`, the guardian's `unregister(label, disputeUntil)`, then `purge` of the name's subnames and the refund; when a payment for the name is disputed, reversed or refunded in full and its registration is not ended, the guardian's `addReservedNames`; a renewal offered only from `disputeUntil`.
 - simplex.domains: `RegisterName` with `disputeDays`; the dispute end on the order page.
 - The app's claim flow and the dApp's claim review: the dispute end before a claim, with the recipient's acknowledgement (D8). The app and the dApp offer a renewal only from `disputeUntil`.
-- The names resolver: a name with expiry 0, and every subname under it, answers as unregistered.
+- The names resolver: a name with expiry 0, and every node under it, answers as unregistered: `purge` deletes the `SubnameRegistrar`'s subnames, while subnodes the holder created directly in the registry keep their owner, resolver and records until the name is registered again.
+- `docs/plans/names-v2-launch-to-freeze-plan.md`: `unregister` in the guardian's and the admin's powers, and its routine operation.
 - Indexers: `unregister` emits `NameUnregistered(id)` and no ERC-721 `Transfer`; a subgraph or the dApp's name list reads it, or filters by `nameExpires`, as for a lapsed name.
 - This repository: `CLAUDE.md` and `docs/security.md` state `unregister` and the narrower freeze guarantee; the deployment scripts for the redeployed registrar come with the registrar's upgradability change.
 - simplex-chat `docs/NAMES-CONDITIONS.md`, linked on chain at `d94981224` (#8135): a version with the dispute period (branch `ab/names-dispute-period`). It follows the version for the upgradeable stack, which states upgradeability and no dispute period; the change that lands second rebases. Its links go into `terms.simplex.json` and on chain as above.

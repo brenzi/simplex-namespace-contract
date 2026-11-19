@@ -406,7 +406,7 @@ key. `setPriceOracle` deliberately survives `freeze()`.
   transaction with the same nonce, or the timelock operation. Used when a payment of
   a sponsored registration is disputed or refunded: it clears the name's
   records on the default resolver and on a past default the name points at,
-  ends the registration and the subnames, and
+  ends the registration and the `SubnameRegistrar`'s subnames, and
   makes the name available at once. Then `subnameRegistrar.purge(node, labels)`
   deletes the subnames (permissionless), and the store refunds the payment.
   After a disputed renewal, reserve the name with `addReservedNames` instead.
