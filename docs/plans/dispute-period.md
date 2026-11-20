@@ -1,6 +1,6 @@
 # Dispute period — contract work plan
 
-Built on `simplex-namespace-contract` @ `c1cca32` and `ens-contracts` @ `1a11cda` (tag `simplex-mainnet-v1`, deployed), stacked on the upgradeable stack (`ab/upgradeable-stack` @ `c4479381`, plan in [#20](https://github.com/brenzi/simplex-namespace-contract/pull/20)) and on [ens-contracts #49](https://github.com/simplex-network/ens-contracts/pull/49) rebased onto it (`ab/holder-renewal-v2` @ `f5aeb011`). The change is on `ab/dispute-period-v2`; `ab/dispute-period` holds it on #49 at `7ff8c37`, before the rebase. Replaces the reversible-payments plan, `docs/plans/payment-reversal.md` on the branch `ab/payment-reversal`, which is kept aside.
+Built on `simplex-namespace-contract` @ `c1cca32` and `ens-contracts` @ `1a11cda` (tag `simplex-mainnet-v1`, deployed), stacked on the upgradeable stack (`ab/upgradeable-stack` @ `6eb2dd1d`, eight contracts behind proxies, plan in [#20](https://github.com/brenzi/simplex-namespace-contract/pull/20)) and on [ens-contracts #49](https://github.com/simplex-network/ens-contracts/pull/49) rebased onto it (`ab/holder-renewal-v2` @ `63eaec45`). The change is on `ab/dispute-period-v2`; `ab/dispute-period` holds it on #49 at `7ff8c37`, before the rebase. Replaces the reversible-payments plan, `docs/plans/payment-reversal.md` on the branch `ab/payment-reversal`, which is kept aside.
 
 ## 1. Problem
 
@@ -146,7 +146,7 @@ sequenceDiagram
 ```mermaid
 flowchart LR
   page["Names page"] -->|"RegisterName with disputeDays"| service["Store service"]
-  service -->|"registerWithCredit(..., disputeDays, ...)"| sponsor["SimplexSponsor<br/>new deployment"]
+  service -->|"registerWithCredit(..., disputeDays, ...)"| sponsor["SimplexSponsor<br/>upgradeable"]
   sponsor -->|"registerSponsored(registration, disputeDays)"| controller["SimplexController"]
   dapp["dApp"] -->|"register, payable"| controller
   guardian["Guardian or admin"] -->|"unregister(label, until)"| controller
@@ -176,13 +176,13 @@ flowchart LR
 
 `SimplexNamePolicy`: `registerReserved` registers with 0.
 
-`SimplexSponsor`, a new deployment: `registerWithCredit(registration, disputeDays, nonce, deadline, sig)` and `RegisterName` with `uint256 disputeDays`; `renewWithCredit` as #49.
+`SimplexSponsor`, behind its own proxy on the stack: `registerWithCredit(registration, disputeDays, nonce, deadline, sig)` and `RegisterName` with `uint256 disputeDays`; `renewWithCredit` as #49.
 
-The registrar's, controller's and policy's implementations and the new sponsor with `setSponsor` land together, before `freeze()`: `registerWithLabel` changes its signature, and `setSponsor` ends at the freeze. The conditions with the dispute period (D17) are set with `setGeneralTerms` and `setCommunityTerms` in the same batch as `setSponsor`, so that every registration with a dispute period is made under them.
+The registrar's, controller's, policy's and sponsor's implementations land together: `registerWithLabel`, `registerSponsored` and `registerWithCredit` change their signatures. The conditions with the dispute period (D17) are set with `setGeneralTerms` and `setCommunityTerms` in the same batch, so that every registration with a dispute period is made under them.
 
-If the change lands after the stack's deployment, as an upgrade of the registrar, the controller and the policy through their ProxyAdmins in one batch, `scripts/prepare-upgrade.mjs` names in `INTENDED` the selectors it replaces (`docs/upgrades.md`, invariant 5): `registerWithLabel(string,address,uint256)` on the registrar, and `registerSponsored` with its old argument list on the controller. The new sponsor is a new deployment with `setSponsor` in the same batch.
+If the change lands after the stack's deployment, as an upgrade of the registrar, the controller, the policy and the sponsor through their ProxyAdmins in one batch, `scripts/prepare-upgrade.mjs` names in `INTENDED` the selectors it replaces (`docs/upgrades.md`, invariant 5): `registerWithLabel(string,address,uint256)` on the registrar, `registerSponsored` with its old argument list on the controller, and `registerWithCredit` with its old argument list on the sponsor.
 
-The rebase onto `ab/upgradeable-stack` @ `c4479381` (done):
+The rebase onto `ab/upgradeable-stack` @ `6eb2dd1d` (done):
 
 - #49's renewal acceptances move to slot 8 of the policy's proxy, its `__gap` to `uint256[41]`;
 - the registrar's storage-layout snapshot gains `disputeUntil` at slot 22, its last variable;
