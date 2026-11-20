@@ -209,6 +209,8 @@ Sizes in bytes, limit 24,576:
 - The names resolver: a name with expiry 0, and every node under it, answers as unregistered: `purge` deletes the `SubnameRegistrar`'s subnames, while subnodes the holder created directly in the registry keep their owner, resolver and records, also after the next registration, until the next holder replaces them.
 - `docs/plans/names-v2-launch-to-freeze-plan.md`: `unregister` in the guardian's and the admin's powers, and its routine operation.
 - Indexers: `unregister` emits `NameUnregistered(id)` and no ERC-721 `Transfer`. The subgraph (`ens-subgraph` at `a80c67b`) sets a name's expiry only from `NameRegistered` and `NameRenewed`, so it gains a `NameUnregistered` handler that sets the expiry to 0; filtering by expiry holds only with on-chain `nameExpires` until then.
+- simplex-chat apps: the `RegisterName` signer planned in simplex-chat #8251 (types only now) signs `disputeDays` too.
+- Client changes of the store service, simplex.domains, the dApp and the names resolver: agent-bezzera-A, each merged with its contract pull request.
 - This repository: `CLAUDE.md` and `docs/security.md` state `unregister` and the narrower freeze guarantee; the deployment scripts for the redeployed registrar come with the registrar's upgradability change.
 - simplex-chat `docs/NAMES-CONDITIONS.md`, linked on chain at `d94981224` (#8135): a version with the dispute period (branch `ab/names-conditions-dispute`). It follows the version for the upgradeable stack, which states upgradeability and no dispute period; the change merged second merges master. Its links go into `terms.simplex.json` and on chain as above.
 
