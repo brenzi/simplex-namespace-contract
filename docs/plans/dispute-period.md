@@ -184,7 +184,6 @@ If the change lands after the stack's deployment, as an upgrade of the registrar
 
 - The four upgrades go in one Safe MultiSend batch: in separate transactions, every `registerWithCredit` reverts between the controller's and the sponsor's upgrade. `scripts/prepare-upgrade.mjs` simulates one `upgradeAndCall` at a time, so the whole batch is also simulated on a mainnet fork before it is signed, with a sponsored registration, a renewal and an `unregister` after it.
 - The store service switches to `RegisterName` with `disputeDays` and the new `registerWithCredit` at the batch: the old selectors are gone from the batch on, and the new ones revert before it. Registrations are paused in the store service from the batch's proposal until its execution.
-- The same holds for #49's `renewWithCredit(…, holder)`, upgraded in its own batch after this one.
 
 The rebase onto `ab/upgradeable-stack` @ `3a11f53a` (done):
 
