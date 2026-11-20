@@ -29,6 +29,7 @@ A card payment can be disputed or refunded for about 120 days after it settles, 
 | D17 | Terms | the names conditions (simplex-chat `docs/NAMES-CONDITIONS.md`, the general and the community terms on chain) state the dispute period and the end of a registration within it, only if it was made without a valid order, or a payment used for it is disputed, reversed or refunded in full | the owner, 19 Nov |
 | D18 | A compromised guardian | can take a name in its dispute period | accepted by the owner, 19 Nov |
 | D19 | A payment for the name disputed, reversed or refunded in full, and its registration not ended | the name stays; the guardian reserves it, as after a disputed renewal (D6), and the conditions state that further extensions can be refused | the owner, 19 Nov |
+| D20 | The changed `RegisterName` and `registerWithCredit` | replaced in place, by an upgrade executed before the registrar step of the stack (#20, D21), so the first sponsored registration on v2 is signed in the new form; the store service and the webstore sign and send only the new form | the owner, 20 Nov |
 
 ## 3. States
 
@@ -183,7 +184,8 @@ The registrar's, controller's, policy's and sponsor's implementations land toget
 If the change lands after the stack's deployment, as an upgrade of the registrar, the controller, the policy and the sponsor through their ProxyAdmins in one batch, `scripts/prepare-upgrade.mjs` names in `INTENDED` the selectors it replaces (`docs/upgrades.md`, invariant 5): `registerWithLabel(string,address,uint256)` on the registrar, `registerSponsored` with its old argument list on the controller, and `registerWithCredit` with its old argument list on the sponsor.
 
 - The four upgrades go in one Safe MultiSend batch: in separate transactions, every `registerWithCredit` reverts between the controller's and the sponsor's upgrade. `scripts/prepare-upgrade.mjs` simulates one `upgradeAndCall` at a time, so the whole batch is also simulated on a mainnet fork before it is signed, with a sponsored registration, a renewal and an `unregister` after it.
-- The store service switches to `RegisterName` with `disputeDays` and the new `registerWithCredit` at the batch: the old selectors are gone from the batch on, and the new ones revert before it. Registrations are paused in the store service from the batch's proposal until its execution.
+- Way of `docs/upgrades.md`, invariant 5: replacement, without the old form beside it (D20). The batch executes before the registrar step (#20, D21), so no `RegisterName` in the old form is signed for v2's sponsor, and sponsored registrations are interrupted for no time.
+- Signers of `RegisterName` at the batch, by the code: the webstore (simplex.domains `webapp/src/flow.ts:90`); the store service verifies and sends it (simplex-chat `names` @ `0410929`, `Registration.hs:121`, `Worker.hs:311`); no SimpleX app version signs it (simplex-chat #8251, a draft, adds the types). Both ship the new form before the registrar step.
 
 The rebase onto `ab/upgradeable-stack` @ `3a11f53a` (done):
 
