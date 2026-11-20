@@ -194,7 +194,7 @@ The rebase onto `ab/upgradeable-stack` @ `ad2a52f0` (done):
 
 - the registrar's storage-layout snapshot gains `disputeUntil` at slot 22, its last variable;
 - that branch removes `controller.freeze()` and `frozen`, so the test "is made without a default resolver and after the freeze" keeps only its default-resolver half, and the mutant `if (frozen) revert Frozen();` goes;
-- the statements on `freeze()` in this plan, `CLAUDE.md`, `docs/security.md` and `docs/deployment.md` follow the wording of that branch's documents when its namespace change (#20) merges.
+- the statements on `freeze()` in `CLAUDE.md`, `docs/security.md`, `docs/deployment.md` and the launch-to-freeze plan follow the wording of #20's documents (done at the merge of #20).
 
 Sizes in bytes, limit 24,576:
 
@@ -235,7 +235,7 @@ Sizes in bytes, limit 24,576:
 - a claim during the dispute period moves the name, and an `unregister` then takes it from the recipient;
 - a renewal on each path reverts `DisputePeriodNotOver` one second before `disputeUntil` and succeeds at it;
 - the default resolver's records are cleared although the holder pointed the node at 0, and a past default's records although the default was rotated;
-- `unregister` without a default resolver, and after `freeze()`;
+- `unregister` without a default resolver;
 - a re-registration writes a new dispute end, and an `unregister` naming the earlier one reverts `DisputeUntilMismatch`;
 - the registrar's `unregister` reverts for every caller but a controller;
 - `test/ethregistrar/TestBaseRegistrar.test.ts` passes the new argument and runs in the fork's CI;
