@@ -1,6 +1,6 @@
 # Dispute period — contract work plan
 
-Built on `simplex-namespace-contract` @ `c1cca32` and `ens-contracts` @ `1a11cda` (tag `simplex-mainnet-v1`, deployed), stacked on the upgradeable stack (`ab/upgradeable-stack` @ `6eb2dd1d`, eight contracts behind proxies, plan in [#20](https://github.com/brenzi/simplex-namespace-contract/pull/20)) and on [ens-contracts #49](https://github.com/simplex-network/ens-contracts/pull/49) rebased onto it (`ab/holder-renewal-v2` @ `63eaec45`). The change is on `ab/dispute-period-v2`; `ab/dispute-period` holds it on #49 at `7ff8c37`, before the rebase. Replaces the reversible-payments plan, `docs/plans/payment-reversal.md` on the branch `ab/payment-reversal`, which is kept aside.
+Built on `simplex-namespace-contract` @ `c1cca32` and `ens-contracts` @ `1a11cda` (tag `simplex-mainnet-v1`, deployed), stacked on the upgradeable stack, [ens-contracts #50](https://github.com/simplex-network/ens-contracts/pull/50) (`ab/upgradeable-stack` @ `3a11f53a`, eight contracts behind proxies, plan in [#20](https://github.com/brenzi/simplex-namespace-contract/pull/20)). The change is [ens-contracts #51](https://github.com/simplex-network/ens-contracts/pull/51) on `ab/dispute-period-v2`. Merge order (the owner, 20 Nov): #50, #51, then [#49](https://github.com/simplex-network/ens-contracts/pull/49), the holder-only renewal, stacked on #51. `ab/dispute-period` holds an earlier version on #49 at `7ff8c37`. Replaces the reversible-payments plan, `docs/plans/payment-reversal.md` on the branch `ab/payment-reversal`, which is kept aside.
 
 ## 1. Problem
 
@@ -48,22 +48,22 @@ stateDiagram-v2
 | State | `unregister` | claim | renewal | `available` |
 |---|---|---|---|---|
 | disputable, before `disputeUntil` | guardian or admin | allowed; clients ask for an acknowledgement | `DisputePeriodNotOver` | false |
-| final, `disputeUntil` 0 | `DisputePeriodOver` with `until` 0; `DisputeUntilMismatch` with any other | as #49 | as #49 | false |
-| final, dispute period passed | `DisputePeriodOver` with `until` equal to `disputeUntil`; `DisputeUntilMismatch` with any other | as #49 | as #49 | false |
+| final, `disputeUntil` 0 | `DisputePeriodOver` with `until` 0; `DisputeUntilMismatch` with any other | as #50 | as #50 | false |
+| final, dispute period passed | `DisputePeriodOver` with `until` equal to `disputeUntil`; `DisputeUntilMismatch` with any other | as #50 | as #50 | false |
 | unregistered | `DisputePeriodOver` with `until` 0; `DisputeUntilMismatch` with any other | refused by `ownerOf` | refused by the registrar's `renew` | true |
 
 ```
 BaseRegistrarImplementation
-  ... as #49, every state variable
+  ... as #50, every state variable
   disputeUntil      mapping(uint256 => uint256)   public, written at registration, deleted at unregistration
 
   registerWithLabel(label, owner, duration, disputePeriod)              controller only
-    ... as #49
+    ... as #50
     disputeUntil[id] = disputePeriod == 0 ? 0 : block.timestamp + disputePeriod
 
   renew(id, duration)                                                    controller only, live
     block.timestamp >= disputeUntil[id]                                  else DisputePeriodNotOver(id)
-    ... as #49
+    ... as #50
 
   unregister(id, until)                                                  controller only, live
     disputeUntil[id] == until                                            else DisputeUntilMismatch(until, disputeUntil[id])
@@ -76,21 +76,21 @@ BaseRegistrarImplementation
 
 SimplexController
   register(registration)                                                 payable
-    ... as #49, disputePeriod 0
+    ... as #50, disputePeriod 0
   registerSponsored(registration, disputeDays)                           sponsor only
     MIN_DISPUTE_DAYS <= disputeDays <= MAX_DISPUTE_DAYS                  else DisputeDaysOutOfRange(disputeDays)
-    ... as #49, disputePeriod = disputeDays days
+    ... as #50, disputePeriod = disputeDays days
   unregister(label, until)                                               owner or beneficiary
     _retireStaleRecords(namehash)                                        the default or a past default the node points at
     defaultResolver != 0 => defaultResolver.clearRecords(namehash)
     base.unregister(uint256(keccak256(label)), until)
 
 SimplexNamePolicy.registerReserved(label, owner, duration)
-  ... as #49, disputePeriod 0
+  ... as #50, disputePeriod 0
 
 SimplexSponsor.registerWithCredit(registration, disputeDays, nonce, deadline, sig)
   RegisterName(string label,address owner,uint256 duration,address resolver,bytes[] data,uint256 disputeDays,uint256 nonce,uint256 deadline)
-  ... as #49
+  ... as #50
   controller.registerSponsored(registration, disputeDays)
 ```
 
@@ -176,7 +176,7 @@ flowchart LR
 
 `SimplexNamePolicy`: `registerReserved` registers with 0.
 
-`SimplexSponsor`, behind its own proxy on the stack: `registerWithCredit(registration, disputeDays, nonce, deadline, sig)` and `RegisterName` with `uint256 disputeDays`; `renewWithCredit` as #49.
+`SimplexSponsor`, behind its own proxy on the stack: `registerWithCredit(registration, disputeDays, nonce, deadline, sig)` and `RegisterName` with `uint256 disputeDays`; `renewWithCredit` as #50.
 
 The registrar's, controller's, policy's and sponsor's implementations land together: `registerWithLabel`, `registerSponsored` and `registerWithCredit` change their signatures. The conditions with the dispute period (D17) are set with `setGeneralTerms` and `setCommunityTerms` in the same batch, so that every registration with a dispute period is made under them.
 
@@ -184,23 +184,22 @@ If the change lands after the stack's deployment, as an upgrade of the registrar
 
 - The four upgrades go in one Safe MultiSend batch: in separate transactions, every `registerWithCredit` reverts between the controller's and the sponsor's upgrade. `scripts/prepare-upgrade.mjs` simulates one `upgradeAndCall` at a time, so the whole batch is also simulated on a mainnet fork before it is signed, with a sponsored registration, a renewal and an `unregister` after it.
 - The store service switches to `RegisterName` with `disputeDays` and the new `registerWithCredit` at the batch: the old selectors are gone from the batch on, and the new ones revert before it. Registrations are paused in the store service from the batch's proposal until its execution.
-- The same holds for #49's `renewWithCredit(…, holder)` when #49 is upgraded in its own batch before this one.
+- The same holds for #49's `renewWithCredit(…, holder)`, upgraded in its own batch after this one.
 
-The rebase onto `ab/upgradeable-stack` @ `6eb2dd1d` (done):
+The rebase onto `ab/upgradeable-stack` @ `3a11f53a` (done):
 
-- #49's renewal acceptances move to slot 8 of the policy's proxy, its `__gap` to `uint256[41]`;
 - the registrar's storage-layout snapshot gains `disputeUntil` at slot 22, its last variable;
 - that branch removes `controller.freeze()` and `frozen`, so the test "is made without a default resolver and after the freeze" keeps only its default-resolver half, and the mutant `if (frozen) revert Frozen();` goes;
 - the statements on `freeze()` in this plan, `CLAUDE.md`, `docs/security.md` and `docs/deployment.md` follow the wording of that branch's documents when its namespace change (#20) merges.
 
 Sizes in bytes, limit 24,576:
 
-| Contract | #49 on the stack | This change |
+| Contract | #50 | This change |
 |---|---|---|
 | BaseRegistrarImplementation | 20,166 | 21,248 |
-| SimplexController | 18,109 | 18,934 |
-| SimplexNamePolicy | 18,164 | 18,177 |
-| SimplexSponsor | 5,840 | 5,856 |
+| SimplexController | 17,841 | 18,666 |
+| SimplexNamePolicy | 15,779 | 15,792 |
+| SimplexSponsor | 5,779 | 5,795 |
 
 ## 6. Effects outside this repository
 
