@@ -30,6 +30,7 @@ A card payment can be disputed or refunded for about 120 days after it settles, 
 | D18 | A compromised guardian | can take a name in its dispute period | accepted by the owner, 19 Nov |
 | D19 | A payment for the name disputed, reversed or refunded in full, and its registration not ended | the name stays; the guardian reserves it, as after a disputed renewal (D6), and the conditions state that further extensions can be refused | the owner, 19 Nov |
 | D20 | The changed `RegisterName` and `registerWithCredit` | replaced in place, by an upgrade executed before the registrar step of the stack (#20, D21), so the first sponsored registration on v2 is signed in the new form; the store service and the webstore sign and send only the new form | the owner, 20 Nov |
+| D21 | Delivery | this change merges before run 1 of the stack (#20) and is deployed by it, so D20's upgrade is not made; the conditions with the dispute period (#8271, merged after #8272) are the terms run 1 sets; #49 merges after the deployment and is its first upgrade batch | the owner, 20 Nov, relayed by agent-bezzera-B: "#50 #51 merge before deploy. #49 might be merged after deploy and run a contract update" |
 
 ## 3. States
 
@@ -180,6 +181,8 @@ flowchart LR
 `SimplexSponsor`, behind its own proxy on the stack: `registerWithCredit(registration, disputeDays, nonce, deadline, sig)` and `RegisterName` with `uint256 disputeDays`; `renewWithCredit` as #50.
 
 The registrar's, controller's, policy's and sponsor's implementations land together: `registerWithLabel`, `registerSponsored` and `registerWithCredit` change their signatures. The conditions with the dispute period (D17) are set with `setGeneralTerms` and `setCommunityTerms` in the same batch, so that every registration with a dispute period is made under them.
+
+Run 1 of the stack deploys this change (D21); run 1 sets the terms from `terms.simplex.json`, with the links of #8271's merge commit. The rest of this section applies only if run 1 precedes the merge.
 
 If the change lands after the stack's deployment, as an upgrade of the registrar, the controller, the policy and the sponsor through their ProxyAdmins in one batch, `scripts/prepare-upgrade.mjs` names in `INTENDED` the selectors it replaces (`docs/upgrades.md`, invariant 5): `registerWithLabel(string,address,uint256)` on the registrar, `registerSponsored` with its old argument list on the controller, and `registerWithCredit` with its old argument list on the sponsor.
 
