@@ -1,6 +1,6 @@
 # Dispute period — contract work plan
 
-Built on `simplex-namespace-contract` @ `c1cca32` and `ens-contracts` @ `1a11cda` (tag `simplex-mainnet-v1`, deployed), stacked on the upgradeable stack, [ens-contracts #50](https://github.com/simplex-network/ens-contracts/pull/50) (`ab/upgradeable-stack` @ `7b2d0ae0`, final, eight contracts behind proxies, plan in [#20](https://github.com/brenzi/simplex-namespace-contract/pull/20)). The change is [ens-contracts #51](https://github.com/simplex-network/ens-contracts/pull/51) on `ab/dispute-period-v2`. Merge order (the owner, 20 Nov): #50, #51, then [#49](https://github.com/simplex-network/ens-contracts/pull/49), the holder-only renewal, stacked on #51. `ab/dispute-period` holds an earlier version on #49 at `7ff8c37`. Replaces the reversible-payments plan, `docs/plans/payment-reversal.md` on the branch `ab/payment-reversal`, which is kept aside.
+Built on `simplex-namespace-contract` @ `c1cca32` and `ens-contracts` @ `1a11cda` (tag `simplex-mainnet-v1`, deployed), stacked on the upgradeable stack, [ens-contracts #50](https://github.com/simplex-network/ens-contracts/pull/50) (`ab/upgradeable-stack` @ `ad2a52f0`, final, eight contracts behind proxies, plan in [#20](https://github.com/brenzi/simplex-namespace-contract/pull/20)). The change is [ens-contracts #51](https://github.com/simplex-network/ens-contracts/pull/51) on `ab/dispute-period-v2`. Merge order (the owner, 20 Nov): #50, #51, then [#49](https://github.com/simplex-network/ens-contracts/pull/49), the holder-only renewal, stacked on #51. `ab/dispute-period` holds an earlier version on #49 at `7ff8c37`. Replaces the reversible-payments plan, `docs/plans/payment-reversal.md` on the branch `ab/payment-reversal`, which is kept aside.
 
 ## 1. Problem
 
@@ -187,7 +187,7 @@ If the change lands after the stack's deployment, as an upgrade of the registrar
 - Way of `docs/upgrades.md`, invariant 5: replacement, without the old form beside it (D20). The batch executes before the registrar step (#20, D21), so no `RegisterName` in the old form is signed for v2's sponsor, and sponsored registrations are interrupted for no time.
 - Signers of `RegisterName` at the batch, by the code: the webstore (simplex.domains `webapp/src/flow.ts:90`); the store service verifies and sends it (simplex-chat `names` @ `0410929`, `Registration.hs:121`, `Worker.hs:311`); no SimpleX app version signs it (simplex-chat #8251, a draft, adds the types). Both ship the new form before the registrar step.
 
-The rebase onto `ab/upgradeable-stack` @ `7b2d0ae0` (done):
+The rebase onto `ab/upgradeable-stack` @ `ad2a52f0` (done):
 
 - the registrar's storage-layout snapshot gains `disputeUntil` at slot 22, its last variable;
 - that branch removes `controller.freeze()` and `frozen`, so the test "is made without a default resolver and after the freeze" keeps only its default-resolver half, and the mutant `if (frozen) revert Frozen();` goes;
