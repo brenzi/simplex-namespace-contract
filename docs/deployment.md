@@ -513,9 +513,9 @@ The hot wallet also needs its own ETH for gas — the allowance authorises, it d
 not pay. Kill switch, same key, no delay:
 `sponsor.setRegistrarAllowance(0xREGISTRAR_HOT_WALLET, 0)`. The registrar calls
 `sponsor.registerWithCredit(registration, disputeDays, nonce, deadline, sig)`,
-where `disputeDays` is 120 for a card payment or an in-app purchase, 14 for BTC
-and XMR, and for a code the days of the payment that bought it (the controller
-accepts 14 to 120), and `sig` is the owner's EIP-712 `RegisterName`
+where `disputeDays` is 120 for a card payment or an in-app purchase, 14 for BTC,
+XMR and prepaid codes, and for a balance the largest days among the payments
+that funded it (the controller accepts 14 to 120), and `sig` is the owner's EIP-712 `RegisterName`
 signature (domain `SimplexSponsor`) over the registration, `disputeDays` and the
 owner's current `sponsor.nonces(owner)`, unless the registrar registers to itself.
 The registrar refuses a client's registration whose owner is the registrar's own
