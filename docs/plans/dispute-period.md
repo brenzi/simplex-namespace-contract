@@ -182,6 +182,10 @@ The registrar's, controller's, policy's and sponsor's implementations land toget
 
 If the change lands after the stack's deployment, as an upgrade of the registrar, the controller, the policy and the sponsor through their ProxyAdmins in one batch, `scripts/prepare-upgrade.mjs` names in `INTENDED` the selectors it replaces (`docs/upgrades.md`, invariant 5): `registerWithLabel(string,address,uint256)` on the registrar, `registerSponsored` with its old argument list on the controller, and `registerWithCredit` with its old argument list on the sponsor.
 
+- The four upgrades go in one Safe MultiSend batch: in separate transactions, every `registerWithCredit` reverts between the controller's and the sponsor's upgrade. `scripts/prepare-upgrade.mjs` simulates one `upgradeAndCall` at a time, so the whole batch is also simulated on a mainnet fork before it is signed, with a sponsored registration, a renewal and an `unregister` after it.
+- The store service switches to `RegisterName` with `disputeDays` and the new `registerWithCredit` at the batch: the old selectors are gone from the batch on, and the new ones revert before it. Registrations are paused in the store service from the batch's proposal until its execution.
+- The same holds for #49's `renewWithCredit(…, holder)` when #49 is upgraded in its own batch before this one.
+
 The rebase onto `ab/upgradeable-stack` @ `6eb2dd1d` (done):
 
 - #49's renewal acceptances move to slot 8 of the policy's proxy, its `__gap` to `uint256[41]`;
