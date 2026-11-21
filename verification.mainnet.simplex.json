@@ -3,73 +3,2681 @@
   "chainId": "1",
   "tld": "simplex",
   "deployer": "0x38D19404644fe24EE7d638229a732CbE8275E333",
-  "chainlinkEthUsd": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
-  "smpxNftAddr": "0x3AF6D9Ee862376A8DFC0a78847Eb20A153557291",
   "contracts": {
-    "ENSRegistry": {
-      "address": "0xa7f6497be2f1aa41aa2db55aba8a6e0145dff0d2",
+    "ENSRegistry@0x25483aa3A2F0C11741b3A7482b8873Dcc3eceB8C": {
+      "address": "0x25483aa3A2F0C11741b3A7482b8873Dcc3eceB8C",
       "artifact": "contracts/registry/ENSRegistry.sol/ENSRegistry.json",
-      "constructorArgs": "0x"
+      "constructorArgs": "0x",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28",
+      "storageLayout": [
+        {
+          "contract": "Initializable",
+          "label": "_initialized",
+          "slot": "0",
+          "offset": 0,
+          "type": {
+            "label": "uint8",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "Initializable",
+          "label": "_initializing",
+          "slot": "0",
+          "offset": 1,
+          "type": {
+            "label": "bool",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "ENSRegistry",
+          "label": "records",
+          "slot": "1",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => struct ENSRegistry.Record)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "struct ENSRegistry.Record",
+              "encoding": "inplace",
+              "numberOfBytes": "64",
+              "members": [
+                {
+                  "label": "owner",
+                  "slot": "0",
+                  "offset": 0,
+                  "type": {
+                    "label": "address",
+                    "encoding": "inplace",
+                    "numberOfBytes": "20"
+                  }
+                },
+                {
+                  "label": "resolver",
+                  "slot": "1",
+                  "offset": 0,
+                  "type": {
+                    "label": "address",
+                    "encoding": "inplace",
+                    "numberOfBytes": "20"
+                  }
+                },
+                {
+                  "label": "ttl",
+                  "slot": "1",
+                  "offset": 20,
+                  "type": {
+                    "label": "uint64",
+                    "encoding": "inplace",
+                    "numberOfBytes": "8"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "contract": "ENSRegistry",
+          "label": "operators",
+          "slot": "2",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => mapping(address => bool))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "mapping(address => bool)",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "address",
+                "encoding": "inplace",
+                "numberOfBytes": "20"
+              },
+              "value": {
+                "label": "bool",
+                "encoding": "inplace",
+                "numberOfBytes": "1"
+              }
+            }
+          }
+        },
+        {
+          "contract": "ENSRegistry",
+          "label": "nonces",
+          "slot": "3",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "ENSRegistry",
+          "label": "isTld",
+          "slot": "4",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => bool)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "bool",
+              "encoding": "inplace",
+              "numberOfBytes": "1"
+            }
+          }
+        }
+      ],
+      "immutables": {},
+      "functions": {
+        "0x5f2d080e": "APPROVE_ALL_TYPEHASH() view returns (bytes32)",
+        "0x3644e515": "DOMAIN_SEPARATOR() view returns (bytes32)",
+        "0xc4d66de8": "initialize(address) nonpayable returns ()",
+        "0xe985e9c5": "isApprovedForAll(address,address) view returns (bool)",
+        "0x1377286d": "isTld(bytes32) view returns (bool)",
+        "0x7ecebe00": "nonces(address) view returns (uint256)",
+        "0x02571be3": "owner(bytes32) view returns (address)",
+        "0xf79fe538": "recordExists(bytes32) view returns (bool)",
+        "0x0178b8bf": "resolver(bytes32) view returns (address)",
+        "0xa22cb465": "setApprovalForAll(address,bool) nonpayable returns ()",
+        "0x15865833": "setApprovalForAllWithSig(address,address,bool,uint256,uint256,bytes) nonpayable returns ()",
+        "0x5b0fc9c3": "setOwner(bytes32,address) nonpayable returns ()",
+        "0xcf408823": "setRecord(bytes32,address,address,uint64) nonpayable returns ()",
+        "0x1896f70a": "setResolver(bytes32,address) nonpayable returns ()",
+        "0x06ab5923": "setSubnodeOwner(bytes32,bytes32,address) nonpayable returns (bytes32)",
+        "0x5ef2c7f0": "setSubnodeRecord(bytes32,bytes32,address,address,uint64) nonpayable returns ()",
+        "0x14ab9038": "setTTL(bytes32,uint64) nonpayable returns ()",
+        "0x16a25cbd": "ttl(bytes32) view returns (uint64)"
+      },
+      "events": {
+        "0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31": "ApprovalForAll(address indexed,address indexed,bool)",
+        "0x7f26b83ff96e1f2b6a682f133852f6798a09c465da95921460cefb3847402498": "Initialized(uint8)",
+        "0xce0457fe73731f824cc272376169235128c118b49d344817417c6d108d155e82": "NewOwner(bytes32 indexed,bytes32 indexed,address)",
+        "0x335721b01866dc23fbee8b6b2c7b1e14d6f05c28cd35a2c934239f94095602a0": "NewResolver(bytes32 indexed,address)",
+        "0x1d4f9bbfc9cab89d66e1a1562f2233ccbf1308cb4f63de2ead5787adddb8fa68": "NewTTL(bytes32 indexed,uint64)",
+        "0xd4735d920b0f87494915f556dd9b54c8f309026070caea5c737245152564d266": "Transfer(bytes32 indexed,address)"
+      },
+      "errors": {
+        "0x756688fe": "InvalidNonce()",
+        "0x8baa579f": "InvalidSignature()",
+        "0xa9efcc18": "OwnerMustBeCaller()",
+        "0x0819bdcd": "SignatureExpired()"
+      }
     },
-    "BaseRegistrarImplementation": {
-      "address": "0x44052f7dc9c1cef20b0319a6b75288988dbb12a1",
+    "ENSRegistryProxy": {
+      "address": "0x3ce23ef6a00d89105299b52aadd72b92681414be",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json",
+      "constructorArgs": "0x00000000000000000000000025483aa3a2f0c11741b3a7482b8873dcc3eceb8c000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df400000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000024c4d66de800000000000000000000000038d19404644fe24ee7d638229a732cbe8275e33300000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "ENSRegistryProxyAdmin": {
+      "address": "0xB89AEAAa02D761EAE1c9697021e9E73867d14aE3",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/ProxyAdmin.sol/ProxyAdmin.json",
+      "constructorArgs": "0x000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df4",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "BaseRegistrarImplementation@0xcebB4E0d289462e848Cfef6233e3233B252F66e2": {
+      "address": "0xcebB4E0d289462e848Cfef6233e3233B252F66e2",
       "artifact": "contracts/ethregistrar/BaseRegistrarImplementation.sol/BaseRegistrarImplementation.json",
-      "constructorArgs": "0x000000000000000000000000a7f6497be2f1aa41aa2db55aba8a6e0145dff0d2c8b61bde3a2315c8073411d4c1b4a6282283fc42812754e53dafd9d87b9cf6fb"
+      "constructorArgs": "0x0000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414bec8b61bde3a2315c8073411d4c1b4a6282283fc42812754e53dafd9d87b9cf6fb",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28",
+      "storageLayout": [
+        {
+          "contract": "ERC721",
+          "label": "_name",
+          "slot": "0",
+          "offset": 0,
+          "type": {
+            "label": "string",
+            "encoding": "bytes",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "ERC721",
+          "label": "_symbol",
+          "slot": "1",
+          "offset": 0,
+          "type": {
+            "label": "string",
+            "encoding": "bytes",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "ERC721",
+          "label": "_owners",
+          "slot": "2",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint256 => address)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            }
+          }
+        },
+        {
+          "contract": "ERC721",
+          "label": "_balances",
+          "slot": "3",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "ERC721",
+          "label": "_tokenApprovals",
+          "slot": "4",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint256 => address)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            }
+          }
+        },
+        {
+          "contract": "ERC721",
+          "label": "_operatorApprovals",
+          "slot": "5",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => mapping(address => bool))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "mapping(address => bool)",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "address",
+                "encoding": "inplace",
+                "numberOfBytes": "20"
+              },
+              "value": {
+                "label": "bool",
+                "encoding": "inplace",
+                "numberOfBytes": "1"
+              }
+            }
+          }
+        },
+        {
+          "contract": "ERC721Enumerable",
+          "label": "_ownedTokens",
+          "slot": "6",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => mapping(uint256 => uint256))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "mapping(uint256 => uint256)",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "uint256",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "uint256",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              }
+            }
+          }
+        },
+        {
+          "contract": "ERC721Enumerable",
+          "label": "_ownedTokensIndex",
+          "slot": "7",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint256 => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "ERC721Enumerable",
+          "label": "_allTokens",
+          "slot": "8",
+          "offset": 0,
+          "type": {
+            "label": "uint256[]",
+            "encoding": "dynamic_array",
+            "numberOfBytes": "32",
+            "base": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "ERC721Enumerable",
+          "label": "_allTokensIndex",
+          "slot": "9",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint256 => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "Ownable",
+          "label": "_owner",
+          "slot": "10",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "Initializable",
+          "label": "_initialized",
+          "slot": "10",
+          "offset": 20,
+          "type": {
+            "label": "uint8",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "Initializable",
+          "label": "_initializing",
+          "slot": "10",
+          "offset": 21,
+          "type": {
+            "label": "bool",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "expiries",
+          "slot": "11",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint256 => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "labelOf",
+          "slot": "12",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint256 => string)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "string",
+              "encoding": "bytes",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "metadataRenderer",
+          "slot": "13",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "maxLabelLength",
+          "slot": "14",
+          "offset": 0,
+          "type": {
+            "label": "uint256",
+            "encoding": "inplace",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "subnameHook",
+          "slot": "15",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "namePolicy",
+          "slot": "16",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "ens",
+          "slot": "17",
+          "offset": 0,
+          "type": {
+            "label": "contract ENS",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "baseNode",
+          "slot": "18",
+          "offset": 0,
+          "type": {
+            "label": "bytes32",
+            "encoding": "inplace",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "controllers",
+          "slot": "19",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => bool)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "bool",
+              "encoding": "inplace",
+              "numberOfBytes": "1"
+            }
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "nonces",
+          "slot": "20",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "offers",
+          "slot": "21",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint256 => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "BaseRegistrarImplementation",
+          "label": "disputeUntil",
+          "slot": "22",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint256 => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        }
+      ],
+      "immutables": {},
+      "functions": {
+        "0xc9f10f8c": "APPROVE_TYPEHASH() view returns (bytes32)",
+        "0x6b0509b1": "CLAIM_TYPEHASH() view returns (bytes32)",
+        "0x3644e515": "DOMAIN_SEPARATOR() view returns (bytes32)",
+        "0xc1a287e2": "GRACE_PERIOD() view returns (uint256)",
+        "0x83cd404d": "STEALTH_SCHEME_ID() view returns (uint256)",
+        "0xa7fc7a07": "addController(address) nonpayable returns ()",
+        "0x095ea7b3": "approve(address,uint256) nonpayable returns ()",
+        "0x31c967e6": "approveWithSig(address,address,uint256,uint256,uint256,bytes,bytes,bytes1) nonpayable returns ()",
+        "0x96e494e8": "available(uint256) view returns (bool)",
+        "0x70a08231": "balanceOf(address) view returns (uint256)",
+        "0xddf7fcb0": "baseNode() view returns (bytes32)",
+        "0xaefe327f": "claimWithSig(address,address,uint256,uint256,uint256,uint256,bytes) nonpayable returns ()",
+        "0xda8c229e": "controllers(address) view returns (bool)",
+        "0x73aa4613": "disputeUntil(uint256) view returns (uint256)",
+        "0x3f15457f": "ens() view returns (address)",
+        "0x081812fc": "getApproved(uint256) view returns (address)",
+        "0xd26b3e6e": "initialize(address,bytes32,address) nonpayable returns ()",
+        "0xe985e9c5": "isApprovedForAll(address,address) view returns (bool)",
+        "0x36bf1f0c": "labelOf(uint256) view returns (string)",
+        "0xbaa4afd4": "maxLabelLength() view returns (uint256)",
+        "0x70319970": "metadataRenderer() view returns (address)",
+        "0x06fdde03": "name() pure returns (string)",
+        "0xd6e4fa86": "nameExpires(uint256) view returns (uint256)",
+        "0x2c395a6b": "namePolicy() view returns (address)",
+        "0x7ecebe00": "nonces(address) view returns (uint256)",
+        "0x8a72ea6a": "offers(uint256) view returns (uint256)",
+        "0x8da5cb5b": "owner() view returns (address)",
+        "0x6352211e": "ownerOf(uint256) view returns (address)",
+        "0x28ed4f6c": "reclaim(uint256,address) nonpayable returns ()",
+        "0x0dce4eb7": "registerWithLabel(string,address,uint256,uint256) nonpayable returns (uint256)",
+        "0xf6a74ed7": "removeController(address) nonpayable returns ()",
+        "0xc475abff": "renew(uint256,uint256) nonpayable returns (uint256)",
+        "0x715018a6": "renounceOwnership() nonpayable returns ()",
+        "0x42842e0e": "safeTransferFrom(address,address,uint256) nonpayable returns ()",
+        "0xb88d4fde": "safeTransferFrom(address,address,uint256,bytes) nonpayable returns ()",
+        "0xa22cb465": "setApprovalForAll(address,bool) nonpayable returns ()",
+        "0x858ed818": "setMaxLabelLength(uint256) nonpayable returns ()",
+        "0xfd4fe8a8": "setMetadataRenderer(address) nonpayable returns ()",
+        "0x0b3ac663": "setNamePolicy(address) nonpayable returns ()",
+        "0x4e543b26": "setResolver(address) nonpayable returns ()",
+        "0x1b3b0254": "setSubnameHook(address) nonpayable returns ()",
+        "0xa3d076d5": "subnameHook() view returns (address)",
+        "0x01ffc9a7": "supportsInterface(bytes4) view returns (bool)",
+        "0x95d89b41": "symbol() pure returns (string)",
+        "0x4f6ccce7": "tokenByIndex(uint256) view returns (uint256)",
+        "0x2f745c59": "tokenOfOwnerByIndex(address,uint256) view returns (uint256)",
+        "0xc87b56dd": "tokenURI(uint256) view returns (string)",
+        "0x18160ddd": "totalSupply() view returns (uint256)",
+        "0x23b872dd": "transferFrom(address,address,uint256) nonpayable returns ()",
+        "0xf2fde38b": "transferOwnership(address) nonpayable returns ()",
+        "0xc6c1a8aa": "unregister(uint256,uint256) nonpayable returns ()"
+      },
+      "events": {
+        "0x5f0eab8057630ba7676c49b4f21a0231414e79474595be8e4c432fbf6bf0f4e7": "Announcement(uint256 indexed,address indexed,address indexed,bytes,bytes)",
+        "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925": "Approval(address indexed,address indexed,uint256 indexed)",
+        "0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31": "ApprovalForAll(address indexed,address indexed,bool)",
+        "0x0a8bb31534c0ed46f380cb867bd5c803a189ced9a764e30b3a4991a9901d7474": "ControllerAdded(address indexed)",
+        "0x33d83959be2573f5453b12eb9d43b3499bc57d96bd2f067ba44803c859e81113": "ControllerRemoved(address indexed)",
+        "0x7f26b83ff96e1f2b6a682f133852f6798a09c465da95921460cefb3847402498": "Initialized(uint8)",
+        "0x2b0624117f0e03f5664c5caf0bbb3aa966a0bc6eec9280cc33890a4164960b36": "MaxLabelLengthChanged(uint256)",
+        "0x8a76f1a153b2f103fb5df1665874a58b13ce2453fadc2a17621702dd050dac42": "MetadataRendererChanged(address indexed)",
+        "0xea3d7e1195a15d2ddcd859b01abd4c6b960fa9f9264e499a70a90c7f0c64b717": "NameMigrated(uint256 indexed,address indexed,uint256)",
+        "0xbb8fbbf4b28f404feae50d6feae46ec18c493e87f4571a89da2d18b8094c2227": "NamePolicyChanged(address indexed)",
+        "0xb3d987963d01b2f68493b4bdb130988f157ea43070d4ad840fee0466ed9370d9": "NameRegistered(uint256 indexed,address indexed,uint256)",
+        "0x9b87a00e30f1ac65d898f070f8a3488fe60517182d0a2098e1b4b93a54aa9bd6": "NameRenewed(uint256 indexed,uint256)",
+        "0xca216e055ee8768f578ae9d2f6519fb0b3273ad4dc12dbbefd35c0795d3ad127": "NameUnregistered(uint256 indexed)",
+        "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0": "OwnershipTransferred(address indexed,address indexed)",
+        "0x342a1c20cb92e3a5e9d80d6cab6d5f43e829fc266faa0fe7f1f3734b5fbc99c7": "SubnameHookChanged(address indexed)",
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef": "Transfer(address indexed,address indexed,uint256 indexed)"
+      },
+      "errors": {
+        "0xbbd9f377": "DisputePeriodNotOver(uint256)",
+        "0xbb1f05cd": "DisputePeriodOver(uint256)",
+        "0xd33d50ef": "DisputeUntilMismatch(uint256,uint256)",
+        "0x756688fe": "InvalidNonce()",
+        "0x8baa579f": "InvalidSignature()",
+        "0x21134988": "LabelTooLong(uint256,uint256)",
+        "0x0a1fab28": "NamePolicyMismatch()",
+        "0x42f058b4": "NotNameOwner()",
+        "0xff43b88f": "NotOffered()",
+        "0x2bea818f": "RecipientMustBeCaller()",
+        "0x0819bdcd": "SignatureExpired()",
+        "0xbf2f44f5": "TransferToSelf()"
+      }
     },
-    "SimplexPriceOracle": {
-      "address": "0x3754fbcd143ab41204f7fa02d8c69ac86b5c0ee8",
-      "artifact": "contracts/simplex/SimplexPriceOracle.sol/SimplexPriceOracle.json",
-      "constructorArgs": "0x0000000000000000000000005f4ec3df9cbd43714fe2740f5e3616155c5b84190000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000138800000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000000"
+    "BaseRegistrarImplementationProxy": {
+      "address": "0x4c0589dbc22862babb25eb72d11bba49d84aabe8",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json",
+      "constructorArgs": "0x000000000000000000000000cebb4e0d289462e848cfef6233e3233b252f66e2000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df400000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000064d26b3e6e0000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414bec8b61bde3a2315c8073411d4c1b4a6282283fc42812754e53dafd9d87b9cf6fb00000000000000000000000038d19404644fe24ee7d638229a732cbe8275e33300000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
     },
-    "SimplexControllerImpl": {
-      "address": "0x0b1120b6a28b88fefa382ca35f6ed601b689eddb",
+    "BaseRegistrarImplementationProxyAdmin": {
+      "address": "0xC945516fde9a832D0a56Ac35a2d4726E5916e082",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/ProxyAdmin.sol/ProxyAdmin.json",
+      "constructorArgs": "0x000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df4",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "SimplexController@0xCD52685c92eD1D22E2DdcedA74046B1378c264AE": {
+      "address": "0xCD52685c92eD1D22E2DdcedA74046B1378c264AE",
       "artifact": "contracts/simplex/SimplexController.sol/SimplexController.json",
-      "constructorArgs": "0x"
+      "constructorArgs": "0x",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28",
+      "storageLayout": [
+        {
+          "contract": "Initializable",
+          "label": "_initialized",
+          "slot": "0",
+          "offset": 0,
+          "type": {
+            "label": "uint8",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "Initializable",
+          "label": "_initializing",
+          "slot": "0",
+          "offset": 1,
+          "type": {
+            "label": "bool",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "ContextUpgradeable",
+          "label": "__gap",
+          "slot": "1",
+          "offset": 0,
+          "type": {
+            "label": "uint256[50]",
+            "encoding": "inplace",
+            "numberOfBytes": "1600",
+            "base": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "OwnableUpgradeable",
+          "label": "_owner",
+          "slot": "51",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "OwnableUpgradeable",
+          "label": "__gap",
+          "slot": "52",
+          "offset": 0,
+          "type": {
+            "label": "uint256[49]",
+            "encoding": "inplace",
+            "numberOfBytes": "1568",
+            "base": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "Ownable2StepUpgradeable",
+          "label": "_pendingOwner",
+          "slot": "101",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "Ownable2StepUpgradeable",
+          "label": "__gap",
+          "slot": "102",
+          "offset": 0,
+          "type": {
+            "label": "uint256[49]",
+            "encoding": "inplace",
+            "numberOfBytes": "1568",
+            "base": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "ens",
+          "slot": "151",
+          "offset": 0,
+          "type": {
+            "label": "contract ENS",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "base",
+          "slot": "152",
+          "offset": 0,
+          "type": {
+            "label": "contract BaseRegistrarImplementation",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "minCommitmentAge",
+          "slot": "153",
+          "offset": 0,
+          "type": {
+            "label": "uint256",
+            "encoding": "inplace",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "maxCommitmentAge",
+          "slot": "154",
+          "offset": 0,
+          "type": {
+            "label": "uint256",
+            "encoding": "inplace",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "_unusedReverseRegistrar",
+          "slot": "155",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "_unusedDefaultReverseRegistrar",
+          "slot": "156",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "prices",
+          "slot": "157",
+          "offset": 0,
+          "type": {
+            "label": "contract IPriceOracleUSD",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "tldNode",
+          "slot": "158",
+          "offset": 0,
+          "type": {
+            "label": "bytes32",
+            "encoding": "inplace",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "tldSuffix",
+          "slot": "159",
+          "offset": 0,
+          "type": {
+            "label": "string",
+            "encoding": "bytes",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "commitments",
+          "slot": "160",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "minCharLength",
+          "slot": "161",
+          "offset": 0,
+          "type": {
+            "label": "uint8",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "_unusedReservedNames",
+          "slot": "162",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => uint8)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint8",
+              "encoding": "inplace",
+              "numberOfBytes": "1"
+            }
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "smpxNft",
+          "slot": "163",
+          "offset": 0,
+          "type": {
+            "label": "contract IERC721",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "nftGateEnabled",
+          "slot": "163",
+          "offset": 20,
+          "type": {
+            "label": "bool",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "_unusedPriceOracleFrozen",
+          "slot": "163",
+          "offset": 21,
+          "type": {
+            "label": "bool",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "_reentrancyStatus",
+          "slot": "164",
+          "offset": 0,
+          "type": {
+            "label": "uint256",
+            "encoding": "inplace",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "beneficiary",
+          "slot": "165",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "sponsor",
+          "slot": "166",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "defaultResolver",
+          "slot": "167",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "publicSalesOpen",
+          "slot": "167",
+          "offset": 20,
+          "type": {
+            "label": "bool",
+            "encoding": "inplace",
+            "numberOfBytes": "1"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "wasDefaultResolver",
+          "slot": "168",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => bool)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "bool",
+              "encoding": "inplace",
+              "numberOfBytes": "1"
+            }
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "namePolicy",
+          "slot": "169",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SimplexController",
+          "label": "__gap",
+          "slot": "170",
+          "offset": 0,
+          "type": {
+            "label": "uint256[43]",
+            "encoding": "inplace",
+            "numberOfBytes": "1376",
+            "base": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        }
+      ],
+      "immutables": {},
+      "functions": {
+        "0xbc9af926": "MAX_DISPUTE_DAYS() view returns (uint256)",
+        "0x59192b89": "MAX_REGISTRATION_DURATION() view returns (uint256)",
+        "0xc59d39d5": "MAX_SPONSORED_REGISTRATION_DURATION() view returns (uint256)",
+        "0xa39a784c": "MIN_DISPUTE_DAYS() view returns (uint256)",
+        "0x8a95b09f": "MIN_REGISTRATION_DURATION() view returns (uint256)",
+        "0xca05b1a7": "MIN_RENEWAL_DURATION() view returns (uint256)",
+        "0x79ba5097": "acceptOwnership() nonpayable returns ()",
+        "0xaeb8ce9b": "available(string) view returns (bool)",
+        "0x38af3eed": "beneficiary() view returns (address)",
+        "0xf14fcbc8": "commit(bytes32) nonpayable returns ()",
+        "0x839df945": "commitments(bytes32) view returns (uint256)",
+        "0x828eab0e": "defaultResolver() view returns (address)",
+        "0x80acc9bc": "disableNftGate() nonpayable returns ()",
+        "0x3f15457f": "ens() view returns (address)",
+        "0x0883a92a": "initialize(address,address,uint256,uint256,address,(bytes32,string,uint8,address,bool),address) nonpayable returns ()",
+        "0xcf7d6e01": "makeCommitment((string,address,uint256,bytes32,address,bytes[],uint8,bytes32)) pure returns (bytes32)",
+        "0xce1e09c0": "maxCommitmentAge() view returns (uint256)",
+        "0xea7e48c4": "minCharLength() view returns (uint8)",
+        "0x8d839ffe": "minCommitmentAge() view returns (uint256)",
+        "0x2c395a6b": "namePolicy() view returns (address)",
+        "0xb4f80ad5": "nftGateEnabled() view returns (bool)",
+        "0x8da5cb5b": "owner() view returns (address)",
+        "0xe30c3978": "pendingOwner() view returns (address)",
+        "0xd3419bf3": "prices() view returns (address)",
+        "0x85601adf": "publicSalesOpen() view returns (bool)",
+        "0x5d3590d5": "recoverFunds(address,address,uint256) nonpayable returns ()",
+        "0xef9c8805": "register((string,address,uint256,bytes32,address,bytes[],uint8,bytes32)) payable returns ()",
+        "0x49b59003": "registerSponsored((string,address,uint256,bytes32,address,bytes[],uint8,bytes32),uint256) nonpayable returns ()",
+        "0x18026ad1": "renew(string,uint256,bytes32) payable returns ()",
+        "0x803c82d2": "renewSponsored(string,uint256,bytes32) nonpayable returns ()",
+        "0x715018a6": "renounceOwnership() nonpayable returns ()",
+        "0x83e7f6ff": "rentPrice(string,uint256) view returns ((uint256,uint256))",
+        "0x9ff7ec09": "rentPriceUSD(string,uint256) view returns ((uint256,uint256))",
+        "0x1c31f710": "setBeneficiary(address) nonpayable returns ()",
+        "0xc66485b2": "setDefaultResolver(address) nonpayable returns ()",
+        "0x05ddfdbe": "setMinCharLength(uint8) nonpayable returns ()",
+        "0x0b3ac663": "setNamePolicy(address) nonpayable returns ()",
+        "0x530e784f": "setPriceOracle(address) nonpayable returns ()",
+        "0x7e7c71db": "setPublicSalesOpen(bool) nonpayable returns ()",
+        "0x59753fb1": "setSponsor(address) nonpayable returns ()",
+        "0x52fb588c": "smpxNft() view returns (address)",
+        "0x77c93662": "sponsor() view returns (address)",
+        "0x01ffc9a7": "supportsInterface(bytes4) view returns (bool)",
+        "0x114902c5": "tldNode() view returns (bytes32)",
+        "0xf6fa6f71": "tldSuffix() view returns (string)",
+        "0xf2fde38b": "transferOwnership(address) nonpayable returns ()",
+        "0x085bca76": "unregister(string,uint256) nonpayable returns ()",
+        "0x9791c097": "valid(string) view returns (bool)",
+        "0xf91709d3": "wasDefaultResolver(address) view returns (bool)",
+        "0x3ccfd60b": "withdraw() nonpayable returns ()"
+      },
+      "events": {
+        "0x373c72efabe4ef3e552ff77838be729f3bc3d8c586df0012902d1baa2377fa1d": "BeneficiaryChanged(address indexed)",
+        "0xeae17a84d9eb83d8c8eb317f9e7d64857bc363fa51674d996c023f4340c577cf": "DefaultResolverChanged(address indexed)",
+        "0x7f26b83ff96e1f2b6a682f133852f6798a09c465da95921460cefb3847402498": "Initialized(uint8)",
+        "0x3ee9fbb0f340575e801e6f10f982575029cb8a8bf93a0914a22eede0bc865f38": "MinCharLengthChanged(uint8)",
+        "0xbb8fbbf4b28f404feae50d6feae46ec18c493e87f4571a89da2d18b8094c2227": "NamePolicyChanged(address indexed)",
+        "0xc2240194853531f1ae318dcef227de79c6ad0fd9d1b0e4fe08568415be2e08a5": "NameRegistered(string,bytes32 indexed,address indexed,uint256,uint256,uint256,bytes32)",
+        "0xfa956c3bce4cb4b01166868ecaf0620566bc7e33fc70b0b9c6aef61e37e50b94": "NameRenewed(string,bytes32 indexed,uint256,uint256,bytes32)",
+        "0xc3b068fc5a2e45081f6d7e93ec4a635f619200b05b62303b711d8d714cc71f01": "NftGateDisabled()",
+        "0x38d16b8cac22d99fc7c124b9cd0de2d3fa1faef420bfe791d8c362d765e22700": "OwnershipTransferStarted(address indexed,address indexed)",
+        "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0": "OwnershipTransferred(address indexed,address indexed)",
+        "0xb36d86785c7d32b1ad714bb705e00e93eccc37b8cf47549043e61e10908ad251": "PriceOracleChanged(address indexed)",
+        "0xaa382a34c0e1f79e997c3447651db9218fdf464809891c7c6decf1d5455dbc1f": "PublicSalesOpenChanged(bool)",
+        "0x3654ca7211e97c8221a546197d9931904737314c63260b2cae1896803967930f": "SponsorChanged(address indexed)"
+      },
+      "errors": {
+        "0x836588c9": "CommitmentNotFound(bytes32)",
+        "0x74480cc9": "CommitmentTooNew(bytes32,uint256,uint256)",
+        "0x256e2216": "CommitmentTooOld(bytes32,uint256,uint256)",
+        "0x900ef507": "DisputeDaysOutOfRange(uint256)",
+        "0xb666aeb7": "DurationTooLong(uint256)",
+        "0x9a71997b": "DurationTooShort(uint256)",
+        "0x11011294": "InsufficientValue()",
+        "0x2d0c6794": "MaxCommitmentAgeTooHigh()",
+        "0x3e5aa838": "MaxCommitmentAgeTooLow()",
+        "0xace8f2ce": "MinCharLengthCanOnlyDecrease()",
+        "0xce47b48d": "MinCharLengthZero()",
+        "0x6357b884": "MinCommitmentAgeZero()",
+        "0x477707e8": "NameNotAvailable(string)",
+        "0x0a1fab28": "NamePolicyMismatch()",
+        "0xe1bf11bf": "NameReserved(string)",
+        "0xc4295eb6": "NameTooShort(string,uint8)",
+        "0x70f8a4c9": "NftGateCanOnlyBeDisabled()",
+        "0x6b1578c1": "NftRequired()",
+        "0x644d871f": "NotBeneficiary()",
+        "0x4632a8bf": "NotOwnerOrBeneficiary()",
+        "0xdf4795c7": "NotSponsor()",
+        "0xa9efcc18": "OwnerMustBeCaller()",
+        "0x40866499": "PublicSalesClosed()",
+        "0x37ed32e8": "ReentrantCall()",
+        "0xd3f605c4": "ResolverRequiredWhenDataSupplied()",
+        "0x27af646c": "ReverseRecordNotSupported()",
+        "0x90b8ec18": "TransferFailed()",
+        "0x0a059d71": "UnexpiredCommitmentExists(bytes32)",
+        "0xd92e233d": "ZeroAddress()"
+      }
     },
     "SimplexControllerProxy": {
-      "address": "0x8005011c6e966656cdb9a222e9a4792600a37219",
-      "artifact": "contracts/simplex/SimplexControllerProxy.sol/SimplexControllerProxy.json",
-      "constructorArgs": "0x0000000000000000000000000b1120b6a28b88fefa382ca35f6ed601b689eddb000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001c40883a92a00000000000000000000000044052f7dc9c1cef20b0319a6b75288988dbb12a10000000000000000000000003754fbcd143ab41204f7fa02d8c69ac86b5c0ee8000000000000000000000000000000000000000000000000000000000000003c0000000000000000000000000000000000000000000000000000000000015180000000000000000000000000a7f6497be2f1aa41aa2db55aba8a6e0145dff0d200000000000000000000000000000000000000000000000000000000000000e000000000000000000000000038d19404644fe24ee7d638229a732cbe8275e333c8b61bde3a2315c8073411d4c1b4a6282283fc42812754e53dafd9d87b9cf6fb00000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000082e73696d706c657800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      "address": "0x68fab655a0204865a2f3ab3a607037e09648c92b",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json",
+      "constructorArgs": "0x000000000000000000000000cd52685c92ed1d22e2ddceda74046b1378c264ae000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df4000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000001c40883a92a0000000000000000000000004c0589dbc22862babb25eb72d11bba49d84aabe80000000000000000000000006fdc7ccd9718e58f896236d1b4ebed0ff7a5ee53000000000000000000000000000000000000000000000000000000000000003c00000000000000000000000000000000000000000000000000000000000151800000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414be00000000000000000000000000000000000000000000000000000000000000e000000000000000000000000038d19404644fe24ee7d638229a732cbe8275e333c8b61bde3a2315c8073411d4c1b4a6282283fc42812754e53dafd9d87b9cf6fb00000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000082e73696d706c657800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
     },
-    "SimplexSponsor": {
-      "address": "0x9c551ac86a9b39e86e4f777b4bbca8e782de0b9d",
-      "artifact": "contracts/simplex/SimplexSponsor.sol/SimplexSponsor.json",
-      "constructorArgs": "0x0000000000000000000000008005011c6e966656cdb9a222e9a4792600a37219"
+    "SimplexControllerProxyAdmin": {
+      "address": "0xC99567779A379cA3905F0991A7658851c9c1B00A",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/ProxyAdmin.sol/ProxyAdmin.json",
+      "constructorArgs": "0x000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df4",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
     },
-    "SimplexNamePolicyImpl": {
-      "address": "0x0ae7a79f39d5e06c24332d215636114402d5765c",
+    "SimplexNamePolicy@0x6cA443AD638c14d060B79c2791BA397476E618b9": {
+      "address": "0x6cA443AD638c14d060B79c2791BA397476E618b9",
       "artifact": "contracts/simplex/SimplexNamePolicy.sol/SimplexNamePolicy.json",
-      "constructorArgs": "0x0000000000000000000000008005011c6e966656cdb9a222e9a4792600a3721900000000000000000000000044052f7dc9c1cef20b0319a6b75288988dbb12a1"
+      "constructorArgs": "0x00000000000000000000000068fab655a0204865a2f3ab3a607037e09648c92b0000000000000000000000004c0589dbc22862babb25eb72d11bba49d84aabe8",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28",
+      "storageLayout": [
+        {
+          "contract": "SimplexNamePolicy",
+          "label": "_names",
+          "slot": "0",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => struct SimplexNamePolicy.NameEntry)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "struct SimplexNamePolicy.NameEntry",
+              "encoding": "inplace",
+              "numberOfBytes": "32",
+              "members": [
+                {
+                  "label": "community",
+                  "slot": "0",
+                  "offset": 0,
+                  "type": {
+                    "label": "bool",
+                    "encoding": "inplace",
+                    "numberOfBytes": "1"
+                  }
+                },
+                {
+                  "label": "reserved",
+                  "slot": "0",
+                  "offset": 1,
+                  "type": {
+                    "label": "enum SimplexNamePolicy.Reason",
+                    "encoding": "inplace",
+                    "numberOfBytes": "1",
+                    "enumValues": [
+                      "None",
+                      "Internal",
+                      "Trademark",
+                      "Community"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "contract": "SimplexNamePolicy",
+          "label": "communityTermsHash",
+          "slot": "1",
+          "offset": 0,
+          "type": {
+            "label": "bytes32",
+            "encoding": "inplace",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "SimplexNamePolicy",
+          "label": "acceptedTerms",
+          "slot": "2",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => mapping(address => bytes32))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "mapping(address => bytes32)",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "address",
+                "encoding": "inplace",
+                "numberOfBytes": "20"
+              },
+              "value": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              }
+            }
+          }
+        },
+        {
+          "contract": "SimplexNamePolicy",
+          "label": "acceptedClaimTerms",
+          "slot": "3",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint256 => mapping(address => mapping(address => mapping(uint256 => bytes32))))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "mapping(address => mapping(address => mapping(uint256 => bytes32)))",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "address",
+                "encoding": "inplace",
+                "numberOfBytes": "20"
+              },
+              "value": {
+                "label": "mapping(address => mapping(uint256 => bytes32))",
+                "encoding": "mapping",
+                "numberOfBytes": "32",
+                "key": {
+                  "label": "address",
+                  "encoding": "inplace",
+                  "numberOfBytes": "20"
+                },
+                "value": {
+                  "label": "mapping(uint256 => bytes32)",
+                  "encoding": "mapping",
+                  "numberOfBytes": "32",
+                  "key": {
+                    "label": "uint256",
+                    "encoding": "inplace",
+                    "numberOfBytes": "32"
+                  },
+                  "value": {
+                    "label": "bytes32",
+                    "encoding": "inplace",
+                    "numberOfBytes": "32"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "contract": "SimplexNamePolicy",
+          "label": "nonces",
+          "slot": "4",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "SimplexNamePolicy",
+          "label": "communityTermsLink",
+          "slot": "5",
+          "offset": 0,
+          "type": {
+            "label": "string",
+            "encoding": "bytes",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "SimplexNamePolicy",
+          "label": "generalTermsLink",
+          "slot": "6",
+          "offset": 0,
+          "type": {
+            "label": "string",
+            "encoding": "bytes",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "SimplexNamePolicy",
+          "label": "generalTermsHash",
+          "slot": "7",
+          "offset": 0,
+          "type": {
+            "label": "bytes32",
+            "encoding": "inplace",
+            "numberOfBytes": "32"
+          }
+        },
+        {
+          "contract": "SimplexNamePolicy",
+          "label": "__gap",
+          "slot": "8",
+          "offset": 0,
+          "type": {
+            "label": "uint256[42]",
+            "encoding": "inplace",
+            "numberOfBytes": "1344",
+            "base": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        }
+      ],
+      "immutables": {
+        "controller": "0x00000000000000000000000068fab655a0204865a2f3ab3a607037e09648c92b",
+        "registrar": "0x0000000000000000000000004c0589dbc22862babb25eb72d11bba49d84aabe8",
+        "_ens": "0x0000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414be",
+        "_tldNode": "0xc8b61bde3a2315c8073411d4c1b4a6282283fc42812754e53dafd9d87b9cf6fb",
+        "_self": "0x0000000000000000000000006ca443ad638c14d060b79c2791ba397476e618b9"
+      },
+      "functions": {
+        "0x9cd7b959": "ACCEPT_COMMUNITY_TERMS_FOR_CLAIM_TYPEHASH() view returns (bytes32)",
+        "0xd7413c40": "ACCEPT_COMMUNITY_TERMS_TYPEHASH() view returns (bytes32)",
+        "0xa729921e": "ACCEPT_GENERAL_TERMS_FOR_CLAIM_TYPEHASH() view returns (bytes32)",
+        "0xc35d82fb": "ACCEPT_GENERAL_TERMS_TYPEHASH() view returns (bytes32)",
+        "0x3644e515": "DOMAIN_SEPARATOR() view returns (bytes32)",
+        "0xe7d59489": "acceptCommunityTermsForClaim(uint256,address,uint256,bytes32) nonpayable returns ()",
+        "0x93841e3b": "acceptCommunityTermsForClaimWithSig(uint256,address,uint256,bytes32,address,uint256,uint256,bytes) nonpayable returns ()",
+        "0x3cc74804": "acceptGeneralTermsForClaim(uint256,address,uint256,bytes32) nonpayable returns ()",
+        "0x7c915259": "acceptGeneralTermsForClaimWithSig(uint256,address,uint256,bytes32,address,uint256,uint256,bytes) nonpayable returns ()",
+        "0xea8b9b61": "acceptedClaimTerms(uint256,address,address,uint256) view returns (bytes32)",
+        "0xa34f7674": "acceptedTerms(bytes32,address) view returns (bytes32)",
+        "0xb734c3a0": "addCommunityNames(string[]) nonpayable returns ()",
+        "0x6706e2ba": "addReservedNames(string[],uint8) nonpayable returns ()",
+        "0x8c1eb3be": "commitUnderCommunityTerms(bytes32,bytes32) nonpayable returns ()",
+        "0x4b1a8e04": "commitUnderCommunityTermsWithSig(bytes32,bytes32,address,uint256,uint256,bytes) nonpayable returns ()",
+        "0x0ccf8771": "commitUnderGeneralTerms(bytes32,bytes32) nonpayable returns ()",
+        "0xc50f972f": "commitUnderGeneralTermsWithSig(bytes32,bytes32,address,uint256,uint256,bytes) nonpayable returns ()",
+        "0x1559a272": "communityNames(bytes32) view returns (bool)",
+        "0xd1d96497": "communityTermsHash() view returns (bytes32)",
+        "0xca7ecfdf": "communityTermsLink() view returns (string)",
+        "0x0b2b6d45": "consumeRegistration(string,bytes32,bytes32,address) nonpayable returns ()",
+        "0xe90a8a80": "consumeTransfer(uint256,address,address,uint256,string) nonpayable returns ()",
+        "0xf77c4791": "controller() view returns (address)",
+        "0xfe9f931a": "generalTermsHash() view returns (bytes32)",
+        "0x486cf9ba": "generalTermsLink() view returns (string)",
+        "0xd576ba58": "isReserved(bytes32) view returns (bool)",
+        "0x7ecebe00": "nonces(address) view returns (uint256)",
+        "0x1ccbf853": "registerReserved(string,address,uint256) nonpayable returns ()",
+        "0x2b20e397": "registrar() view returns (address)",
+        "0xf89fee48": "removeCommunityNames(string[]) nonpayable returns ()",
+        "0xaf1962cd": "removeReservedNames(string[]) nonpayable returns ()",
+        "0x389c0748": "reservedNames(bytes32) view returns (uint8)",
+        "0x23a39dd5": "setCommunityTerms(string) nonpayable returns ()",
+        "0x9104c0e8": "setGeneralTerms(string) nonpayable returns ()",
+        "0x472ce4f3": "setReservationReason(string[],uint8) nonpayable returns ()"
+      },
+      "events": {
+        "0x168700225ed96d6c4ee86e0371ca964cf0b8c6c45ba611439c7475fa0facfd17": "CommunityNameAdded(string)",
+        "0xc152c4cbde68f1539e8c1b50ec74db2e4170e888b864f00c91e20c70b3ffce5e": "CommunityNameRemoved(string)",
+        "0xc4090581b6c0b3c00629a8487a935e75376858732fbf65b8cf319f5daf03aa28": "CommunityNameSkipped(string)",
+        "0x10f09d682f57528ce694dccd8e61b3248ac8b2771b9e1fed159ef4757fb4dbdc": "CommunityTermsAccepted(string,address indexed,bytes32)",
+        "0x3ad0d7d05b436f894c87fb46126f2e5b4771fb8460d282c75f252cfa4d6a0f7b": "CommunityTermsSet(bytes32,string)",
+        "0xf8ac2f5068f7964ef478d744e63986ee3fd02b89dfef646e3c96292340e2b7a2": "GeneralTermsAccepted(string,address indexed,bytes32)",
+        "0x7aaf46ebd15b99a2d0c7a1da7a0dd75ab21d833022cd516355d9e6130d3afdd5": "GeneralTermsSet(bytes32,string)",
+        "0x5998cafd55dc2f2b9f5229e274efe76a14619bca69468e45a55af69edc25ad7a": "ReservedNameAdded(string,uint8)",
+        "0x681c0030c7e4b66abc93448015db4c285a6c8675f0a514c99c7d106f8c2939d9": "ReservedNameReasonChanged(string,uint8)",
+        "0xd1b6776e67c8cabbc970d57f228ad52175c08e0335568e204d49e3966f3e58f6": "ReservedNameRemoved(string)"
+      },
+      "errors": {
+        "0xb666aeb7": "DurationTooLong(uint256)",
+        "0x9a71997b": "DurationTooShort(uint256)",
+        "0x756688fe": "InvalidNonce()",
+        "0x8baa579f": "InvalidSignature()",
+        "0xd17ee357": "NameNotReserved(string)",
+        "0xe1bf11bf": "NameReserved(string)",
+        "0x23019e67": "NotController()",
+        "0x30cd7471": "NotOwner()",
+        "0x4632a8bf": "NotOwnerOrBeneficiary()",
+        "0xbf10dd3a": "NotProxy()",
+        "0x2ad95351": "NotRegistrar()",
+        "0xbc7fd331": "ReasonRequired()",
+        "0x0819bdcd": "SignatureExpired()",
+        "0xc4f189e2": "TermsMismatch(bytes32,bytes32)",
+        "0xbcdf753d": "TermsNotAccepted(string)",
+        "0xcc54d232": "ZeroTerms()"
+      }
     },
     "SimplexNamePolicyProxy": {
-      "address": "0xf7054e2fb9ebfd49dd68caffdbe661c03a59b823",
-      "artifact": "contracts/simplex/SimplexNamePolicyProxy.sol/SimplexNamePolicyProxy.json",
-      "constructorArgs": "0x0000000000000000000000000ae7a79f39d5e06c24332d215636114402d5765c00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000"
+      "address": "0x5147b65f547b766dbaf520127e8f59834475021e",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json",
+      "constructorArgs": "0x0000000000000000000000006ca443ad638c14d060b79c2791ba397476e618b9000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df400000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
     },
-    "SimplexResolver": {
-      "address": "0x0d9474f386a8884c603e960e100ba5c4f210fb70",
-      "artifact": "contracts/simplex/SimplexResolver.sol/SimplexResolver.json",
-      "constructorArgs": "0x000000000000000000000000a7f6497be2f1aa41aa2db55aba8a6e0145dff0d2000000000000000000000000dd1ef51b4d3175f7b4610f1cc41ba67577ad70770000000000000000000000008005011c6e966656cdb9a222e9a4792600a372190000000000000000000000000000000000000000000000000000000000000000"
+    "SimplexNamePolicyProxyAdmin": {
+      "address": "0xc4B3697Eb385981FCB58517B8868B2B955AF0b9E",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/ProxyAdmin.sol/ProxyAdmin.json",
+      "constructorArgs": "0x000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df4",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
     },
-    "SubnameRegistrar": {
-      "address": "0xdd1ef51b4d3175f7b4610f1cc41ba67577ad7077",
+    "SubnameRegistrar@0x3D87365B23A2Bc01CD9134d4202C762b6F506F30": {
+      "address": "0x3D87365B23A2Bc01CD9134d4202C762b6F506F30",
       "artifact": "contracts/simplex/SubnameRegistrar.sol/SubnameRegistrar.json",
-      "constructorArgs": "0x000000000000000000000000a7f6497be2f1aa41aa2db55aba8a6e0145dff0d200000000000000000000000044052f7dc9c1cef20b0319a6b75288988dbb12a1"
+      "constructorArgs": "0x0000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414be0000000000000000000000004c0589dbc22862babb25eb72d11bba49d84aabe8",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28",
+      "storageLayout": [
+        {
+          "contract": "SubnameRegistrar",
+          "label": "resolver",
+          "slot": "0",
+          "offset": 0,
+          "type": {
+            "label": "address",
+            "encoding": "inplace",
+            "numberOfBytes": "20"
+          }
+        },
+        {
+          "contract": "SubnameRegistrar",
+          "label": "parentOf",
+          "slot": "1",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => bytes32)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "SubnameRegistrar",
+          "label": "generationAt",
+          "slot": "2",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "SubnameRegistrar",
+          "label": "generation",
+          "slot": "3",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "SubnameRegistrar",
+          "label": "expiryOf",
+          "slot": "4",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "SubnameRegistrar",
+          "label": "labelOf",
+          "slot": "5",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => string)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "string",
+              "encoding": "bytes",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "SubnameRegistrar",
+          "label": "childIndexed",
+          "slot": "6",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => bool)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "bool",
+              "encoding": "inplace",
+              "numberOfBytes": "1"
+            }
+          }
+        },
+        {
+          "contract": "SubnameRegistrar",
+          "label": "_children",
+          "slot": "7",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => bytes32[])",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "bytes32[]",
+              "encoding": "dynamic_array",
+              "numberOfBytes": "32",
+              "base": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              }
+            }
+          }
+        },
+        {
+          "contract": "SubnameRegistrar",
+          "label": "nonces",
+          "slot": "8",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        }
+      ],
+      "immutables": {
+        "ens": "0x0000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414be",
+        "baseRegistrar": "0x0000000000000000000000004c0589dbc22862babb25eb72d11bba49d84aabe8",
+        "_deployer": "0x00000000000000000000000038d19404644fe24ee7d638229a732cbe8275e333"
+      },
+      "functions": {
+        "0xafc28265": "CREATE_SUBNAME_TYPEHASH() view returns (bytes32)",
+        "0x8c8efd09": "DELETE_SUBNAME_TYPEHASH() view returns (bytes32)",
+        "0x3644e515": "DOMAIN_SEPARATOR() view returns (bytes32)",
+        "0x6464e58f": "MAX_LABEL_LENGTH() view returns (uint256)",
+        "0x74f04565": "baseRegistrar() view returns (address)",
+        "0x7ab0f9e0": "childIndexed(bytes32) view returns (bool)",
+        "0x570bf82d": "childrenLength(bytes32) view returns (uint256)",
+        "0xedd44dce": "createSubname(bytes32,string) nonpayable returns (bytes32)",
+        "0x25d9dc36": "createSubnameWithSig(bytes32,string,uint256,uint256,bytes) nonpayable returns (bytes32)",
+        "0xdbf295de": "deleteSubname(bytes32,string) nonpayable returns ()",
+        "0xb3151319": "deleteSubnameWithSig(bytes32,string,uint256,uint256,bytes) nonpayable returns ()",
+        "0x3f15457f": "ens() view returns (address)",
+        "0x40711fb0": "expiryOf(bytes32) view returns (uint256)",
+        "0x1158c64c": "generation(bytes32) view returns (uint256)",
+        "0x7f9bcbe5": "generationAt(bytes32) view returns (uint256)",
+        "0x5211c883": "getChildren(bytes32,uint256,uint256) view returns (bytes32[],string[])",
+        "0xa5c122fe": "labelOf(bytes32) view returns (string)",
+        "0x7ecebe00": "nonces(address) view returns (uint256)",
+        "0x47c09785": "onExpiryChanged(bytes32,uint256) nonpayable returns ()",
+        "0x61db5738": "onReregister(bytes32) nonpayable returns ()",
+        "0x6352211e": "ownerOf(uint256) view returns (address)",
+        "0xddeda132": "parentOf(bytes32) view returns (bytes32)",
+        "0x6efeae21": "purge(bytes32,bytes32[]) nonpayable returns ()",
+        "0x04f3bcec": "resolver() view returns (address)",
+        "0x4e543b26": "setResolver(address) nonpayable returns ()"
+      },
+      "events": {
+        "0x7e843055b0ace92f4f12e99d1fb8b4ac28466aee2bf253ea6ff1e151f2e1fcfe": "GenerationBumped(bytes32 indexed,uint256)",
+        "0xfa7922ab94df901f417bb39874c2dca79c92e9b86659caa2785006324daf4a8e": "SubnameCreated(bytes32 indexed,bytes32 indexed,bytes32,string)",
+        "0xbbce4ae0afae0622865fd78d60b49d1770ed6f95a844358bfb708cdb04e83056": "SubnameDeleted(bytes32 indexed,bytes32 indexed)"
+      },
+      "errors": {
+        "0x3c3282e7": "AlreadyInitialised()",
+        "0xcccf65f5": "EmptyLabel()",
+        "0x756688fe": "InvalidNonce()",
+        "0x8baa579f": "InvalidSignature()",
+        "0x21134988": "LabelTooLong(uint256,uint256)",
+        "0xe7c4e051": "NotBaseRegistrar()",
+        "0x4b11e336": "NotParentOwner()",
+        "0x0819bdcd": "SignatureExpired()",
+        "0x53da2f8c": "StaleSubnameMustBePurged(bytes32)"
+      }
     },
-    "MetadataRenderer": {
-      "address": "0x970bc3f897568091ed83eb372f75c2342a021b97",
-      "artifact": "contracts/simplex/MetadataRenderer.sol/MetadataRenderer.json",
-      "constructorArgs": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000082e73696d706c6578000000000000000000000000000000000000000000000000"
+    "SubnameRegistrarProxy": {
+      "address": "0x86d2248fb5f3b14a1ca3904978314ad5450d4dc9",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json",
+      "constructorArgs": "0x0000000000000000000000003d87365b23a2bc01cd9134d4202c762b6f506f30000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df400000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "SubnameRegistrarProxyAdmin": {
+      "address": "0xb34158488B213Ed5a157A45DA665E7561237CEE1",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/ProxyAdmin.sol/ProxyAdmin.json",
+      "constructorArgs": "0x000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df4",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "SimplexResolver@0xF5064Ae06CF32De2B9Ba8952C5873CD10983ee65": {
+      "address": "0xF5064Ae06CF32De2B9Ba8952C5873CD10983ee65",
+      "artifact": "contracts/simplex/SimplexResolver.sol/SimplexResolver.json",
+      "constructorArgs": "0x0000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414be00000000000000000000000086d2248fb5f3b14a1ca3904978314ad5450d4dc900000000000000000000000068fab655a0204865a2f3ab3a607037e09648c92b0000000000000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28",
+      "storageLayout": [
+        {
+          "contract": "ResolverBase",
+          "label": "recordVersions",
+          "slot": "0",
+          "offset": 0,
+          "type": {
+            "label": "mapping(bytes32 => uint64)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "bytes32",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            },
+            "value": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            }
+          }
+        },
+        {
+          "contract": "ABIResolver",
+          "label": "versionable_abis",
+          "slot": "1",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => mapping(uint256 => bytes)))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => mapping(uint256 => bytes))",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "mapping(uint256 => bytes)",
+                "encoding": "mapping",
+                "numberOfBytes": "32",
+                "key": {
+                  "label": "uint256",
+                  "encoding": "inplace",
+                  "numberOfBytes": "32"
+                },
+                "value": {
+                  "label": "bytes",
+                  "encoding": "bytes",
+                  "numberOfBytes": "32"
+                }
+              }
+            }
+          }
+        },
+        {
+          "contract": "AddrResolver",
+          "label": "versionable_addresses",
+          "slot": "2",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => mapping(uint256 => bytes)))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => mapping(uint256 => bytes))",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "mapping(uint256 => bytes)",
+                "encoding": "mapping",
+                "numberOfBytes": "32",
+                "key": {
+                  "label": "uint256",
+                  "encoding": "inplace",
+                  "numberOfBytes": "32"
+                },
+                "value": {
+                  "label": "bytes",
+                  "encoding": "bytes",
+                  "numberOfBytes": "32"
+                }
+              }
+            }
+          }
+        },
+        {
+          "contract": "ContentHashResolver",
+          "label": "versionable_hashes",
+          "slot": "3",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => bytes))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => bytes)",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "bytes",
+                "encoding": "bytes",
+                "numberOfBytes": "32"
+              }
+            }
+          }
+        },
+        {
+          "contract": "DataResolver",
+          "label": "versionable_dataStore",
+          "slot": "4",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => mapping(string => bytes)))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => mapping(string => bytes))",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "mapping(string => bytes)",
+                "encoding": "mapping",
+                "numberOfBytes": "32",
+                "key": {
+                  "label": "string",
+                  "encoding": "bytes",
+                  "numberOfBytes": "32"
+                },
+                "value": {
+                  "label": "bytes",
+                  "encoding": "bytes",
+                  "numberOfBytes": "32"
+                }
+              }
+            }
+          }
+        },
+        {
+          "contract": "DNSResolver",
+          "label": "versionable_zonehashes",
+          "slot": "5",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => bytes))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => bytes)",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "bytes",
+                "encoding": "bytes",
+                "numberOfBytes": "32"
+              }
+            }
+          }
+        },
+        {
+          "contract": "DNSResolver",
+          "label": "versionable_records",
+          "slot": "6",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => mapping(bytes32 => mapping(uint16 => bytes))))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => mapping(bytes32 => mapping(uint16 => bytes)))",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "mapping(bytes32 => mapping(uint16 => bytes))",
+                "encoding": "mapping",
+                "numberOfBytes": "32",
+                "key": {
+                  "label": "bytes32",
+                  "encoding": "inplace",
+                  "numberOfBytes": "32"
+                },
+                "value": {
+                  "label": "mapping(uint16 => bytes)",
+                  "encoding": "mapping",
+                  "numberOfBytes": "32",
+                  "key": {
+                    "label": "uint16",
+                    "encoding": "inplace",
+                    "numberOfBytes": "2"
+                  },
+                  "value": {
+                    "label": "bytes",
+                    "encoding": "bytes",
+                    "numberOfBytes": "32"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "contract": "DNSResolver",
+          "label": "versionable_nameEntriesCount",
+          "slot": "7",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => mapping(bytes32 => uint16)))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => mapping(bytes32 => uint16))",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "mapping(bytes32 => uint16)",
+                "encoding": "mapping",
+                "numberOfBytes": "32",
+                "key": {
+                  "label": "bytes32",
+                  "encoding": "inplace",
+                  "numberOfBytes": "32"
+                },
+                "value": {
+                  "label": "uint16",
+                  "encoding": "inplace",
+                  "numberOfBytes": "2"
+                }
+              }
+            }
+          }
+        },
+        {
+          "contract": "InterfaceResolver",
+          "label": "versionable_interfaces",
+          "slot": "8",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => mapping(bytes4 => address)))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => mapping(bytes4 => address))",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "mapping(bytes4 => address)",
+                "encoding": "mapping",
+                "numberOfBytes": "32",
+                "key": {
+                  "label": "bytes4",
+                  "encoding": "inplace",
+                  "numberOfBytes": "4"
+                },
+                "value": {
+                  "label": "address",
+                  "encoding": "inplace",
+                  "numberOfBytes": "20"
+                }
+              }
+            }
+          }
+        },
+        {
+          "contract": "NameResolver",
+          "label": "versionable_names",
+          "slot": "9",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => string))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => string)",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "string",
+                "encoding": "bytes",
+                "numberOfBytes": "32"
+              }
+            }
+          }
+        },
+        {
+          "contract": "PubkeyResolver",
+          "label": "versionable_pubkeys",
+          "slot": "10",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => struct PubkeyResolver.PublicKey))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => struct PubkeyResolver.PublicKey)",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "struct PubkeyResolver.PublicKey",
+                "encoding": "inplace",
+                "numberOfBytes": "64",
+                "members": [
+                  {
+                    "label": "x",
+                    "slot": "0",
+                    "offset": 0,
+                    "type": {
+                      "label": "bytes32",
+                      "encoding": "inplace",
+                      "numberOfBytes": "32"
+                    }
+                  },
+                  {
+                    "label": "y",
+                    "slot": "1",
+                    "offset": 0,
+                    "type": {
+                      "label": "bytes32",
+                      "encoding": "inplace",
+                      "numberOfBytes": "32"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "contract": "TextResolver",
+          "label": "versionable_texts",
+          "slot": "11",
+          "offset": 0,
+          "type": {
+            "label": "mapping(uint64 => mapping(bytes32 => mapping(string => string)))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "uint64",
+              "encoding": "inplace",
+              "numberOfBytes": "8"
+            },
+            "value": {
+              "label": "mapping(bytes32 => mapping(string => string))",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "mapping(string => string)",
+                "encoding": "mapping",
+                "numberOfBytes": "32",
+                "key": {
+                  "label": "string",
+                  "encoding": "bytes",
+                  "numberOfBytes": "32"
+                },
+                "value": {
+                  "label": "string",
+                  "encoding": "bytes",
+                  "numberOfBytes": "32"
+                }
+              }
+            }
+          }
+        },
+        {
+          "contract": "PublicResolver",
+          "label": "_operatorApprovals",
+          "slot": "12",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => mapping(address => bool))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "mapping(address => bool)",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "address",
+                "encoding": "inplace",
+                "numberOfBytes": "20"
+              },
+              "value": {
+                "label": "bool",
+                "encoding": "inplace",
+                "numberOfBytes": "1"
+              }
+            }
+          }
+        },
+        {
+          "contract": "PublicResolver",
+          "label": "_tokenApprovals",
+          "slot": "13",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => mapping(bytes32 => mapping(address => bool)))",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "mapping(bytes32 => mapping(address => bool))",
+              "encoding": "mapping",
+              "numberOfBytes": "32",
+              "key": {
+                "label": "bytes32",
+                "encoding": "inplace",
+                "numberOfBytes": "32"
+              },
+              "value": {
+                "label": "mapping(address => bool)",
+                "encoding": "mapping",
+                "numberOfBytes": "32",
+                "key": {
+                  "label": "address",
+                  "encoding": "inplace",
+                  "numberOfBytes": "20"
+                },
+                "value": {
+                  "label": "bool",
+                  "encoding": "inplace",
+                  "numberOfBytes": "1"
+                }
+              }
+            }
+          }
+        },
+        {
+          "contract": "SimplexResolver",
+          "label": "nonces",
+          "slot": "14",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        }
+      ],
+      "immutables": {
+        "ens": "0x0000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414be",
+        "nameWrapper": "0x00000000000000000000000086d2248fb5f3b14a1ca3904978314ad5450d4dc9",
+        "trustedETHController": "0x00000000000000000000000068fab655a0204865a2f3ab3a607037e09648c92b",
+        "trustedReverseRegistrar": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "functions": {
+        "0x2203ab56": "ABI(bytes32,uint256) view returns (uint256,bytes)",
+        "0xe3270540": "CLEAR_RECORDS_TYPEHASH() view returns (bytes32)",
+        "0x3644e515": "DOMAIN_SEPARATOR() view returns (bytes32)",
+        "0x2290d507": "SET_TEXT_TYPEHASH() view returns (bytes32)",
+        "0x3b3b57de": "addr(bytes32) view returns (address)",
+        "0xf1cb7e06": "addr(bytes32,uint256) view returns (bytes)",
+        "0xa4b91a01": "approve(bytes32,address,bool) nonpayable returns ()",
+        "0x3603d758": "clearRecords(bytes32) nonpayable returns ()",
+        "0x6463e614": "clearRecordsWithSig(bytes32,uint256,uint256,bytes) nonpayable returns ()",
+        "0xcff33775": "clearSubnameRecords(bytes32) nonpayable returns ()",
+        "0xbc1c58d1": "contenthash(bytes32) view returns (bytes)",
+        "0xecbfada3": "data(bytes32,string) view returns (bytes)",
+        "0xa8fa5682": "dnsRecord(bytes32,bytes32,uint16) view returns (bytes)",
+        "0x32f111d7": "hasAddr(bytes32,uint256) view returns (bool)",
+        "0x4cbf6ba4": "hasDNSRecords(bytes32,bytes32) view returns (bool)",
+        "0x124a319c": "interfaceImplementer(bytes32,bytes4) view returns (address)",
+        "0xa9784b3e": "isApprovedFor(address,bytes32,address) view returns (bool)",
+        "0xe985e9c5": "isApprovedForAll(address,address) view returns (bool)",
+        "0xac9650d8": "multicall(bytes[]) nonpayable returns (bytes[])",
+        "0xe32954eb": "multicallWithNodeCheck(bytes32,bytes[]) nonpayable returns (bytes[])",
+        "0x691f3431": "name(bytes32) view returns (string)",
+        "0x7ecebe00": "nonces(address) view returns (uint256)",
+        "0xc8690233": "pubkey(bytes32) view returns (bytes32,bytes32)",
+        "0xd700ff33": "recordVersions(bytes32) view returns (uint64)",
+        "0x9573a44f": "relayedSigner(bytes32) view returns (address)",
+        "0x623195b0": "setABI(bytes32,uint256,bytes) nonpayable returns ()",
+        "0x8b95dd71": "setAddr(bytes32,uint256,bytes) nonpayable returns ()",
+        "0xd5fa2b00": "setAddr(bytes32,address) nonpayable returns ()",
+        "0xa22cb465": "setApprovalForAll(address,bool) nonpayable returns ()",
+        "0x304e6ade": "setContenthash(bytes32,bytes) nonpayable returns ()",
+        "0x0af179d7": "setDNSRecords(bytes32,bytes) nonpayable returns ()",
+        "0x4eb9c45e": "setData(bytes32,string,bytes) nonpayable returns ()",
+        "0xe59d895d": "setInterface(bytes32,bytes4,address) nonpayable returns ()",
+        "0x77372213": "setName(bytes32,string) nonpayable returns ()",
+        "0x29cd62ea": "setPubkey(bytes32,bytes32,bytes32) nonpayable returns ()",
+        "0x10f13a8c": "setText(bytes32,string,string) nonpayable returns ()",
+        "0x71a218a7": "setTextWithSig(bytes32,string,string,uint256,uint256,bytes) nonpayable returns ()",
+        "0xce3decdc": "setZonehash(bytes32,bytes) nonpayable returns ()",
+        "0x01ffc9a7": "supportsInterface(bytes4) view returns (bool)",
+        "0x59d1d43c": "text(bytes32,string) view returns (string)",
+        "0x5c98042b": "zonehash(bytes32) view returns (bytes)"
+      },
+      "events": {
+        "0xaa121bbeef5f32f5961a2a28966e769023910fc9479059ee3495d4c1a696efe3": "ABIChanged(bytes32 indexed,uint256 indexed)",
+        "0x52d7d861f09ab3d26239d492e8968629f95e9e318cf0b73bfddc441522a15fd2": "AddrChanged(bytes32 indexed,address)",
+        "0x65412581168e88a1e60c6459d7f44ae83ad0832e670826c05a4e2476b57af752": "AddressChanged(bytes32 indexed,uint256,bytes)",
+        "0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31": "ApprovalForAll(address indexed,address indexed,bool)",
+        "0xf0ddb3b04746704017f9aa8bd728fcc2c1d11675041205350018915f5e4750a0": "Approved(address,bytes32 indexed,address indexed,bool indexed)",
+        "0xe379c1624ed7e714cc0937528a32359d69d5281337765313dba4e081b72d7578": "ContenthashChanged(bytes32 indexed,bytes)",
+        "0x52a608b3303a48862d07a73d82fa221318c0027fbbcfb1b2329bface3f19ff2b": "DNSRecordChanged(bytes32 indexed,bytes,uint16,bytes)",
+        "0x03528ed0c2a3ebc993b12ce3c16bb382f9c7d88ef7d8a1bf290eaf35955a1207": "DNSRecordDeleted(bytes32 indexed,bytes,uint16)",
+        "0x8f15ed4b723ef428f250961da8315675b507046737e19319fc1a4d81bfe87f85": "DNSZonehashChanged(bytes32 indexed,bytes,bytes)",
+        "0x3b7ea3580e046bf897ca24f2f45fcf5491dafba8d1b3dd17ca92aa0e82b4dd21": "DataChanged(bytes32 indexed,string indexed,string,bytes indexed)",
+        "0x7c69f06bea0bdef565b709e93a147836b0063ba2dd89f02d0b7e8d931e6a6daa": "InterfaceChanged(bytes32 indexed,bytes4 indexed,address)",
+        "0xb7d29e911041e8d9b843369e890bcb72c9388692ba48b65ac54e7214c4c348f7": "NameChanged(bytes32 indexed,string)",
+        "0x1d6f5e03d3f63eb58751986629a5439baee5079ff04f345becb66e23eb154e46": "PubkeyChanged(bytes32 indexed,bytes32,bytes32)",
+        "0x448bc014f1536726cf8d54ff3d6481ed3cbc683c2591ca204274009afa09b1a1": "TextChanged(bytes32 indexed,string indexed,string,string)",
+        "0xc6621ccb8f3f5a04bb6502154b2caf6adf5983fe76dfef1cfc9c42e3579db444": "VersionChanged(bytes32 indexed,uint64)"
+      },
+      "errors": {
+        "0x8d666f60": "InvalidEVMAddress(bytes)",
+        "0x756688fe": "InvalidNonce()",
+        "0x8baa579f": "InvalidSignature()",
+        "0xc30734cc": "NodeNotOwnedByRegistrar()",
+        "0x9a0aeacd": "NotSubnameRegistrar()",
+        "0x8a3c1cfb": "OffsetOutOfBoundsError(uint256,uint256)",
+        "0x0819bdcd": "SignatureExpired()"
+      }
+    },
+    "SimplexResolverProxy": {
+      "address": "0x9bda37f19b59cbc58ba75932b3c598947fd88b0a",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json",
+      "constructorArgs": "0x000000000000000000000000f5064ae06cf32de2b9ba8952c5873cd10983ee65000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df400000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "SimplexResolverProxyAdmin": {
+      "address": "0x4F76Aab091079E1645fc3bB250fEb89de09EB42c",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/ProxyAdmin.sol/ProxyAdmin.json",
+      "constructorArgs": "0x000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df4",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "SimplexSponsor@0xA67Fb0Bad34e3f60377f52745d71B5acf9Be3ddB": {
+      "address": "0xA67Fb0Bad34e3f60377f52745d71B5acf9Be3ddB",
+      "artifact": "contracts/simplex/SimplexSponsor.sol/SimplexSponsor.json",
+      "constructorArgs": "0x00000000000000000000000068fab655a0204865a2f3ab3a607037e09648c92b",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28",
+      "storageLayout": [
+        {
+          "contract": "SimplexSponsor",
+          "label": "registrarAllowance",
+          "slot": "0",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        },
+        {
+          "contract": "SimplexSponsor",
+          "label": "nonces",
+          "slot": "1",
+          "offset": 0,
+          "type": {
+            "label": "mapping(address => uint256)",
+            "encoding": "mapping",
+            "numberOfBytes": "32",
+            "key": {
+              "label": "address",
+              "encoding": "inplace",
+              "numberOfBytes": "20"
+            },
+            "value": {
+              "label": "uint256",
+              "encoding": "inplace",
+              "numberOfBytes": "32"
+            }
+          }
+        }
+      ],
+      "immutables": {
+        "controller": "0x00000000000000000000000068fab655a0204865a2f3ab3a607037e09648c92b"
+      },
+      "functions": {
+        "0x3644e515": "DOMAIN_SEPARATOR() view returns (bytes32)",
+        "0x6a5306a3": "REGISTER_TYPEHASH() view returns (bytes32)",
+        "0xf77c4791": "controller() view returns (address)",
+        "0x7ecebe00": "nonces(address) view returns (uint256)",
+        "0xfc995460": "registerWithCredit((string,address,uint256,bytes32,address,bytes[],uint8,bytes32),uint256,uint256,uint256,bytes) nonpayable returns ()",
+        "0xee4042fa": "registrarAllowance(address) view returns (uint256)",
+        "0x814f2b90": "renewWithCredit(string,uint256,bytes32) nonpayable returns ()",
+        "0x7f8ac8b8": "setRegistrarAllowance(address,uint256) nonpayable returns ()"
+      },
+      "events": {
+        "0x0eac6f04b749809ee1de14e6eb0ba4942170e3ef69568719a9aa6ca66f12f19e": "RegistrarAllowanceSet(address indexed,uint256)",
+        "0x282b1e02eef0e49141737ba0959ff200d77917fb8e2588c32e32d37901a69a12": "RegistrarAllowanceSpent(address indexed,uint256,uint256)"
+      },
+      "errors": {
+        "0x2a1b2dd8": "InsufficientAllowance(uint256,uint256)",
+        "0x756688fe": "InvalidNonce()",
+        "0x8baa579f": "InvalidSignature()",
+        "0x644d871f": "NotBeneficiary()",
+        "0x0819bdcd": "SignatureExpired()"
+      }
+    },
+    "SimplexSponsorProxy": {
+      "address": "0xec9a522c756e46fb3e44d3405ffdd9368501eb78",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json",
+      "constructorArgs": "0x000000000000000000000000a67fb0bad34e3f60377f52745d71b5acf9be3ddb000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df400000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "SimplexSponsorProxyAdmin": {
+      "address": "0xb5B4938E108423CDeeFA5a30BDE73F1684550cE8",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/ProxyAdmin.sol/ProxyAdmin.json",
+      "constructorArgs": "0x000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df4",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "UniversalResolver@0x50fcFA987C5bd26387000e67C3eC996bac45986A": {
+      "address": "0x50fcFA987C5bd26387000e67C3eC996bac45986A",
+      "artifact": "contracts/universalResolver/UniversalResolver.sol/UniversalResolver.json",
+      "constructorArgs": "0x00000000000000000000000038d19404644fe24ee7d638229a732cbe8275e3330000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414be00000000000000000000000098409f8db9a0aaf29cafaac40a427188c9fe3b66",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28",
+      "storageLayout": [],
+      "immutables": {
+        "unsafeCallGas": "0x000000000000000000000000000000000000000000000000000000000000c350",
+        "batchGatewayProvider": "0x00000000000000000000000098409f8db9a0aaf29cafaac40a427188c9fe3b66",
+        "registry": "0x0000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414be"
+      },
+      "functions": {
+        "0x02cf2578": "batchGatewayProvider() view returns (address)",
+        "0x9f28e99d": "ccipBatch(((address,bytes,bytes,uint256)[],string[])) view returns (((address,bytes,bytes,uint256)[],string[]))",
+        "0xb536af76": "ccipBatchCallback(bytes,bytes) view returns (((address,bytes,bytes,uint256)[],string[]))",
+        "0xef46c0b8": "ccipReadCallback(bytes,bytes) view returns ()",
+        "0xa1cbcbaf": "findResolver(bytes) view returns (address,bytes32,uint256)",
+        "0x7b103999": "registry() view returns (address)",
+        "0xc285238a": "requireResolver(bytes) view returns ((bytes,uint256,bytes32,address,bool))",
+        "0x9061b923": "resolve(bytes,bytes) view returns (bytes,address)",
+        "0x491fc4f9": "resolveBatchCallback(bytes,bytes) view returns ()",
+        "0xb4a85801": "resolveCallback(bytes,bytes) pure returns (bytes,address)",
+        "0x55391bb8": "resolveDirectCallback(bytes,bytes) view returns ()",
+        "0x3c6cbda8": "resolveDirectCallbackError(bytes,bytes) pure returns ()",
+        "0xa1472844": "resolveWithGateways(bytes,bytes,string[]) view returns (bytes,address)",
+        "0x4a3e3994": "resolveWithResolver(address,bytes,bytes,string[]) view returns (bytes)",
+        "0x5d78a217": "reverse(bytes,uint256) view returns (string,address,address)",
+        "0x94fbfa87": "reverseAddressCallback(bytes,bytes) pure returns (string,address,address)",
+        "0x575de750": "reverseNameCallback(bytes,bytes) view returns (string,address,address)",
+        "0xb7d6ca64": "reverseWithGateways(bytes,uint256,string[]) view returns (string,address,address)",
+        "0x01ffc9a7": "supportsInterface(bytes4) view returns (bool)"
+      },
+      "events": {},
+      "errors": {
+        "0xba4adc23": "DNSDecodingFailed(bytes)",
+        "0x9a4c3e3b": "DNSEncodingFailed(string)",
+        "0x7138356f": "EmptyAddress()",
+        "0x01800152": "HttpError(uint16,string)",
+        "0x4a5c31ea": "InvalidBatchGatewayResponse()",
+        "0x556f1830": "OffchainLookup(address,string[],bytes,bytes4,bytes)",
+        "0x8a3c1cfb": "OffsetOutOfBoundsError(uint256,uint256)",
+        "0x95c0c752": "ResolverError(bytes)",
+        "0x1e9535f2": "ResolverNotContract(bytes,address)",
+        "0x77209fe8": "ResolverNotFound(bytes)",
+        "0xef9c03ce": "ReverseAddressMismatch(string,bytes)",
+        "0x2fa87250": "UnsafeBatchGatewayResponse(bytes)",
+        "0x7b1c461b": "UnsupportedResolverProfile(bytes4)"
+      }
+    },
+    "UniversalResolverProxy": {
+      "address": "0x9f2364913a723ca064858e3210e73cab88bf7d71",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json",
+      "constructorArgs": "0x00000000000000000000000050fcfa987c5bd26387000e67c3ec996bac45986a000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df400000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "UniversalResolverProxyAdmin": {
+      "address": "0x1C9913a6B465Af3e3A14f0f4846966c2F327e761",
+      "artifact": "@openzeppelin/contracts-v5/proxy/transparent/ProxyAdmin.sol/ProxyAdmin.json",
+      "constructorArgs": "0x000000000000000000000000f38920389740e46a7f4160daf1672f3df2754df4",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "SimplexPriceOracle": {
+      "address": "0x6fdc7ccd9718e58f896236d1b4ebed0ff7a5ee53",
+      "artifact": "contracts/simplex/SimplexPriceOracle.sol/SimplexPriceOracle.json",
+      "constructorArgs": "0x0000000000000000000000005f4ec3df9cbd43714fe2740f5e3616155c5b84190000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000138800000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
     },
     "DummyGatewayProvider": {
-      "address": "0xf7a962366a3256f366d8d5e1ff6bef7eb9614433",
+      "address": "0x98409f8db9a0aaf29cafaac40a427188c9fe3b66",
       "artifact": "contracts/mocks/DummyGatewayProvider.sol/DummyGatewayProvider.json",
-      "constructorArgs": "0x"
+      "constructorArgs": "0x",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
     },
-    "UniversalResolver": {
-      "address": "0xa9cad69106f3244c6be54e34bac723a4ba87f8a9",
-      "artifact": "contracts/universalResolver/UniversalResolver.sol/UniversalResolver.json",
-      "constructorArgs": "0x00000000000000000000000038d19404644fe24ee7d638229a732cbe8275e333000000000000000000000000a7f6497be2f1aa41aa2db55aba8a6e0145dff0d2000000000000000000000000f7a962366a3256f366d8d5e1ff6bef7eb9614433"
+    "MetadataRenderer": {
+      "address": "0x405da65bba5886b72e938199f4d07117c5ba7a99",
+      "artifact": "contracts/simplex/MetadataRenderer.sol/MetadataRenderer.json",
+      "constructorArgs": "0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000082e73696d706c6578000000000000000000000000000000000000000000000000",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
+    },
+    "Root": {
+      "address": "0x2514222c065c9fd436cd76d6c721dc73fca4cb77",
+      "artifact": "contracts/root/Root.sol/Root.json",
+      "constructorArgs": "0x0000000000000000000000003ce23ef6a00d89105299b52aadd72b92681414be",
+      "buildInfoId": "solc-0_8_26-9f201b5852e9b7998ea1d28f43aa504ac7a84239",
+      "ensContractsCommit": "ebf76989ec5cab1c7dd49085b4c18faf303657d0",
+      "parentCommit": "d84cb8ec6108cccc3ae8268bd95daeca64bc0d28"
     }
   }
 }
